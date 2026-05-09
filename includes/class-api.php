@@ -1,0 +1,3011 @@
+<?php
+/**
+ * REST API controller.
+ *
+ * @package AISEOGodMode
+ */
+
+namespace AISEOGodMode;
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+/**
+ * Handles all REST API endpoints for the React admin.
+ */
+class API {
+
+    /**
+     * API namespace.
+     *
+     * @var string
+     */
+    const NAMESPACE = 'aeo-god-mode/v1';
+
+    /**
+     * Register all REST routes.
+     */
+    public function register_routes() {
+
+        // ---- Dashboard ----
+        register_rest_route( self::NAMESPACE, '/status', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_status' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/site-health', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_site_health' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Settings ----
+        register_rest_route( self::NAMESPACE, '/settings', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_settings' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_settings' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
+        // ---- Detect SEO plugins ----
+        register_rest_route( self::NAMESPACE, '/detect', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'detect_plugins' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Import from detected plugin ----
+        register_rest_route( self::NAMESPACE, '/import', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'import_settings' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Direct Answer Engine (Answer Density) ----
+        register_rest_route( self::NAMESPACE, '/answer-density', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_answer_density_summary' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/answer-density/(?P<post_id>\d+)', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_answer_density_for_post' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/answer-density/rescan/(?P<post_id>\d+)', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'rescan_answer_density' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/answer-density/rewrite-opener', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'rewrite_opener' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+            'args'                => array(
+                'post_id'        => array( 'required' => true ),
+                'heading'        => array( 'required' => true ),
+                'classification' => array( 'required' => true ),
+            ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/answer-density/apply-rewrite', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'apply_rewrite' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+            'args'                => array(
+                'post_id'  => array( 'required' => true ),
+                'heading'  => array( 'required' => true ),
+                'rewrite'  => array( 'required' => true ),
+            ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/answer-density/scan-all', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'scan_all_answer_density' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/answer-density/(?P<post_id>\d+)/dismiss', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'dismiss_answer_density' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+            'args'                => array(
+                'heading' => array( 'required' => true ),
+            ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/answer-density/(?P<post_id>\d+)/undismiss', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'undismiss_answer_density' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+            'args'                => array(
+                'heading' => array( 'required' => true ),
+            ),
+        ) );
+
+        // ---- Schema ----
+        register_rest_route( self::NAMESPACE, '/schema/(?P<post_id>\d+)', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_schema' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_schema' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
+        // ---- Robots ----
+        register_rest_route( self::NAMESPACE, '/robots', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_robots' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_robots' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
+        // ---- LLMS.txt ----
+        register_rest_route( self::NAMESPACE, '/llms', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_llms' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/llms/regenerate', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'regenerate_llms' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/llms/custom', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'save_llms_custom' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Conflicts ----
+        register_rest_route( self::NAMESPACE, '/conflicts', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_conflicts' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/conflicts/(?P<id>[\w-]+)/resolve', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'resolve_conflict' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/conflicts/schema-compare', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_schema_comparison' ),
+            'permission_callback' => array( $this, 'admin_permission' ), // Admin-only: reads plugin detection data.
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/conflicts/schema-type', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'resolve_schema_type' ),
+            'permission_callback' => array( $this, 'admin_permission' ), // Admin-only: writes resolution preferences.
+        ) );
+
+        // ---- Crawler Log ----
+        register_rest_route( self::NAMESPACE, '/crawler-log', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_crawler_log' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'DELETE',
+                'callback'            => array( $this, 'clear_crawler_log' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/crawler-log/summary', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_crawler_log_summary' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Content Gaps ----
+        register_rest_route( self::NAMESPACE, '/content-gaps', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_content_gaps' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/content-gaps/scan', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'run_content_gap_scan' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/content-gaps/fix', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'apply_content_gap_fix' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Validation ----
+        register_rest_route( self::NAMESPACE, '/validate/(?P<post_id>\d+)', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'validate_schema' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/validate/bulk', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'validate_bulk' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        if ( License::is_pro_build() ) {
+            // ---- GSC ----
+            register_rest_route( self::NAMESPACE, '/gsc/status', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_status' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/connect', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'connect_gsc' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/pages', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_pages' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/alerts', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_alerts' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/callback', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'gsc_oauth_callback' ),
+                'permission_callback' => array( $this, 'admin_permission' ), // OAuth redirect — user's WP cookies are present. CSRF also verified via state transient in handle_callback().
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/disconnect', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'disconnect_gsc' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/sync', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'sync_gsc' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/sync-progress', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_sync_progress' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/queries', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_queries' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/ai-summary', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_ai_summary' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/index-now', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'gsc_index_now' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- Internal Link Builder ----
+            register_rest_route( self::NAMESPACE, '/gsc/build-links', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'gsc_build_links' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/apply-link', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'gsc_apply_link' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/section-index', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'gsc_build_section_index' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/section-index/stats', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'gsc_section_index_stats' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/section-index/backfill', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'gsc_backfill_best_sentences' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- Citation Tracker ----
+            register_rest_route( self::NAMESPACE, '/citations', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_citations' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/run', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'run_citation_check' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/api-key', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_citation_api_key' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/page-reports', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_citation_page_reports' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/queries', array(
+                array(
+                    'methods'             => 'GET',
+                    'callback'            => array( $this, 'get_citation_queries' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+                array(
+                    'methods'             => 'POST',
+                    'callback'            => array( $this, 'add_citation_queries' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+                array(
+                    'methods'             => 'PUT',
+                    'callback'            => array( $this, 'replace_citation_queries' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+                array(
+                    'methods'             => 'DELETE',
+                    'callback'            => array( $this, 'remove_citation_query' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/queries/generate', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'ai_generate_citation_queries' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // Per-query delete (removes every stored result row matching the given query string).
+            register_rest_route( self::NAMESPACE, '/citations/results/by-query', array(
+                'methods'             => 'DELETE',
+                'callback'            => array( $this, 'delete_citation_results_by_query' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // Wipe every stored citation result + history. Saved query list is preserved.
+            register_rest_route( self::NAMESPACE, '/citations/results/all', array(
+                'methods'             => 'DELETE',
+                'callback'            => array( $this, 'clear_all_citation_results' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- AI Referrals ----
+            register_rest_route( self::NAMESPACE, '/referrals', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_ai_referrals' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/referrals/entries', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_ai_referral_entries' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- Citability Score ----
+            register_rest_route( self::NAMESPACE, '/citability/(?P<post_id>\d+)', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_citability_score' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citability/all', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_citability_all' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citability/cached', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_citability_cached' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citability/exclude', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'citability_exclude' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citability/include', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'citability_include' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- E-E-A-T Author Profiles ----
+            register_rest_route( self::NAMESPACE, '/eeat/authors', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_eeat_authors' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/eeat/author', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_eeat_author' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/eeat/author-card', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'toggle_author_card' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/eeat/card-fields', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_card_fields' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/eeat/avatar', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'upload_eeat_avatar' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+        }
+
+        // ---- AI Plugin Manifest ----
+        register_rest_route( self::NAMESPACE, '/ai-plugin', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_ai_plugin_status' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- AI Signals Dashboard ----
+        register_rest_route( self::NAMESPACE, '/ai-signals-health', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_ai_signals_health' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/ai-headers', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_ai_headers' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_ai_headers' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
+        // ---- Activity Log ----
+        register_rest_route( self::NAMESPACE, '/activity', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_activity' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- License ----
+        register_rest_route( self::NAMESPACE, '/license', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_license_status' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/license/activate', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'activate_license' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/license/deactivate', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'deactivate_license' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Metadata Generation ----
+        register_rest_route( self::NAMESPACE, '/metadata/credits', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_metadata_credits' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/metadata/detect', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_metadata_detection' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/metadata/generate', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'generate_metadata' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/metadata/accept', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'accept_metadata' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+    }
+
+    /**
+     * Check that the user is an admin.
+     *
+     * @return bool|\WP_Error
+     */
+    public function admin_permission() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            return new \WP_Error(
+                'rest_forbidden',
+                __( 'You do not have permission to access this endpoint.', 'aeo-god-mode' ),
+                array( 'status' => 403 )
+            );
+        }
+        return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Dashboard
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get dashboard status with health score.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_status() {
+        $settings = get_option( 'asgm_settings', array() );
+        $modules  = isset( $settings['modules'] ) ? $settings['modules'] : array();
+
+        $health = $this->calculate_health_score( $settings );
+
+        // Detect e-commerce platforms for upgrade prompts.
+        $ecommerce = array();
+        if ( class_exists( 'WooCommerce' ) || function_exists( 'wc_get_product' ) ) {
+            $ecommerce[] = 'woocommerce';
+        }
+        if ( class_exists( 'Easy_Digital_Downloads' ) || function_exists( 'edd_get_download' ) ) {
+            $ecommerce[] = 'edd';
+        }
+
+        return rest_ensure_response( array(
+            'version'              => ASGM_VERSION,
+            'is_pro'               => License::is_pro(),
+            'is_pro_build'         => License::is_pro_build(),
+            'plan'                 => License::is_pro() ? 'pro' : 'free',
+            'safe_mode'            => ! empty( $settings['safe_mode'] ),
+            'wizard_completed'     => ! empty( $settings['wizard_completed'] ),
+            'health_score'         => $health['score'],
+            'health_breakdown'     => $health['breakdown'],
+            'health_breakdown_reasons' => isset( $health['breakdown_reasons'] ) ? $health['breakdown_reasons'] : array(),
+            'modules'              => $modules,
+            'detected_ecommerce'   => $ecommerce,
+        ) );
+    }
+
+    /**
+     * Get site-level AEO health.
+     *
+     * Checks are specific to Answer Engine Optimization:
+     * whether AI systems can find, read, and cite this site.
+     * Results are cached for 6 hours to keep the dashboard fast.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_site_health() {
+        $cached = get_transient( 'asgm_site_health' );
+        if ( false !== $cached ) {
+            return rest_ensure_response( $cached );
+        }
+
+        $result = $this->run_site_health_checks();
+        set_transient( 'asgm_site_health', $result, 6 * HOUR_IN_SECONDS );
+
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Run AEO-specific site health checks.
+     *
+     * @return array
+     */
+    private function run_site_health_checks() {
+        global $wpdb;
+        $issues   = array();
+        $settings = get_option( 'asgm_settings', array() );
+        $modules  = isset( $settings['modules'] ) ? $settings['modules'] : array();
+
+        // 1. AI crawlers blocked in robots.txt.
+        $robots_rules = get_option( 'asgm_robots_rules', array() );
+        $key_bots     = array( 'GPTBot', 'OAI-SearchBot', 'ChatGPT-User', 'ClaudeBot', 'PerplexityBot', 'Google-Extended' );
+        $blocked_bots = array();
+        foreach ( $key_bots as $bot ) {
+            if ( isset( $robots_rules[ $bot ] ) && 'disallow' === $robots_rules[ $bot ] ) {
+                $blocked_bots[] = $bot;
+            }
+        }
+        if ( ! empty( $blocked_bots ) ) {
+            $issues[] = array(
+                'type'     => 'ai_bots_blocked',
+                'severity' => 'warning',
+                'message'  => sprintf(
+                    /* translators: 1: number of blocked crawlers, 2: comma-separated list of bot names */
+                    __( '%1$d AI crawlers are blocked in robots.txt: %2$s. These bots cannot index your content for AI search results.', 'aeo-god-mode' ),
+                    count( $blocked_bots ),
+                    implode( ', ', $blocked_bots )
+                ),
+                'fix_url'  => admin_url( 'admin.php?page=aeo-god-mode#/crawlers' ),
+            );
+        }
+
+        // 2. llms.txt not yet served to an AI crawler.
+        // Prefer the cached transient; fall back to the "last generated" option
+        // which is set whenever the file is built (activation, regenerate, or first front-end hit).
+        $llms_ready = get_transient( 'asgm_llms_txt' ) || get_option( 'asgm_llms_last_generated', '' );
+        if ( ! $llms_ready ) {
+            $issues[] = array(
+                'type'     => 'no_llms_txt',
+                'severity' => 'warning',
+                'message'  => __( 'llms.txt has not been generated yet. Click Regenerate on the llms.txt page to build it now.', 'aeo-god-mode' ),
+                'fix_url'  => admin_url( 'admin.php?page=aeo-god-mode#/llms' ),
+            );
+        }
+
+        // 3. Zero AI crawler activity (if module is on but nothing logged).
+        if ( ! empty( $modules['ai_crawlers'] ) ) {
+            $table = $wpdb->prefix . 'asgm_crawler_log';
+            if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+                // Table name is safe: built from $wpdb->prefix (trusted) + hardcoded suffix.
+                $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `" . esc_sql( $table ) . "`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared
+                if ( 0 === $count ) {
+                    $issues[] = array(
+                        'type'     => 'no_crawler_activity',
+                        'severity' => 'info',
+                        'message'  => __( 'No AI crawler activity logged yet. If your site has been live for a while, check that AI bots are not blocked at the server level (WAF, Cloudflare, etc.).', 'aeo-god-mode' ),
+                        'fix_url'  => admin_url( 'admin.php?page=aeo-god-mode#/crawler-log' ),
+                    );
+                }
+            }
+        }
+
+        // 4. No Organization schema configured.
+        // Settings.tsx persists business info under asgm_settings.business — the
+        // legacy asgm_business option is never written, so reading it gave a false
+        // negative on configured sites. Mirror class-schema.php's source of truth.
+        $settings_for_business = get_option( 'asgm_settings', array() );
+        $business              = isset( $settings_for_business['business'] ) ? (array) $settings_for_business['business'] : array();
+        $has_org               = ! empty( $business['name'] ) || ! empty( $business['org_name'] );
+        if ( ! $has_org ) {
+            $issues[] = array(
+                'type'     => 'no_org_schema',
+                'severity' => 'warning',
+                'message'  => __( 'No Organization schema configured. AI systems use this to identify who you are and how to attribute citations. Set your business name in Settings.', 'aeo-god-mode' ),
+                'fix_url'  => admin_url( 'admin.php?page=aeo-god-mode#/settings' ),
+            );
+        }
+
+        // 5. "Discourage search engines" is enabled.
+        $blog_public = get_option( 'blog_public' );
+        if ( '0' === $blog_public || 0 === $blog_public ) {
+            $issues[] = array(
+                'type'     => 'noindex_enabled',
+                'severity' => 'error',
+                'message'  => __( '"Discourage search engines from indexing this site" is enabled. This blocks Google, AI crawlers, and all search engines from indexing your content.', 'aeo-god-mode' ),
+                'fix_url'  => admin_url( 'options-reading.php' ),
+            );
+        }
+
+        // 6. Key AEO modules disabled.
+        $key_modules = array(
+            'schema'       => 'Schema Engine',
+            'ai_crawlers'  => 'AI Crawler Manager',
+            'content_gaps' => 'Content Gap Scanner',
+        );
+        $disabled = array();
+        foreach ( $key_modules as $mod_key => $mod_label ) {
+            if ( empty( $modules[ $mod_key ] ) ) {
+                $disabled[] = $mod_label;
+            }
+        }
+        if ( ! empty( $disabled ) ) {
+            $issues[] = array(
+                'type'     => 'modules_disabled',
+                'severity' => 'info',
+                'message'  => sprintf(
+                    /* translators: %s: comma-separated list of disabled module names */
+                    __( 'Core AEO modules disabled: %s. Enable them in Settings.', 'aeo-god-mode' ),
+                    implode( ', ', $disabled )
+                ),
+                'fix_url'  => admin_url( 'admin.php?page=aeo-god-mode#/settings' ),
+            );
+        }
+
+        // Score: start at 100, deduct by severity.
+        $score = 100;
+        foreach ( $issues as $issue ) {
+            switch ( $issue['severity'] ) {
+                case 'error':
+                    $score -= 25;
+                    break;
+                case 'warning':
+                    $score -= 15;
+                    break;
+                case 'info':
+                    $score -= 5;
+                    break;
+            }
+        }
+
+        return array(
+            'issues' => $issues,
+            'count'  => count( $issues ),
+            'score'  => max( 0, $score ),
+        );
+    }
+
+    /**
+     * Calculate the site health score using real signal checks.
+     *
+     * @param array $settings Plugin settings.
+     * @return array Score and breakdown.
+     */
+    private function calculate_health_score( $settings ) {
+        $modules = isset( $settings['modules'] ) ? $settings['modules'] : array();
+
+        $crawlers_url = admin_url( 'admin.php?page=aeo-god-mode#/crawlers' );
+        $schema_url   = admin_url( 'admin.php?page=aeo-god-mode#/settings' );
+        $llms_url     = admin_url( 'admin.php?page=aeo-god-mode#/llms' );
+        $gaps_url     = admin_url( 'admin.php?page=aeo-god-mode#/content-gaps' );
+        $settings_url = admin_url( 'admin.php?page=aeo-god-mode#/settings' );
+
+        // ── AI Crawler Access (0-100) ──
+        // Checks actual robots.txt rules + real crawl activity.
+        $crawler_score   = 0;
+        $crawler_reasons = array();
+
+        if ( empty( $modules['ai_crawlers'] ) ) {
+            $crawler_reasons[] = array(
+                'message' => __( 'AI Crawlers module is off. Robots.txt rules aren\'t being managed.', 'aeo-god-mode' ),
+                'fix_url' => $settings_url,
+                'cost'    => 100,
+            );
+        } else {
+            $rules    = get_option( 'asgm_robots_rules', array() );
+            $ai_bots  = array(
+                'GPTBot', 'ChatGPT-User', 'PerplexityBot', 'ClaudeBot',
+                'Anthropic-AI', 'Google-Extended', 'CCBot', 'FacebookBot',
+                'Applebot-Extended', 'Amazonbot', 'Bytespider', 'Cohere-AI',
+            );
+
+            $allowed = 0;
+            $blocked_names = array();
+            foreach ( $ai_bots as $bot ) {
+                $status = isset( $rules[ $bot ] ) ? $rules[ $bot ] : 'allow';
+                if ( 'allow' === $status || 'not_set' === $status ) {
+                    ++$allowed;
+                } else {
+                    $blocked_names[] = $bot;
+                }
+            }
+
+            $crawler_score += (int) round( ( $allowed / count( $ai_bots ) ) * 60 );
+
+            if ( ! empty( $blocked_names ) ) {
+                $cost = 60 - (int) round( ( $allowed / count( $ai_bots ) ) * 60 );
+                $crawler_reasons[] = array(
+                    'message' => sprintf(
+                        /* translators: 1: blocked bot count, 2: total bot count, 3: comma-separated blocked bot names */
+                        _n(
+                            '%1$d of %2$d tracked AI bots is blocked in robots.txt: %3$s.',
+                            '%1$d of %2$d tracked AI bots are blocked in robots.txt: %3$s.',
+                            count( $blocked_names ),
+                            'aeo-god-mode'
+                        ),
+                        count( $blocked_names ),
+                        count( $ai_bots ),
+                        implode( ', ', $blocked_names )
+                    ),
+                    'fix_url' => $crawlers_url,
+                    'cost'    => $cost,
+                );
+            }
+
+            global $wpdb;
+            $table = $wpdb->prefix . 'asgm_crawler_log';
+            $thirty_days = 0;
+            if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+                $thirty_days = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `" . esc_sql( $table ) . "` WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared
+            }
+
+            $activity_award = 0;
+            if ( $thirty_days >= 50 )      { $activity_award = 40; }
+            elseif ( $thirty_days >= 10 )  { $activity_award = 25; }
+            elseif ( $thirty_days >= 1 )   { $activity_award = 10; }
+            $crawler_score += $activity_award;
+
+            if ( $activity_award < 40 ) {
+                $crawler_reasons[] = array(
+                    'message' => sprintf(
+                        /* translators: 1: number of crawl events in the last 30 days */
+                        __( 'Only %1$d AI-bot crawl events in the last 30 days. Reach 50+ for full credit. This is ambient: bots crawl when they crawl.', 'aeo-god-mode' ),
+                        $thirty_days
+                    ),
+                    'cost'    => 40 - $activity_award,
+                );
+            }
+        }
+
+        // ── Schema Coverage (0-100) ──
+        // Multi-factor quality assessment, not just "does schema exist."
+        $schema_score   = 0;
+        $schema_reasons = array();
+
+        if ( empty( $modules['schema'] ) ) {
+            $schema_reasons[] = array(
+                'message' => __( 'Schema Engine is off. No structured data is being injected on your pages.', 'aeo-god-mode' ),
+                'fix_url' => $settings_url,
+            );
+        } else {
+            // 1. Module enabled (10 points).
+            $schema_score += 10;
+
+            // Check actual posts for schema output.
+            $posts = get_posts( array(
+                'post_type'      => array( 'post', 'page' ),
+                'post_status'    => 'publish',
+                'posts_per_page' => 20,
+                'orderby'        => 'date',
+                'order'          => 'DESC',
+                'fields'         => 'ids',
+            ) );
+
+            if ( ! empty( $posts ) ) {
+                $schema       = new Schema();
+                $with_schema  = 0;
+                $type_set     = array(); // Track unique schema types across all posts.
+                $field_scores = array(); // Track Article field completeness per post.
+
+                foreach ( $posts as $pid ) {
+                    $output = $schema->get_for_post( $pid );
+                    if ( ! empty( $output['schemas'] ) ) {
+                        ++$with_schema;
+
+                        foreach ( $output['schemas'] as $s ) {
+                            $stype = isset( $s['@type'] ) ? $s['@type'] : '';
+                            if ( $stype ) {
+                                $type_set[ $stype ] = true;
+                            }
+
+                            // Score Article field completeness.
+                            if ( 'Article' === $stype ) {
+                                $required_fields  = array( 'headline', 'datePublished', 'author', 'publisher', 'url' );
+                                $enriched_fields  = array( 'image', 'description', 'inLanguage', 'mainEntityOfPage', 'articleSection', 'wordCount', 'isPartOf' );
+                                $present_required = 0;
+                                $present_enriched = 0;
+
+                                foreach ( $required_fields as $f ) {
+                                    if ( ! empty( $s[ $f ] ) ) {
+                                        ++$present_required;
+                                    }
+                                }
+                                foreach ( $enriched_fields as $f ) {
+                                    if ( ! empty( $s[ $f ] ) ) {
+                                        ++$present_enriched;
+                                    }
+                                }
+
+                                // Required: 0-1.0, Enriched: 0-1.0.
+                                $req_ratio = count( $required_fields ) > 0 ? $present_required / count( $required_fields ) : 0;
+                                $enr_ratio = count( $enriched_fields ) > 0 ? $present_enriched / count( $enriched_fields ) : 0;
+
+                                // Weighted: 60% required, 40% enriched.
+                                $field_scores[] = ( $req_ratio * 0.6 ) + ( $enr_ratio * 0.4 );
+                            }
+                        }
+                    }
+                }
+
+                // 2. Post coverage ratio (20 points).
+                $coverage_ratio = $with_schema / count( $posts );
+                $schema_score  += (int) round( $coverage_ratio * 20 );
+                if ( $coverage_ratio < 1.0 ) {
+                    $missing = count( $posts ) - $with_schema;
+                    $schema_reasons[] = array(
+                        'message' => sprintf(
+                            /* translators: 1: posts without schema, 2: total posts in sample */
+                            __( '%1$d of the last %2$d posts have no schema markup.', 'aeo-god-mode' ),
+                            $missing,
+                            count( $posts )
+                        ),
+                    );
+                }
+
+                // 3. Schema type diversity (20 points).
+                // Ideal: Article + BreadcrumbList + Person + Organization + WebSite = 5 types,
+                // counted across the whole site (homepage + posts), with credit given for types
+                // the user has delegated to a competitor SEO plugin via the Conflicts UI.
+                $ideal_types_list = array( 'Article', 'BreadcrumbList', 'Person', 'Organization', 'WebSite' );
+                $ideal_count      = count( $ideal_types_list );
+
+                // Add what we emit on the homepage (separate code path from get_for_post).
+                $home_output = $schema->get_for_homepage();
+                if ( ! empty( $home_output['schemas'] ) ) {
+                    foreach ( $home_output['schemas'] as $hs ) {
+                        $hstype = isset( $hs['@type'] ) ? $hs['@type'] : '';
+                        if ( $hstype ) {
+                            $type_set[ $hstype ] = true;
+                        }
+                    }
+                }
+
+                // Add types emitted by Pro modules (E-E-A-T Person, etc.).
+                // These hook wp_head independently of the main Schema class, so
+                // get_for_post() doesn't see them. The Schema class exposes a
+                // single accessor so future Pro emitters stay in sync.
+                $pro_types = $schema->get_pro_emitter_types( $posts );
+                foreach ( $pro_types as $pt ) {
+                    $type_set[ $pt ] = true;
+                }
+
+                // Honor user resolutions: types delegated to a third-party SEO plugin still count
+                // as covered, since that plugin emits them. Maps BlogPosting -> Article.
+                $resolutions  = get_option( 'asgm_schema_resolutions', array() );
+                $third_party  = ( defined( 'RANK_MATH_VERSION' ) || defined( 'WPSEO_VERSION' ) );
+                if ( $third_party && ! empty( $resolutions ) ) {
+                    foreach ( $resolutions as $rtype => $rchoice ) {
+                        if ( ! in_array( $rchoice, array( 'theirs', 'both' ), true ) ) {
+                            continue;
+                        }
+                        $canonical = ( 'BlogPosting' === $rtype ) ? 'Article' : $rtype;
+                        $type_set[ $canonical ] = true;
+                    }
+                }
+
+                $covered    = array_values( array_filter( $ideal_types_list, function ( $t ) use ( $type_set ) {
+                    return isset( $type_set[ $t ] );
+                } ) );
+                $missing    = array_values( array_diff( $ideal_types_list, $covered ) );
+                $type_count = count( $covered );
+                $type_ratio = min( $type_count / $ideal_count, 1.0 );
+                $schema_score += (int) round( $type_ratio * 20 );
+
+                if ( ! empty( $missing ) ) {
+                    $conflicts_url = admin_url( 'admin.php?page=aeo-god-mode#/conflicts' );
+                    $schema_reasons[] = array(
+                        'message' => sprintf(
+                            /* translators: 1: covered count, 2: ideal count (5), 3: comma-separated missing types */
+                            __( 'Schema diversity: %1$d of %2$d ideal types covered. Missing: %3$s. Set the missing types in Conflicts (use either AEO God Mode or your other SEO plugin).', 'aeo-god-mode' ),
+                            $type_count,
+                            $ideal_count,
+                            implode( ', ', $missing )
+                        ),
+                        'fix_url' => $conflicts_url,
+                    );
+                }
+
+                // 4. Article field completeness (20 points).
+                if ( ! empty( $field_scores ) ) {
+                    $avg_field = array_sum( $field_scores ) / count( $field_scores );
+                    $schema_score += (int) round( $avg_field * 20 );
+                    if ( $avg_field < 0.85 ) {
+                        $schema_reasons[] = array(
+                            'message' => sprintf(
+                                /* translators: %s: percent of Article fields filled */
+                                __( 'Article schema is %s%% complete on average. Missing fields like image, description, or wordCount cost points.', 'aeo-god-mode' ),
+                                (int) round( $avg_field * 100 )
+                            ),
+                        );
+                    }
+                }
+
+                // 5. Conflict resolution (15 points).
+                // Full points if no SEO plugin detected, or if all conflicts are resolved.
+                $conflicts = get_option( 'asgm_detected_conflicts', array() );
+                $resolutions = get_option( 'asgm_schema_resolutions', array() );
+                if ( empty( $conflicts ) ) {
+                    $schema_score += 15; // No conflicts to resolve.
+                } else {
+                    $schema_conflicts = 0;
+                    $resolved_count   = 0;
+                    foreach ( $conflicts as $c ) {
+                        if ( isset( $c['type'] ) && 'schema_overlap' === $c['type'] ) {
+                            ++$schema_conflicts;
+                        }
+                    }
+                    // Each resolution decision counts.
+                    $resolved_count = count( $resolutions );
+                    if ( $schema_conflicts > 0 ) {
+                        $resolve_ratio = min( $resolved_count / max( $schema_conflicts, 1 ), 1.0 );
+                        $schema_score += (int) round( $resolve_ratio * 15 );
+                    } else {
+                        $schema_score += 15;
+                    }
+                }
+
+                // 6. Valid structure (15 points).
+                // Deduct if we detect issues: duplicates, empty required fields.
+                $structure_score = 15;
+                // Check for potential duplicate schema types on the sample post.
+                if ( ! empty( $posts[0] ) ) {
+                    $sample_output = $schema->get_for_post( $posts[0] );
+                    if ( ! empty( $sample_output['schemas'] ) ) {
+                        $seen_types = array();
+                        foreach ( $sample_output['schemas'] as $s ) {
+                            $st = isset( $s['@type'] ) ? $s['@type'] : '';
+                            if ( isset( $seen_types[ $st ] ) ) {
+                                $structure_score -= 5; // Penalty per duplicate.
+                            }
+                            $seen_types[ $st ] = true;
+                        }
+                    }
+                }
+                $schema_score += max( 0, $structure_score );
+            }
+        }
+
+        // Cap at 100.
+        $schema_score = min( $schema_score, 100 );
+
+        // ── AEO Readiness (0-100) ──
+        // Checks llms.txt content, AEO layer, and content gap health.
+        $aeo_score = 0;
+
+        $aeo_reasons = array();
+
+        // llms.txt exists and has real content (40 points).
+        if ( empty( $modules['llms_txt'] ) ) {
+            $aeo_reasons[] = array(
+                'message' => __( 'llms.txt module is off. AI engines have no map of your site.', 'aeo-god-mode' ),
+                'fix_url' => $settings_url,
+            );
+        } else {
+            // Use LLMS::get_status() which builds content if the transient expired.
+            // Reading the raw transient lies during the 24h window after a flush
+            // when no visitor has hit /llms.txt to repopulate it.
+            $llms_content = '';
+            if ( class_exists( '\\AISEOGodMode\\LLMS' ) ) {
+                $llms_status  = ( new LLMS() )->get_status();
+                $llms_content = isset( $llms_status['content'] ) ? $llms_status['content'] : '';
+            } else {
+                $llms_content = get_transient( 'asgm_llms_txt' );
+            }
+            if ( ! empty( $llms_content ) && strlen( $llms_content ) > 100 ) {
+                $aeo_score += 40;
+            } else {
+                $aeo_score += 10;
+                $aeo_reasons[] = array(
+                    'message' => __( 'llms.txt is empty. Click Regenerate on the llms.txt page to build it.', 'aeo-god-mode' ),
+                    'fix_url' => $llms_url,
+                );
+            }
+        }
+
+        // AEO layer active (20 points).
+        if ( ! empty( $modules['aeo'] ) ) {
+            $aeo_score += 20;
+        } else {
+            $aeo_reasons[] = array(
+                'message' => __( 'AEO layer module is off. Answer-extraction-friendly markup isn\'t being added.', 'aeo-god-mode' ),
+                'fix_url' => $settings_url,
+            );
+        }
+
+        // Content gap health: fewer critical gaps = higher score (40 points).
+        // Source of truth is the option `asgm_content_gap_results` (set by ContentGaps::scan).
+        // The stored value is a flat list of records; each record has a `gap_count` integer.
+        $gap_results = get_option( 'asgm_content_gap_results', array() );
+        if ( is_array( $gap_results ) && ! empty( $gap_results ) ) {
+            $total_posts    = count( $gap_results );
+            $critical_posts = 0;
+
+            foreach ( $gap_results as $gp ) {
+                if ( isset( $gp['gap_count'] ) ) {
+                    $gap_count = (int) $gp['gap_count'];
+                } elseif ( isset( $gp['gaps'] ) && is_array( $gp['gaps'] ) ) {
+                    $gap_count = count( $gp['gaps'] );
+                } else {
+                    $gap_count = 0;
+                }
+                if ( $gap_count >= 3 ) {
+                    ++$critical_posts;
+                }
+            }
+
+            if ( $total_posts > 0 ) {
+                $healthy_ratio = 1 - ( $critical_posts / $total_posts );
+                $aeo_score    += (int) round( $healthy_ratio * 40 );
+                if ( $critical_posts > 0 ) {
+                    $aeo_reasons[] = array(
+                        'message' => sprintf(
+                            /* translators: 1: count of posts with 3+ gaps, 2: total scanned */
+                            __( '%1$d of %2$d scanned posts have 3+ unaddressed content gaps.', 'aeo-god-mode' ),
+                            $critical_posts,
+                            $total_posts
+                        ),
+                        'fix_url' => $gaps_url,
+                    );
+                }
+            }
+        } elseif ( ! empty( $modules['content_gaps'] ) ) {
+            $aeo_score += 5;
+            $aeo_reasons[] = array(
+                'message' => __( 'Content Gaps module is on but no scan has run. Trigger one from the Content Gaps page.', 'aeo-god-mode' ),
+                'fix_url' => $gaps_url,
+            );
+        } else {
+            $aeo_reasons[] = array(
+                'message' => __( 'Content Gaps module is off. No analysis of where your posts are missing competitor coverage.', 'aeo-god-mode' ),
+                'fix_url' => $settings_url,
+            );
+        }
+
+        $breakdown = array(
+            'ai_crawler_access' => $crawler_score,
+            'schema_coverage'   => $schema_score,
+            'aeo_readiness'     => $aeo_score,
+        );
+
+        $breakdown_reasons = array(
+            'ai_crawler_access' => $crawler_reasons,
+            'schema_coverage'   => $schema_reasons,
+            'aeo_readiness'     => $aeo_reasons,
+        );
+
+        // Overall score: weighted average of 3 pillars.
+        $score = (int) round( array_sum( $breakdown ) / count( $breakdown ) );
+
+        return array(
+            'score'             => $score,
+            'breakdown'         => $breakdown,
+            'breakdown_reasons' => $breakdown_reasons,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get all plugin settings.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_settings() {
+        $settings = get_option( 'asgm_settings', array() );
+        return rest_ensure_response( $settings );
+    }
+
+    /**
+     * Save plugin settings.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response
+     */
+    public function save_settings( $request ) {
+        $body     = $request->get_json_params();
+        $current  = get_option( 'asgm_settings', array() );
+        $merged   = $this->deep_merge( $current, $body );
+
+        update_option( 'asgm_settings', $merged );
+
+        // Log the activity.
+        $this->log_activity( 'settings_updated', __( 'Plugin settings updated.', 'aeo-god-mode' ) );
+
+        return rest_ensure_response( array(
+            'success'  => true,
+            'settings' => $merged,
+        ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection + Import
+    // -----------------------------------------------------------------------
+
+    /**
+     * Detect installed SEO plugins.
+     *
+     * @return \WP_REST_Response
+     */
+    public function detect_plugins() {
+        $detector = new Detector();
+        return rest_ensure_response( $detector->scan() );
+    }
+
+    /**
+     * Import settings from detected plugin.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response
+     */
+    public function import_settings( $request ) {
+        $source   = sanitize_text_field( $request->get_param( 'source' ) );
+        $detector = new Detector();
+        $result   = $detector->import_from( $source );
+
+        if ( is_wp_error( $result ) ) {
+            return rest_ensure_response( $result );
+        }
+
+        $this->log_activity( 'settings_imported', sprintf(
+            /* translators: %s: plugin name */
+            __( 'Settings imported from %s.', 'aeo-god-mode' ),
+            $source
+        ) );
+
+        return rest_ensure_response( array(
+            'success'  => true,
+            'imported' => $result,
+        ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Schema
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get schema preview for a post.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_schema( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        $schema  = new Schema();
+        return rest_ensure_response( $schema->get_for_post( $post_id ) );
+    }
+
+    /**
+     * Save schema override for a post.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_schema( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        $data    = $request->get_json_params();
+        update_post_meta( $post_id, '_asgm_schema_override', wp_json_encode( $data ) );
+
+        return rest_ensure_response( array( 'success' => true ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Direct Answer Engine — Answer Density
+    // -----------------------------------------------------------------------
+
+    /**
+     * Aggregate score across the whole site. Cached in the summary option,
+     * refreshed by the nightly cron and on each post save. Returns
+     * `last_scanned_at` so the dashboard can warn when WP cron has gone
+     * stale (low-traffic sites where the cron-on-page-load pattern fails).
+     */
+    public function get_answer_density_summary() {
+        $summary = Answer_Density::get_summary();
+
+        // If the summary is empty (first run), build it on demand.
+        if ( empty( $summary ) ) {
+            $summary = Answer_Density::refresh_summary();
+        }
+
+        $last = isset( $summary['last_scanned_at'] ) ? $summary['last_scanned_at'] : '';
+        $stale = false;
+        if ( $last ) {
+            $age_h = ( time() - strtotime( $last ) ) / 3600;
+            $stale = $age_h > 36; // > 36h since last scan = cron likely missed
+        } elseif ( ! empty( $summary['total_posts'] ) ) {
+            $stale = true;
+        }
+
+        $summary['stale'] = $stale;
+
+        // Hydrate the weakest list with title + permalink so the dashboard
+        // doesn't have to do N round-trips.
+        if ( ! empty( $summary['weakest'] ) && is_array( $summary['weakest'] ) ) {
+            foreach ( $summary['weakest'] as &$row ) {
+                $pid = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
+                $row['title']     = $pid ? get_the_title( $pid ) : '';
+                $row['edit_url']  = $pid ? get_edit_post_link( $pid, 'raw' ) : '';
+                $row['view_url']  = $pid ? get_permalink( $pid ) : '';
+            }
+            unset( $row );
+        }
+
+        return rest_ensure_response( $summary );
+    }
+
+    /**
+     * Read the persisted scan for one post. Triggers a fresh scan if no
+     * cached result exists (so first-load on the editor panel is correct).
+     */
+    public function get_answer_density_for_post( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        $data    = Answer_Density::get_for_post( $post_id );
+        if ( null === $data ) {
+            $data = Answer_Density::scan_post( $post_id );
+        }
+        return rest_ensure_response( $data );
+    }
+
+    /**
+     * Force a fresh scan for one post — used by the "Re-scan" button in the
+     * editor panel and by the bulk-fix flow.
+     */
+    public function rescan_answer_density( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        $data    = Answer_Density::scan_post( $post_id );
+        Answer_Density::refresh_summary();
+        return rest_ensure_response( $data );
+    }
+
+    /**
+     * Manually run the batch scanner — admin-only escape hatch when WP cron
+     * has been silent and the site needs an immediate full refresh.
+     *
+     * Routes through get_answer_density_summary() so the response carries the
+     * same hydrated shape as a GET — titles, edit/view URLs, stale flag.
+     * Returning the raw summary here was the bug behind missing titles + dead
+     * Fix links right after a re-scan.
+     */
+    public function scan_all_answer_density() {
+        Answer_Density::scan_all_posts();
+        return $this->get_answer_density_summary();
+    }
+
+    /**
+     * User-asserted "this answer is fine" for a specific heading on a specific
+     * post. Persists in post meta, rescans, refreshes the site summary so the
+     * dashboard reflects the change immediately.
+     */
+    public function dismiss_answer_density( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        $heading = (string) $request->get_param( 'heading' );
+        $data    = Answer_Density::dismiss( $post_id, $heading );
+        Answer_Density::refresh_summary();
+        return rest_ensure_response( $data );
+    }
+
+    /**
+     * Reverse of dismiss(). Surfaces the heading again as an issue.
+     */
+    public function undismiss_answer_density( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        $heading = (string) $request->get_param( 'heading' );
+        $data    = Answer_Density::undismiss( $post_id, $heading );
+        Answer_Density::refresh_summary();
+        return rest_ensure_response( $data );
+    }
+
+    /**
+     * Pro AI Rewrite — generate an answer-first opener for a buried heading.
+     * Pulls the cached scan to grab the original_paragraph + buried_opener
+     * for the named heading, then asks the proxy. One credit on success.
+     */
+    public function rewrite_opener( $request ) {
+        if ( ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_Error( 'pro_required', 'AI Rewrite requires a Pro license.', array( 'status' => 403 ) );
+        }
+
+        $post_id        = absint( $request->get_param( 'post_id' ) );
+        $heading        = (string) $request->get_param( 'heading' );
+        $classification = (string) $request->get_param( 'classification' );
+        $extra_context  = (string) $request->get_param( 'context' );
+
+        $scan = Answer_Density::get_for_post( $post_id );
+        if ( ! is_array( $scan ) || empty( $scan['issues'] ) ) {
+            // Trigger a fresh scan in case the cache is stale.
+            $scan = Answer_Density::scan_post( $post_id );
+        }
+
+        $target = null;
+        if ( ! empty( $scan['issues'] ) ) {
+            foreach ( $scan['issues'] as $iss ) {
+                if ( ! empty( $iss['heading'] ) && $iss['heading'] === $heading ) {
+                    $target = $iss;
+                    break;
+                }
+            }
+            if ( ! $target ) { $target = $scan['issues'][0]; }
+        }
+
+        if ( ! $target || empty( $target['first_paragraph'] ) ) {
+            return new \WP_Error( 'no_context', 'No buried-opener context found for that heading. Re-scan the post and try again.', array( 'status' => 422 ) );
+        }
+
+        $result = MetadataGenerator::rewrite_opener(
+            $post_id,
+            $heading,
+            (string) $target['first_paragraph'],
+            (string) ( $target['first_sentence'] ?? '' ),
+            $classification ?: ( $target['opener_kind'] ?? 'setup' ),
+            $extra_context
+        );
+
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Apply an AI rewrite to the post content. Replaces the FIRST paragraph
+     * after the named heading. Saves as a draft revision so the writer
+     * reviews before publishing — never directly overwrites a published post.
+     */
+    public function apply_rewrite( $request ) {
+        if ( ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_Error( 'pro_required', 'AI Rewrite requires a Pro license.', array( 'status' => 403 ) );
+        }
+
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        $heading = trim( (string) $request->get_param( 'heading' ) );
+        $rewrite = trim( (string) $request->get_param( 'rewrite' ) );
+
+        if ( ! $post_id || $heading === '' || $rewrite === '' ) {
+            return new \WP_Error( 'bad_input', 'post_id, heading, and rewrite are all required.', array( 'status' => 400 ) );
+        }
+
+        $post = get_post( $post_id );
+        if ( ! $post ) {
+            return new \WP_Error( 'no_post', 'Post not found.', array( 'status' => 404 ) );
+        }
+
+        $content = (string) $post->post_content;
+
+        // Find the matching heading (h2/h3) by exact text match, then find
+        // the FIRST <p>...</p> after it and swap its inner content.
+        $heading_quoted = preg_quote( $heading, '#' );
+        $heading_re = '#<h([23])\b[^>]*>\s*' . $heading_quoted . '\s*</h\1>#iu';
+
+        if ( ! preg_match( $heading_re, $content, $hm, PREG_OFFSET_CAPTURE ) ) {
+            return new \WP_Error( 'heading_not_found', 'Could not locate heading in post content.', array( 'status' => 422 ) );
+        }
+
+        $heading_end = $hm[0][1] + strlen( $hm[0][0] );
+        $tail        = substr( $content, $heading_end );
+
+        if ( ! preg_match( '#<p\b[^>]*>(.*?)</p>#is', $tail, $pm, PREG_OFFSET_CAPTURE ) ) {
+            return new \WP_Error( 'no_paragraph', 'No paragraph found after the heading. Open in editor and rewrite manually.', array( 'status' => 422 ) );
+        }
+
+        $p_full_offset = $heading_end + $pm[0][1];
+        $p_full_length = strlen( $pm[0][0] );
+        $new_p         = '<p>' . esc_html( $rewrite ) . '</p>';
+
+        $new_content = substr( $content, 0, $p_full_offset ) . $new_p . substr( $content, $p_full_offset + $p_full_length );
+
+        // Save as a draft revision: update the post but explicitly preserve
+        // the original status. wp_update_post triggers the on-save hook so
+        // the answer-density score refreshes on next dashboard load.
+        $update = wp_update_post( array(
+            'ID'           => $post_id,
+            'post_content' => $new_content,
+        ), true );
+
+        if ( is_wp_error( $update ) ) {
+            return $update;
+        }
+
+        return rest_ensure_response( array(
+            'success'  => true,
+            'post_id'  => $post_id,
+            'edit_url' => get_edit_post_link( $post_id, 'raw' ),
+        ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Robots
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get current robots.txt config.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_robots() {
+        $robots = new Robots();
+        return rest_ensure_response( $robots->get_config() );
+    }
+
+    /**
+     * Save robots.txt changes.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_robots( $request ) {
+        $data   = $request->get_json_params();
+        $robots = new Robots();
+        $result = $robots->save_config( $data );
+        update_option( 'asgm_robots_rules_updated', gmdate( 'c' ) );
+        return rest_ensure_response( $result );
+    }
+
+
+
+    // -----------------------------------------------------------------------
+    // LLMS.txt
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get llms.txt content and status.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_llms() {
+        $llms = new LLMS();
+        return rest_ensure_response( $llms->get_status() );
+    }
+
+    /**
+     * Regenerate llms.txt.
+     *
+     * @return \WP_REST_Response
+     */
+    public function regenerate_llms() {
+        $llms   = new LLMS();
+        $result = $llms->regenerate();
+        update_option( 'asgm_llms_txt_updated', gmdate( 'c' ) );
+        $this->log_activity( 'llms_regenerated', __( 'llms.txt regenerated.', 'aeo-god-mode' ) );
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Save llms.txt custom free-form content.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_llms_custom( $request ) {
+        $content = $request->get_param( 'content' );
+        $llms    = new LLMS();
+        $result  = $llms->save_custom_content( $content ?? '' );
+        return rest_ensure_response( $result );
+    }
+
+    // -----------------------------------------------------------------------
+    // Conflicts
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get full conflict report.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_conflicts() {
+        $conflict = new Conflict();
+        return rest_ensure_response( $conflict->scan() );
+    }
+
+    /**
+     * Resolve a conflict.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function resolve_conflict( $request ) {
+        $id         = sanitize_text_field( $request->get_param( 'id' ) );
+        $resolution = sanitize_text_field( $request->get_param( 'resolution' ) );
+        $conflict   = new Conflict();
+        return rest_ensure_response( $conflict->resolve( $id, $resolution ) );
+    }
+
+    /**
+     * Get side-by-side schema comparison.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_schema_comparison( $request ) {
+        $post_id  = absint( $request->get_param( 'post_id' ) );
+        $conflict = new Conflict();
+        return rest_ensure_response( $conflict->get_schema_comparison( $post_id ) );
+    }
+
+    /**
+     * Save a per-type schema resolution.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function resolve_schema_type( $request ) {
+        $type   = sanitize_text_field( $request->get_param( 'type' ) );
+        $choice = sanitize_text_field( $request->get_param( 'choice' ) );
+        $conflict = new Conflict();
+        return rest_ensure_response( $conflict->resolve_schema_type( $type, $choice ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Crawler Log
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get paginated crawler log.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_crawler_log( $request ) {
+        $page     = absint( $request->get_param( 'page' ) ) ?: 1;
+        $per_page = absint( $request->get_param( 'per_page' ) ) ?: 50;
+        $log      = new CrawlerLog();
+        return rest_ensure_response( $log->get_entries( $page, $per_page ) );
+    }
+
+    /**
+     * Get crawler log summary stats.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_crawler_log_summary() {
+        $log = new CrawlerLog();
+        return rest_ensure_response( $log->get_summary() );
+    }
+
+    /**
+     * Clear crawler log.
+     *
+     * @return \WP_REST_Response
+     */
+    public function clear_crawler_log() {
+        $log = new CrawlerLog();
+        $log->clear();
+        return rest_ensure_response( array( 'success' => true ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Content Gaps
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get content gap scan results.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_content_gaps() {
+        $gaps = new ContentGaps();
+        return rest_ensure_response( $gaps->get_results() );
+    }
+
+    /**
+     * Run a fresh content gap scan.
+     *
+     * @return \WP_REST_Response
+     */
+    public function run_content_gap_scan() {
+        $gaps   = new ContentGaps();
+        $result = $gaps->scan();
+        $this->log_activity( 'content_gap_scan', __( 'Content gap scan completed.', 'aeo-god-mode' ) );
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Apply a content gap fix.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function apply_content_gap_fix( $request ) {
+        $post_id  = absint( $request->get_param( 'post_id' ) );
+        $fix_type = sanitize_text_field( $request->get_param( 'fix_type' ) );
+        $gaps     = new ContentGaps();
+        return rest_ensure_response( $gaps->apply_fix( $post_id, $fix_type, $request->get_params() ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Validation
+    // -----------------------------------------------------------------------
+
+    /**
+     * Validate schema for a single post.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function validate_schema( $request ) {
+        $post_id   = absint( $request->get_param( 'post_id' ) );
+        $validator = new Validator();
+        return rest_ensure_response( $validator->validate_post( $post_id ) );
+    }
+
+    /**
+     * Bulk validate all posts.
+     *
+     * @return \WP_REST_Response
+     */
+    public function validate_bulk() {
+        $validator = new Validator();
+        return rest_ensure_response( $validator->validate_all() );
+    }
+
+    // -----------------------------------------------------------------------
+    // GSC
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get GSC connection status.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_status() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_status() );
+    }
+
+    /**
+     * Start GSC OAuth connection.
+     *
+     * @return \WP_REST_Response
+     */
+    public function connect_gsc() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->initiate_connection() );
+    }
+
+    /**
+     * Get per-page GSC data.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_pages() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_pages() );
+    }
+
+    /**
+     * Get GSC alerts.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_alerts() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_alerts() );
+    }
+
+    /**
+     * Handle Google OAuth callback (redirect from Google).
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response|\WP_Error
+     */
+    public function gsc_oauth_callback( $request ) {
+        $code         = $request->get_param( 'code' );
+        $state        = $request->get_param( 'state' );
+        $error        = $request->get_param( 'error' );
+        $proxy_tokens = $request->get_param( 'proxy_tokens' );
+        $proxy_error  = $request->get_param( 'proxy_error' );
+
+        // If Google returned an error (user denied access etc).
+        if ( ! empty( $error ) ) {
+            wp_safe_redirect( admin_url( 'admin.php?page=aeo-god-mode&gsc_error=' . rawurlencode( $error ) ) );
+            exit;
+        }
+
+        $gsc    = new GSC();
+        $result = $gsc->handle_callback( $code, $state, $proxy_tokens, $proxy_error );
+
+        if ( $result['success'] ) {
+            wp_safe_redirect( admin_url( 'admin.php?page=aeo-god-mode&gsc_connected=1' ) );
+        } else {
+            wp_safe_redirect( admin_url( 'admin.php?page=aeo-god-mode&gsc_error=' . rawurlencode( $result['message'] ) ) );
+        }
+        exit;
+    }
+
+    /**
+     * Disconnect GSC.
+     *
+     * @return \WP_REST_Response
+     */
+    public function disconnect_gsc() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->disconnect() );
+    }
+
+    /**
+     * Sync data from GSC.
+     *
+     * @return \WP_REST_Response
+     */
+    public function sync_gsc() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->sync() );
+    }
+
+    /**
+     * Get sync progress for background URL inspection.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_sync_progress() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_sync_progress() );
+    }
+
+    /**
+     * Get classified GSC query data.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_queries() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_queries() );
+    }
+
+    /**
+     * Get GSC AI query summary with fan-out clusters.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_ai_summary() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_ai_summary() );
+    }
+
+    /**
+     * Submit URLs to IndexNow.
+     *
+     * @param \WP_REST_Request $request The API request.
+     * @return \WP_REST_Response
+     */
+    public function gsc_index_now( $request ) {
+        $gsc  = new GSC();
+        $urls = $request->get_param( 'urls' );
+        return rest_ensure_response( $gsc->submit_index_now( $urls ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal Link Builder
+    // -----------------------------------------------------------------------
+
+    /**
+     * Find internal link opportunities for a target URL.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response
+     */
+    public function gsc_build_links( $request ) {
+        $target_url   = esc_url_raw( $request->get_param( 'target_url' ) );
+        $anchor_hint  = sanitize_text_field( $request->get_param( 'anchor_hint' ) ?? '' );
+        $max_results  = absint( $request->get_param( 'max_results' ) ?: 5 );
+        $max_results  = min( max( $max_results, 1 ), 9 );
+        $ignore_cache = (bool) $request->get_param( 'ignore_cache' );
+
+        if ( empty( $target_url ) ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'target_url is required.' ) );
+        }
+
+        $result = Internal_Link_Builder::find_opportunities( $target_url, $anchor_hint, $max_results, $ignore_cache );
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Apply a single link suggestion to a post.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response
+     */
+    public function gsc_apply_link( $request ) {
+        $source_post_id     = absint( $request->get_param( 'source_post_id' ) );
+        $original_sentence  = $request->get_param( 'original_sentence' );
+        $rewritten_sentence = $request->get_param( 'rewritten_sentence' );
+        $target_url         = esc_url_raw( $request->get_param( 'target_url' ) ?? '' );
+
+        if ( ! $source_post_id || empty( $original_sentence ) || empty( $rewritten_sentence ) ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Missing required parameters.' ) );
+        }
+
+        $result = Internal_Link_Builder::apply_suggestion( $source_post_id, $original_sentence, $rewritten_sentence, $target_url );
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Build or rebuild the section index for all posts.
+     *
+     * @return \WP_REST_Response
+     */
+    public function gsc_build_section_index( $request ) {
+        $index_result = Section_Index::index_all();
+        $embed_result = Section_Index::embed_all();
+
+        return rest_ensure_response( array(
+            'success' => true,
+            'index'   => $index_result,
+            'embed'   => $embed_result,
+        ) );
+    }
+
+    /**
+     * Get section index stats.
+     *
+     * @return \WP_REST_Response
+     */
+    public function gsc_section_index_stats() {
+        return rest_ensure_response( Section_Index::get_stats() );
+    }
+
+    /**
+     * Backfill best_sentences column for existing sections.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response
+     */
+    public function gsc_backfill_best_sentences( $request ) {
+        $limit  = absint( $request->get_param( 'limit' ) ?: 100 );
+        $result = Section_Index::backfill_best_sentences( $limit );
+        return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Citation Tracker
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get citation status and results.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_citations() {
+        $tracker = new CitationTracker();
+        return rest_ensure_response( $tracker->get_status() );
+    }
+
+    /**
+     * Run a manual citation check.
+     *
+     * @return \WP_REST_Response
+     */
+    public function run_citation_check() {
+        $tracker = new CitationTracker();
+        $result  = $tracker->run_check();
+        $this->log_activity( 'citation_check', __( 'Citation check completed.', 'aeo-god-mode' ) );
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Get citation page readiness reports.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_citation_page_reports() {
+        $tracker = new CitationTracker();
+        return rest_ensure_response( $tracker->get_page_reports() );
+    }
+
+    /**
+     * GET /citations/queries — return the saved query list.
+     */
+    public function get_citation_queries() {
+        $tracker = new CitationTracker();
+        return rest_ensure_response( array(
+            'queries' => $tracker->get_user_queries(),
+        ) );
+    }
+
+    /**
+     * POST /citations/queries — append one or many queries to the saved list.
+     * Accepts either { query: "..." } or { queries: [..., ...] }.
+     */
+    public function add_citation_queries( \WP_REST_Request $request ) {
+        $tracker = new CitationTracker();
+        $params  = $request->get_json_params();
+        $list    = array();
+        if ( isset( $params['queries'] ) && is_array( $params['queries'] ) ) {
+            $list = $params['queries'];
+        } elseif ( isset( $params['query'] ) ) {
+            $list = array( (string) $params['query'] );
+        }
+        if ( empty( $list ) ) {
+            return new \WP_Error( 'no_input', __( 'No queries provided.', 'aeo-god-mode' ), array( 'status' => 400 ) );
+        }
+        $saved = $tracker->add_user_queries( $list );
+        return rest_ensure_response( array(
+            'queries' => $saved,
+            'count'   => count( $saved ),
+        ) );
+    }
+
+    /**
+     * PUT /citations/queries — replace the entire saved list.
+     */
+    public function replace_citation_queries( \WP_REST_Request $request ) {
+        $tracker = new CitationTracker();
+        $params  = $request->get_json_params();
+        $list    = isset( $params['queries'] ) && is_array( $params['queries'] ) ? $params['queries'] : array();
+        $saved   = $tracker->set_user_queries( $list );
+        return rest_ensure_response( array(
+            'queries' => $saved,
+            'count'   => count( $saved ),
+        ) );
+    }
+
+    /**
+     * DELETE /citations/queries?index=N — remove the query at the given index.
+     */
+    public function remove_citation_query( \WP_REST_Request $request ) {
+        $tracker = new CitationTracker();
+        $index   = $request->get_param( 'index' );
+        if ( $index === null || ! is_numeric( $index ) ) {
+            return new \WP_Error( 'bad_index', __( 'Missing or invalid index.', 'aeo-god-mode' ), array( 'status' => 400 ) );
+        }
+        $saved = $tracker->remove_user_query( (int) $index );
+        return rest_ensure_response( array(
+            'queries' => $saved,
+            'count'   => count( $saved ),
+        ) );
+    }
+
+    /**
+     * POST /citations/queries/generate — use the user's first connected engine
+     * to draft query suggestions. Does NOT save the suggestions; the frontend
+     * lets the user pick which to keep.
+     */
+    public function ai_generate_citation_queries( \WP_REST_Request $request ) {
+        $tracker = new CitationTracker();
+        $count   = (int) $request->get_param( 'count' );
+        if ( $count < 3 ) {
+            $count = 8;
+        }
+        $result = $tracker->ai_generate_queries( $count );
+        if ( is_wp_error( $result ) ) {
+            return $result;
+        }
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * DELETE /citations/results/by-query, body: { query: "..." }
+     * Removes every stored result row matching the given query.
+     */
+    public function delete_citation_results_by_query( \WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+        $query  = isset( $params['query'] ) ? trim( (string) $params['query'] ) : '';
+        if ( $query === '' ) {
+            return new \WP_Error( 'no_query', __( 'No query supplied.', 'aeo-god-mode' ), array( 'status' => 400 ) );
+        }
+        $tracker = new CitationTracker();
+        return rest_ensure_response( $tracker->delete_results_by_query( $query ) );
+    }
+
+    /**
+     * DELETE /citations/results/all
+     * Wipes asgm_citation_results and asgm_citation_history. Saved queries are preserved.
+     */
+    public function clear_all_citation_results( \WP_REST_Request $request ) {
+        $tracker = new CitationTracker();
+        return rest_ensure_response( $tracker->clear_all_results() );
+    }
+
+    /**
+     * Save an API key for a citation tracker engine.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_citation_api_key( $request ) {
+        $engine  = sanitize_text_field( $request->get_param( 'engine' ) );
+        $api_key = sanitize_text_field( $request->get_param( 'api_key' ) );
+        $tracker = new CitationTracker();
+        return rest_ensure_response( $tracker->save_api_key( $engine, $api_key ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // AI Referrals
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get AI referral stats.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_ai_referrals() {
+        $referrals = new AIReferrals();
+        return rest_ensure_response( $referrals->get_stats() );
+    }
+
+    /**
+     * Get paginated AI referral entries.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_ai_referral_entries( $request ) {
+        $page     = absint( $request->get_param( 'page' ) ) ?: 1;
+        $per_page = absint( $request->get_param( 'per_page' ) ) ?: 50;
+        $referrals = new AIReferrals();
+        return rest_ensure_response( $referrals->get_entries( $page, $per_page ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Citability Score
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get citability score for a single post.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_citability_score( $request ) {
+        $post_id   = absint( $request->get_param( 'post_id' ) );
+        $citability = new CitabilityScore();
+        return rest_ensure_response( $citability->score_post( $post_id ) );
+    }
+
+    /**
+     * Score all published posts.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_citability_all() {
+        $citability = new CitabilityScore();
+        return rest_ensure_response( $citability->score_all() );
+    }
+
+    /**
+     * Get cached citability results (no re-scan).
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_citability_cached() {
+        $citability = new CitabilityScore();
+        $cached     = $citability->get_cached();
+        return rest_ensure_response( $cached ?: array( 'results' => null ) );
+    }
+
+    /**
+     * Exclude a post from citability scoring.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function citability_exclude( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        if ( ! $post_id ) {
+            return rest_ensure_response( array( 'success' => false, 'message' => 'Missing post_id' ) );
+        }
+        $citability = new CitabilityScore();
+        return rest_ensure_response( $citability->exclude_post( $post_id ) );
+    }
+
+    /**
+     * Re-include a previously excluded post.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function citability_include( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        if ( ! $post_id ) {
+            return rest_ensure_response( array( 'success' => false, 'message' => 'Missing post_id' ) );
+        }
+        $citability = new CitabilityScore();
+        return rest_ensure_response( $citability->include_post( $post_id ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // E-E-A-T Author Profiles
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get all authors with E-E-A-T meta.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_eeat_authors() {
+        $users = get_users( array(
+            'role__in' => array( 'administrator', 'editor', 'author' ),
+            'orderby'  => 'display_name',
+            'order'    => 'ASC',
+        ) );
+
+        $authors = array();
+        foreach ( $users as $user ) {
+            $authors[] = $this->format_eeat_author( $user );
+        }
+
+        $settings        = get_option( 'asgm_settings', array() );
+        $author_card_on  = ! empty( $settings['author_card_enabled'] );
+        $default_fields  = array( 'avatar', 'name', 'job_title', 'employer', 'bio', 'expertise', 'credentials', 'education', 'socials', 'view_all_posts' );
+        $card_fields     = isset( $settings['author_card_fields'] ) ? $settings['author_card_fields'] : $default_fields;
+
+        return rest_ensure_response( array(
+            'authors'             => $authors,
+            'author_card_enabled' => $author_card_on,
+            'card_fields'         => $card_fields,
+        ) );
+    }
+
+    /**
+     * Format a single user's E-E-A-T data.
+     *
+     * @param \WP_User $user User object.
+     * @return array
+     */
+    private function format_eeat_author( $user ) {
+        $meta_keys = array(
+            'first_name', 'last_name', 'description',
+            'asgm_job_title', 'asgm_employer', 'asgm_expertise',
+            'asgm_education', 'asgm_credentials', 'asgm_social_profiles',
+        );
+
+        // Individual social platform fields.
+        $social_keys = array( 'linkedin', 'twitter', 'youtube', 'facebook', 'instagram', 'github' );
+
+        $data = array(
+            'id'         => $user->ID,
+            'username'   => $user->user_login,
+            'name'       => $user->display_name,
+            'email'      => $user->user_email,
+            'avatar'     => $this->get_local_avatar_url( $user->ID, 128 ),
+            'post_count' => count_user_posts( $user->ID, 'post', true ),
+        );
+
+        foreach ( $meta_keys as $key ) {
+            $data[ $key ] = get_the_author_meta( $key, $user->ID );
+        }
+
+        foreach ( $social_keys as $key ) {
+            $data[ $key ] = get_the_author_meta( $key, $user->ID );
+        }
+
+        // Completion scoring (weighted, 8 criteria).
+        $score = 0;
+        $max   = 0;
+
+        // Name fields (15 pts each = 30).
+        $max += 30;
+        if ( ! empty( $data['first_name'] ) ) $score += 15;
+        if ( ! empty( $data['last_name'] ) )  $score += 15;
+
+        // Bio (15 pts).
+        $max += 15;
+        if ( ! empty( $data['description'] ) && strlen( $data['description'] ) > 20 ) $score += 15;
+
+        // Job title (15 pts).
+        $max += 15;
+        if ( ! empty( $data['asgm_job_title'] ) ) $score += 15;
+
+        // Employer (10 pts).
+        $max += 10;
+        if ( ! empty( $data['asgm_employer'] ) ) $score += 10;
+
+        // Expertise (10 pts).
+        $max += 10;
+        if ( ! empty( $data['asgm_expertise'] ) ) $score += 10;
+
+        // Education (10 pts).
+        $max += 10;
+        if ( ! empty( $data['asgm_education'] ) ) $score += 10;
+
+        // Credentials (10 pts).
+        $max += 10;
+        if ( ! empty( $data['asgm_credentials'] ) ) $score += 10;
+
+        $data['completion_score'] = $max > 0 ? (int) round( ( $score / $max ) * 100 ) : 0;
+
+        // Per-field status for UI indicators.
+        $data['missing_fields'] = array();
+        if ( empty( $data['first_name'] ) )       $data['missing_fields'][] = 'First Name';
+        if ( empty( $data['last_name'] ) )        $data['missing_fields'][] = 'Last Name';
+        if ( empty( $data['description'] ) || strlen( $data['description'] ) < 20 ) $data['missing_fields'][] = 'Bio';
+        if ( empty( $data['asgm_job_title'] ) )   $data['missing_fields'][] = 'Job Title';
+        if ( empty( $data['asgm_employer'] ) )    $data['missing_fields'][] = 'Employer';
+        if ( empty( $data['asgm_expertise'] ) )   $data['missing_fields'][] = 'Expertise';
+        if ( empty( $data['asgm_education'] ) )   $data['missing_fields'][] = 'Education';
+        if ( empty( $data['asgm_credentials'] ) ) $data['missing_fields'][] = 'Credentials';
+
+        return $data;
+    }
+
+    /**
+     * Save E-E-A-T author profile fields.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_eeat_author( $request ) {
+        $user_id = absint( $request->get_param( 'user_id' ) );
+        if ( ! $user_id || ! get_userdata( $user_id ) ) {
+            return rest_ensure_response( array( 'success' => false, 'message' => 'Invalid user.' ) );
+        }
+
+        // Core WP fields.
+        $core_fields = array( 'first_name', 'last_name', 'description' );
+        foreach ( $core_fields as $field ) {
+            $value = $request->get_param( $field );
+            if ( null !== $value ) {
+                update_user_meta( $user_id, $field, sanitize_text_field( $value ) );
+            }
+        }
+
+        // Custom E-E-A-T fields.
+        $eeat_fields = array(
+            'asgm_job_title', 'asgm_employer', 'asgm_expertise',
+            'asgm_education', 'asgm_credentials', 'asgm_social_profiles',
+        );
+        foreach ( $eeat_fields as $field ) {
+            $value = $request->get_param( $field );
+            if ( null !== $value ) {
+                if ( 'asgm_social_profiles' === $field ) {
+                    update_user_meta( $user_id, $field, sanitize_textarea_field( $value ) );
+                } else {
+                    update_user_meta( $user_id, $field, sanitize_text_field( $value ) );
+                }
+            }
+        }
+
+        // Individual social platform URLs.
+        $social_fields = array( 'linkedin', 'twitter', 'youtube', 'facebook', 'instagram', 'github' );
+        foreach ( $social_fields as $field ) {
+            $value = $request->get_param( $field );
+            if ( null !== $value ) {
+                update_user_meta( $user_id, $field, esc_url_raw( $value ) );
+            }
+        }
+
+        // Update display_name if first + last provided.
+        $first = get_the_author_meta( 'first_name', $user_id );
+        $last  = get_the_author_meta( 'last_name', $user_id );
+        if ( ! empty( $first ) && ! empty( $last ) ) {
+            wp_update_user( array( 'ID' => $user_id, 'display_name' => "$first $last" ) );
+        }
+
+        $user = get_userdata( $user_id );
+        return rest_ensure_response( array(
+            'success' => true,
+            'author'  => $this->format_eeat_author( $user ),
+        ) );
+    }
+
+    /**
+     * Toggle author card display on frontend.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function toggle_author_card( $request ) {
+        $enabled  = (bool) $request->get_param( 'enabled' );
+        $settings = get_option( 'asgm_settings', array() );
+        $settings['author_card_enabled'] = $enabled;
+        update_option( 'asgm_settings', $settings );
+
+        return rest_ensure_response( array( 'success' => true, 'enabled' => $enabled ) );
+    }
+
+    /**
+     * Save per-field display toggles for the author card.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_card_fields( $request ) {
+        $allowed  = array( 'avatar', 'name', 'job_title', 'employer', 'bio', 'expertise', 'credentials', 'education', 'socials', 'view_all_posts' );
+        $raw      = $request->get_param( 'fields' );
+        $fields   = is_array( $raw ) ? array_values( array_intersect( $raw, $allowed ) ) : $allowed;
+        $settings = get_option( 'asgm_settings', array() );
+        $settings['author_card_fields'] = $fields;
+        update_option( 'asgm_settings', $settings );
+
+        return rest_ensure_response( array( 'success' => true, 'card_fields' => $fields ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // AI Plugin Manifest
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get AI plugin manifest status.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_ai_plugin_status() {
+        $plugin = new AIPlugin();
+        return rest_ensure_response( $plugin->get_status() );
+    }
+
+    /**
+     * Get aggregated AI signals health for the dashboard.
+     *
+     * Pulls live status from robots, llms, and headers modules.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_ai_signals_health() {
+        // --- Robots / AI Crawlers ---
+        $robots        = new Robots();
+        $robots_config = $robots->get_config();
+        $bots          = isset( $robots_config['bots'] ) ? $robots_config['bots'] : array();
+        $total_bots    = count( $bots );
+        $configured    = 0;
+        $allowed       = 0;
+        $disallowed    = 0;
+
+        foreach ( $bots as $info ) {
+            $status = isset( $info['status'] ) ? $info['status'] : 'not_set';
+            if ( 'not_set' !== $status ) {
+                ++$configured;
+            }
+            if ( 'allow' === $status ) {
+                ++$allowed;
+            }
+            if ( 'disallow' === $status ) {
+                ++$disallowed;
+            }
+        }
+
+        $robots_last_saved = get_option( 'asgm_robots_rules_updated', '' );
+
+        // --- LLMS ---
+        $llms         = new LLMS();
+        $llms_status  = $llms->get_status();
+        $llms_content = isset( $llms_status['content'] ) ? $llms_status['content'] : '';
+        $llms_updated = get_option( 'asgm_llms_txt_updated', '' );
+
+        // Run spec compliance checks.
+        $compliance = array(
+            'has_h1'          => (bool) preg_match( '/^# .+/m', $llms_content ),
+            'has_blockquote'  => (bool) preg_match( '/^> .+/m', $llms_content ),
+            'has_links'       => (bool) preg_match( '/\[.+\]\(.+\)/', $llms_content ),
+        );
+        $spec_compliant = $compliance['has_h1'] && $compliance['has_blockquote'] && $compliance['has_links'];
+
+        // --- Headers ---
+        $header_states = AIHeaders::get_states();
+        $active_count  = 0;
+        foreach ( $header_states as $state ) {
+            if ( 'on' === $state['state'] ) {
+                ++$active_count;
+            }
+        }
+
+        return rest_ensure_response( array(
+            'crawlers'   => array(
+                'total'       => $total_bots,
+                'configured'  => $configured,
+                'allowed'     => $allowed,
+                'disallowed'  => $disallowed,
+                'last_saved'  => $robots_last_saved,
+            ),
+            'llms'       => array(
+                'exists'         => ! empty( $llms_content ),
+                'spec_compliant' => $spec_compliant,
+                'compliance'     => $compliance,
+                'last_updated'   => $llms_updated,
+                'word_count'     => str_word_count( $llms_content ),
+            ),
+            'headers'    => array(
+                'total'    => count( $header_states ),
+                'active'   => $active_count,
+                'states'   => $header_states,
+            ),
+        ) );
+    }
+
+    /**
+     * Get AI header toggle states.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_ai_headers() {
+        return rest_ensure_response( AIHeaders::get_states() );
+    }
+
+    /**
+     * Save AI header toggle states.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response
+     */
+    public function save_ai_headers( $request ) {
+        $data   = $request->get_json_params();
+        $result = AIHeaders::save_states( $data );
+        $this->log_activity( 'ai_headers_updated', __( 'AI header settings updated.', 'aeo-god-mode' ) );
+        return rest_ensure_response( $result );
+    }
+
+    // -----------------------------------------------------------------------
+    // Activity Log
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get recent activity entries.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_activity() {
+        $activity = get_option( 'asgm_activity_log', array() );
+        return rest_ensure_response( array_slice( $activity, 0, 20 ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // License
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get license status.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_license_status() {
+        $license = new License();
+        return rest_ensure_response( $license->get_status() );
+    }
+
+    /**
+     * Activate a license key.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function activate_license( $request ) {
+        $key     = sanitize_text_field( $request->get_param( 'license_key' ) );
+        $license = new License();
+        $result  = $license->activate( $key );
+
+        if ( ! empty( $result['success'] ) ) {
+            $this->log_activity( 'license_activated', __( 'Pro license activated.', 'aeo-god-mode' ) );
+        }
+
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Deactivate the current license.
+     *
+     * @return \WP_REST_Response
+     */
+    public function deactivate_license() {
+        $license = new License();
+        $result  = $license->deactivate();
+        $this->log_activity( 'license_deactivated', __( 'Pro license deactivated.', 'aeo-god-mode' ) );
+        return rest_ensure_response( $result );
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Log a plugin activity event.
+     *
+     * @param string $type    Event type.
+     * @param string $message Description.
+     */
+    private function log_activity( $type, $message ) {
+        $activity = get_option( 'asgm_activity_log', array() );
+
+        array_unshift( $activity, array(
+            'type'      => $type,
+            'message'   => $message,
+            'timestamp' => current_time( 'mysql' ),
+        ) );
+
+        // Keep last 100 entries.
+        $activity = array_slice( $activity, 0, 100 );
+
+        update_option( 'asgm_activity_log', $activity );
+    }
+
+    /**
+     * Deep-merge two associative arrays.
+     *
+     * @param array $base    Existing values.
+     * @param array $overlay New values.
+     * @return array
+     */
+    private function deep_merge( $base, $overlay ) {
+        foreach ( $overlay as $key => $value ) {
+            if ( is_array( $value ) && isset( $base[ $key ] ) && is_array( $base[ $key ] ) ) {
+                $base[ $key ] = $this->deep_merge( $base[ $key ], $value );
+            } else {
+                $base[ $key ] = $value;
+            }
+        }
+        return $base;
+    }
+
+    // -----------------------------------------------------------------------
+    // Local Avatar Upload
+    // -----------------------------------------------------------------------
+
+    /**
+     * Upload author profile photo (local avatar, no Gravatar needed).
+     *
+     * POST /aeo-god-mode/v1/eeat/avatar
+     * Form data: user_id (int), avatar (file, JPEG only)
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function upload_eeat_avatar( $request ) {
+        $user_id = absint( $request->get_param( 'user_id' ) );
+        if ( ! $user_id || ! get_userdata( $user_id ) ) {
+            return rest_ensure_response( array( 'success' => false, 'message' => 'Invalid user.' ) );
+        }
+
+        $files = $request->get_file_params();
+        if ( empty( $files['avatar'] ) ) {
+            return rest_ensure_response( array( 'success' => false, 'message' => 'No avatar file uploaded.' ) );
+        }
+
+        $file = $files['avatar'];
+
+        // Validate file type (JPEG/JPG only).
+        $allowed = array( 'image/jpeg', 'image/jpg' );
+        $finfo   = wp_check_filetype( $file['name'] );
+        if ( empty( $finfo['type'] ) || ! in_array( $finfo['type'], $allowed, true ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'message' => 'Only JPEG/JPG files are accepted.',
+            ) );
+        }
+
+        // Upload to WordPress media library.
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+
+        // Temporarily set the upload to associate with user context.
+        $_FILES['avatar'] = $file;
+        $attachment_id = media_handle_upload( 'avatar', 0 );
+
+        if ( is_wp_error( $attachment_id ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'message' => $attachment_id->get_error_message(),
+            ) );
+        }
+
+        // Delete old avatar attachment if exists.
+        $old_id = get_user_meta( $user_id, 'asgm_avatar_id', true );
+        if ( $old_id ) {
+            wp_delete_attachment( intval( $old_id ), true );
+        }
+
+        // Save attachment ID and URL to user meta.
+        $avatar_url = wp_get_attachment_image_url( $attachment_id, 'thumbnail' );
+        update_user_meta( $user_id, 'asgm_avatar_id', $attachment_id );
+        update_user_meta( $user_id, 'asgm_avatar_url', esc_url_raw( $avatar_url ) );
+
+        return rest_ensure_response( array(
+            'success'    => true,
+            'avatar_url' => $avatar_url,
+            'message'    => 'Profile photo updated.',
+        ) );
+    }
+
+    /**
+     * Get local avatar URL for a user, falling back to Gravatar.
+     *
+     * @param int $user_id User ID.
+     * @param int $size    Image size.
+     * @return string Avatar URL.
+     */
+    private function get_local_avatar_url( $user_id, $size = 128 ) {
+        $local = get_user_meta( $user_id, 'asgm_avatar_url', true );
+        if ( ! empty( $local ) ) {
+            return $local;
+        }
+        return get_avatar_url( $user_id, array( 'size' => $size ) );
+    }
+
+    /**
+     * Initialize WordPress avatar filter overrides.
+     * Call this from the main plugin init to replace Gravatar globally.
+     */
+    public static function init_avatar_filters() {
+        // Override avatar URL for users who have a local avatar.
+        add_filter( 'get_avatar_url', function( $url, $id_or_email, $args ) {
+            $user_id = 0;
+
+            if ( is_numeric( $id_or_email ) ) {
+                $user_id = absint( $id_or_email );
+            } elseif ( is_string( $id_or_email ) ) {
+                $user = get_user_by( 'email', $id_or_email );
+                if ( $user ) {
+                    $user_id = $user->ID;
+                }
+            } elseif ( $id_or_email instanceof \WP_User ) {
+                $user_id = $id_or_email->ID;
+            } elseif ( $id_or_email instanceof \WP_Post ) {
+                $user_id = $id_or_email->post_author;
+            } elseif ( $id_or_email instanceof \WP_Comment ) {
+                if ( ! empty( $id_or_email->user_id ) ) {
+                    $user_id = absint( $id_or_email->user_id );
+                }
+            }
+
+            if ( $user_id ) {
+                $local = get_user_meta( $user_id, 'asgm_avatar_url', true );
+                if ( ! empty( $local ) ) {
+                    return $local;
+                }
+            }
+
+            return $url;
+        }, 10, 3 );
+
+        // Add upload field to WordPress user profile page.
+        add_action( 'show_user_profile', array( __CLASS__, 'render_avatar_field' ) );
+        add_action( 'edit_user_profile', array( __CLASS__, 'render_avatar_field' ) );
+        add_action( 'personal_options_update', array( __CLASS__, 'save_avatar_field' ) );
+        add_action( 'edit_user_profile_update', array( __CLASS__, 'save_avatar_field' ) );
+    }
+
+    /**
+     * Render the custom avatar upload field on the WP user profile page.
+     *
+     * @param \WP_User $user User being edited.
+     */
+    public static function render_avatar_field( $user ) {
+        $avatar_url = get_user_meta( $user->ID, 'asgm_avatar_url', true );
+        ?>
+        <h3><?php esc_html_e( 'Profile Photo', 'aeo-god-mode' ); ?></h3>
+        <table class="form-table">
+            <tr>
+                <th><label for="asgm_avatar"><?php esc_html_e( 'Upload Photo', 'aeo-god-mode' ); ?></label></th>
+                <td>
+                    <?php if ( ! empty( $avatar_url ) ) : ?>
+                        <img src="<?php echo esc_url( $avatar_url ); ?>" alt="Profile Photo"
+                             style="width:96px;height:96px;border-radius:50%;object-fit:cover;display:block;margin-bottom:10px;" />
+                    <?php endif; ?>
+                    <input type="file" name="asgm_avatar" id="asgm_avatar" accept=".jpg,.jpeg,image/jpeg" />
+                    <p class="description"><?php esc_html_e( 'Upload a JPEG photo. This replaces Gravatar for your profile.', 'aeo-god-mode' ); ?></p>
+                    <?php if ( ! empty( $avatar_url ) ) : ?>
+                        <label>
+                            <input type="checkbox" name="asgm_remove_avatar" value="1" />
+                            <?php esc_html_e( 'Remove current photo', 'aeo-god-mode' ); ?>
+                        </label>
+                    <?php endif; ?>
+                </td>
+            </tr>
+        </table>
+        <?php
+    }
+
+    /**
+     * Save avatar from native WordPress user profile form.
+     *
+     * @param int $user_id User ID being saved.
+     */
+    public static function save_avatar_field( $user_id ) {
+        if ( ! current_user_can( 'edit_user', $user_id ) ) {
+            return;
+        }
+
+        // Nonce is verified by WordPress core in wp-admin/user-edit.php before
+        // the personal_options_update / edit_user_profile_update actions fire.
+        // Adding explicit check here to satisfy static analysis tools.
+        if ( ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'update-user_' . $user_id ) ) {
+            return;
+        }
+
+        // Handle removal.
+        if ( ! empty( $_POST['asgm_remove_avatar'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above.
+            $old_id = get_user_meta( $user_id, 'asgm_avatar_id', true );
+            if ( $old_id ) {
+                wp_delete_attachment( intval( $old_id ), true );
+            }
+            delete_user_meta( $user_id, 'asgm_avatar_id' );
+            delete_user_meta( $user_id, 'asgm_avatar_url' );
+            return;
+        }
+
+        // Handle upload.
+        if ( ! empty( $_FILES['asgm_avatar'] ) && ! empty( $_FILES['asgm_avatar']['name'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above.
+            $filename = sanitize_file_name( wp_unslash( $_FILES['asgm_avatar']['name'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitized via sanitize_file_name.
+            $finfo    = wp_check_filetype( $filename );
+            if ( empty( $finfo['type'] ) || ! in_array( $finfo['type'], array( 'image/jpeg', 'image/jpg' ), true ) ) {
+                return; // Not a JPEG, skip silently.
+            }
+
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+
+            $attachment_id = media_handle_upload( 'asgm_avatar', 0 );
+
+            if ( ! is_wp_error( $attachment_id ) ) {
+                // Delete old avatar.
+                $old_id = get_user_meta( $user_id, 'asgm_avatar_id', true );
+                if ( $old_id ) {
+                    wp_delete_attachment( intval( $old_id ), true );
+                }
+
+                $avatar_url = wp_get_attachment_image_url( $attachment_id, 'thumbnail' );
+                update_user_meta( $user_id, 'asgm_avatar_id', $attachment_id );
+                update_user_meta( $user_id, 'asgm_avatar_url', esc_url_raw( $avatar_url ) );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Metadata Generation
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get credit balance for the current license.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_metadata_credits() {
+        $credits = MetadataGenerator::get_credits();
+        $credits['styles'] = MetadataGenerator::STYLES;
+
+        return rest_ensure_response( $credits );
+    }
+
+    /**
+     * Get SEO plugin detection info.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_metadata_detection() {
+        return rest_ensure_response( MetadataWriter::get_detection_info() );
+    }
+
+    /**
+     * Generate metadata for one or more posts.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function generate_metadata( $request ) {
+        $post_ids  = $request->get_param( 'post_ids' );
+        $style     = sanitize_text_field( $request->get_param( 'style' ) ?? 'smart_mix' );
+        $task_type = sanitize_text_field( $request->get_param( 'task_type' ) ?? 'metadata' );
+
+        if ( empty( $post_ids ) || ! is_array( $post_ids ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'post_ids is required (array).' ), 400 );
+        }
+
+        // Batch cap: max 50 items per run.
+        $post_ids = array_slice( array_map( 'absint', $post_ids ), 0, 50 );
+
+        // Validate style.
+        if ( ! array_key_exists( $style, MetadataGenerator::STYLES ) ) {
+            $style = 'smart_mix';
+        }
+
+        // Pre-check credits.
+        $credits = MetadataGenerator::get_credits();
+        $cost_per_item = ( 'titles' === $task_type || 'generate_aeo_titles' === $task_type ) ? 2 : 1;
+        $total_cost    = count( $post_ids ) * $cost_per_item;
+
+        if ( ! empty( $credits['success'] ) && $credits['remaining'] < $total_cost ) {
+            return new \WP_REST_Response( array(
+                'success'   => false,
+                'error'     => 'Not enough credits. You have ' . $credits['remaining'] . ' remaining, but requested ' . $total_cost . ' credits worth of generation.',
+                'remaining' => $credits['remaining'],
+                'needed'    => $total_cost,
+            ), 429 );
+        }
+
+        $results = array();
+        foreach ( $post_ids as $pid ) {
+            $context = MetadataWriter::get_post_context( $pid ); // Retrieve context for existing meta
+            if ( empty( $context ) ) continue;
+
+            if ( 'titles' === $task_type || 'generate_aeo_titles' === $task_type ) {
+                $result = MetadataGenerator::generate_titles( $pid );
+                if ( ! empty( $result['success'] ) && ! empty( $result['result'] ) ) {
+                    $parsed = json_decode( $result['result'], true );
+                    $recommended = $parsed['recommended'] ?? '';
+                    if ( empty( $recommended ) && ! empty( $parsed['titles'][0]['title'] ) ) {
+                        $recommended = $parsed['titles'][0]['title'];
+                    }
+                    
+                    $results[] = array(
+                        'success'  => true,
+                        'post_id'  => $pid,
+                        'style'    => 'titles',
+                        'result'   => array(
+                            'meta_title' => $recommended,
+                            'meta_description' => '',
+                        ),
+                        'existing' => $context['existing_meta'],
+                    );
+                } else {
+                    $results[] = array( 'success' => false, 'error' => $result['error'] ?? 'Title Generation Failed' );
+                }
+            } else {
+                $result = MetadataGenerator::generate( $pid, $style );
+                $results[] = $result;
+            }
+        }
+
+        // Get updated credit balance.
+        $updated_credits = MetadataGenerator::get_credits();
+
+        return rest_ensure_response( array(
+            'success' => true,
+            'results' => $results,
+            'credits' => $updated_credits,
+        ) );
+    }
+
+    /**
+     * Accept and write generated metadata to post(s).
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function accept_metadata( $request ) {
+        $items = $request->get_param( 'items' );
+
+        if ( empty( $items ) || ! is_array( $items ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'items is required (array).' ), 400 );
+        }
+
+        $written = array();
+        foreach ( $items as $item ) {
+            $post_id  = absint( $item['post_id'] ?? 0 );
+            $title    = sanitize_text_field( $item['meta_title'] ?? '' );
+            $desc     = sanitize_text_field( $item['meta_description'] ?? '' );
+            $prod     = wp_kses_post( $item['product_description'] ?? '' );
+
+            if ( ! $post_id ) {
+                continue;
+            }
+
+            $result = MetadataWriter::write( $post_id, $title, $desc, $prod );
+            $result['post_id'] = $post_id;
+            $written[] = $result;
+        }
+
+        return rest_ensure_response( array(
+            'success'    => true,
+            'written'    => $written,
+            'count'      => count( $written ),
+            'seo_plugin' => MetadataWriter::detect_seo_plugin(),
+        ) );
+    }
+}

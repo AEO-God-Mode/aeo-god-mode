@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="80" viewBox="0 0 600 80">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@900&amp;display=swap');
+      .logo-text { font-family: 'Inter', sans-serif; font-size: 48px; font-weight: 900; letter-spacing: -0.02em; text-transform: uppercase; }
+    </style>
+  </defs>
+  <text x="20" y="55" class="logo-text" fill="#ffffff">AEO</text>
+  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="#338dff" transform="translate(137, 15) scale(1.8)"/>
+  <text x="192" y="55" class="logo-text" fill="#ffffff">GOD MODE</text>
+</svg>

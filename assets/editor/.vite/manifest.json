@@ -1,0 +1,12 @@
+{
+  "src/editor-panel.tsx": {
+    "file": "js/editor-panel.js",
+    "name": "editor-panel",
+    "src": "src/editor-panel.tsx",
+    "isEntry": true
+  },
+  "style.css": {
+    "file": "css/editor-panel.css",
+    "src": "style.css"
+  }
+}

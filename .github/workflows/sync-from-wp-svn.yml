@@ -1,0 +1,99 @@
+name: Mirror from WordPress.org SVN
+
+# Polls plugins.svn.wordpress.org/aeo-god-mode/tags/ every 6 hours.
+# When a new tag is detected and not yet on GitHub, exports it from SVN,
+# rsyncs it into the repo (preserving GitHub-only files), commits, tags
+# and pushes. Manual "Run workflow" button is also available from the
+# Actions tab for emergency syncs.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours, at minute 0
+  workflow_dispatch:        # manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The default GITHUB_TOKEN can push back to this same repo.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install SVN
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends subversion
+
+      - name: Resolve latest stable tag from WordPress.org SVN
+        id: svn
+        run: |
+          set -euo pipefail
+          LATEST=$(svn ls https://plugins.svn.wordpress.org/aeo-god-mode/tags/ \
+            | sed 's:/$::' \
+            | grep -E '^[0-9]+(\.[0-9]+)*$' \
+            | sort -V \
+            | tail -1)
+          if [ -z "$LATEST" ]; then
+            echo "No tags found in WP.org SVN, exiting." && exit 0
+          fi
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest WP.org tag: $LATEST"
+
+      - name: Check if tag already mirrored on GitHub
+        id: gh
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify "refs/tags/v${{ steps.svn.outputs.latest }}" >/dev/null 2>&1; then
+            echo "exists=true"  >> "$GITHUB_OUTPUT"
+            echo "Tag v${{ steps.svn.outputs.latest }} already mirrored, skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Export tag from SVN
+        if: steps.gh.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          rm -rf .svn-export
+          svn export --force \
+            "https://plugins.svn.wordpress.org/aeo-god-mode/tags/${{ steps.svn.outputs.latest }}" \
+            .svn-export
+
+      - name: Sync into repo (preserve GitHub-only files)
+        if: steps.gh.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          # rsync the export over the working tree, deleting anything not in
+          # the new tag, but always preserving GitHub-only files.
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='README.md' \
+            --exclude='LICENSE' \
+            --exclude='.svn-export' \
+            .svn-export/ ./
+          rm -rf .svn-export
+
+      - name: Commit and tag
+        if: steps.gh.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.svn.outputs.latest }}
+        run: |
+          set -euo pipefail
+          git config user.name  'AEO God Mode Mirror'
+          git config user.email 'noreply@aeogodmode.io'
+
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No content changes detected; just creating the tag."
+          else
+            git commit -m "Mirror v${VERSION} from WordPress.org SVN"
+          fi
+          git tag "v${VERSION}"
+          git push origin HEAD:main
+          git push origin "v${VERSION}"

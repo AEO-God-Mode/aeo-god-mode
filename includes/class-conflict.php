@@ -1,0 +1,583 @@
+<?php
+/**
+ * Plugin conflict detection and resolution.
+ *
+ * @package AISEOGodMode
+ */
+
+namespace AISEOGodMode;
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+/**
+ * Detects and manages conflicts with other SEO plugins.
+ */
+class Conflict {
+
+    /**
+     * Conflict types to check.
+     *
+     * @var array
+     */
+    private $checks = array(
+        'meta_title',
+        'meta_description',
+        'schema_output',
+        'robots_txt',
+        'sitemap',
+        'canonical',
+        'og_tags',
+    );
+
+    /**
+     * Run a full conflict scan.
+     *
+     * @return array
+     */
+    public function scan() {
+        $detector = new Detector();
+        $detected = $detector->scan();
+        $conflicts = array();
+
+        foreach ( $this->checks as $check ) {
+            $result = $this->check_conflict( $check, $detected );
+            if ( $result ) {
+                $conflicts[] = $result;
+            }
+        }
+
+        $saved_resolutions = get_option( 'asgm_conflict_resolutions', array() );
+
+        foreach ( $conflicts as &$conflict ) {
+            if ( isset( $saved_resolutions[ $conflict['id'] ] ) ) {
+                $conflict['resolution'] = $saved_resolutions[ $conflict['id'] ];
+            }
+        }
+
+        update_option( 'asgm_conflict_scan_cache', $conflicts );
+
+        return array(
+            'conflicts'   => $conflicts,
+            'total'       => count( $conflicts ),
+            'has_errors'  => $this->has_severity( $conflicts, 'error' ),
+            'has_warnings' => $this->has_severity( $conflicts, 'warning' ),
+        );
+    }
+
+    /**
+     * Resolve a specific conflict.
+     *
+     * @param string $id         Conflict ID.
+     * @param string $resolution Resolution type (defer, override, merge).
+     * @return array
+     */
+    public function resolve( $id, $resolution ) {
+        $valid = array( 'defer', 'override', 'merge' );
+        if ( ! in_array( $resolution, $valid, true ) ) {
+            return array( 'success' => false, 'message' => __( 'Invalid resolution type.', 'aeo-god-mode' ) );
+        }
+
+        $resolutions = get_option( 'asgm_conflict_resolutions', array() );
+        $resolutions[ $id ] = $resolution;
+        update_option( 'asgm_conflict_resolutions', $resolutions );
+
+        return array(
+            'success'    => true,
+            'id'         => $id,
+            'resolution' => $resolution,
+        );
+    }
+
+    /**
+     * Check a specific conflict type.
+     *
+     * @param string $type     Conflict type.
+     * @param array  $detected Detected plugins data.
+     * @return array|null Conflict data or null.
+     */
+    private function check_conflict( $type, $detected ) {
+        $plugins = $detected['plugins'];
+        $yoast_active = ! empty( $plugins['yoast']['active'] );
+        $rm_active    = ! empty( $plugins['rank_math']['active'] );
+        $settings     = get_option( 'asgm_settings', array() );
+        $modules      = isset( $settings['modules'] ) ? $settings['modules'] : array();
+
+        switch ( $type ) {
+            case 'meta_title':
+            case 'meta_description':
+                if ( ! empty( $modules['basic_meta'] ) && ( $yoast_active || $rm_active ) ) {
+                    $other = $yoast_active ? 'Yoast SEO' : 'Rank Math';
+                    return array(
+                        'id'          => $type,
+                        'type'        => $type,
+                        'severity'    => 'error',
+                        'title'       => 'meta_title' === $type
+                            ? __( 'Duplicate Meta Title Output', 'aeo-god-mode' )
+                            : __( 'Duplicate Meta Description Output', 'aeo-god-mode' ),
+                        'description' => sprintf(
+                            /* translators: %s: other plugin name */
+                            __( '%s is already outputting this. Having both active will cause duplicate tags.', 'aeo-god-mode' ),
+                            $other
+                        ),
+                        'affected_plugin' => $other,
+                        'resolution'      => 'defer',
+                    );
+                }
+                break;
+
+            case 'schema_output':
+                if ( ! empty( $modules['schema'] ) && ( $yoast_active || $rm_active ) ) {
+                    $other = $yoast_active ? 'Yoast SEO' : 'Rank Math';
+                    return array(
+                        'id'              => 'schema_output',
+                        'type'            => 'schema_output',
+                        'severity'        => 'warning',
+                        'title'           => __( 'Potential Schema Duplication', 'aeo-god-mode' ),
+                        'description'     => sprintf(
+                            /* translators: %s: other plugin name */
+                            __( '%s also generates schema markup. We detect duplicates and only output schema types they do not cover.', 'aeo-god-mode' ),
+                            $other
+                        ),
+                        'affected_plugin' => $other,
+                        'resolution'      => 'merge',
+                    );
+                }
+                break;
+
+            case 'robots_txt':
+                if ( ! empty( $modules['robots'] ) && ( $yoast_active || $rm_active ) ) {
+                    $other = $yoast_active ? 'Yoast SEO' : 'Rank Math';
+                    return array(
+                        'id'              => 'robots_txt',
+                        'type'            => 'robots_txt',
+                        'severity'        => 'warning',
+                        'title'           => __( 'Robots.txt Writer Conflict', 'aeo-god-mode' ),
+                        'description'     => sprintf(
+                            /* translators: %s: other plugin name */
+                            __( '%s manages robots.txt. We append AI bot rules without overwriting existing rules.', 'aeo-god-mode' ),
+                            $other
+                        ),
+                        'affected_plugin' => $other,
+                        'resolution'      => 'merge',
+                    );
+                }
+                break;
+
+            case 'canonical':
+                if ( ( $yoast_active || $rm_active ) ) {
+                    // We do not output canonicals, so no conflict here.
+                }
+                break;
+
+            case 'og_tags':
+                // We do not output OG tags, so no conflict.
+                break;
+        }
+
+        return null;
+    }
+
+    /**
+     * Check if any conflict has a given severity.
+     *
+     * @param array  $conflicts Array of conflicts.
+     * @param string $severity  Severity to check.
+     * @return bool
+     */
+    /**
+     * Check if any conflict has a given severity.
+     *
+     * @param array  $conflicts Array of conflicts.
+     * @param string $severity  Severity to check.
+     * @return bool
+     */
+    private function has_severity( $conflicts, $severity ) {
+        foreach ( $conflicts as $c ) {
+            if ( isset( $c['severity'] ) && $c['severity'] === $severity ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Get current per-type schema resolutions.
+     *
+     * @return array
+     */
+    public function get_schema_resolutions() {
+        return get_option( 'asgm_schema_resolutions', array() );
+    }
+
+    /**
+     * Save a per-type schema resolution.
+     *
+     * @param string $type   Schema type (Article, Person, BreadcrumbList, etc.).
+     * @param string $choice 'ours', 'theirs', or 'both'.
+     * @return array
+     */
+    public function resolve_schema_type( $type, $choice ) {
+        $valid_types   = array( 'Article', 'BreadcrumbList', 'Person', 'WebSite', 'Organization', 'HowTo', 'FAQPage' );
+        $valid_choices = array( 'ours', 'theirs', 'both' );
+
+        if ( ! in_array( $type, $valid_types, true ) ) {
+            return array( 'success' => false, 'message' => __( 'Invalid schema type.', 'aeo-god-mode' ) );
+        }
+        if ( ! in_array( $choice, $valid_choices, true ) ) {
+            return array( 'success' => false, 'message' => __( 'Invalid choice. Use ours, theirs, or both.', 'aeo-god-mode' ) );
+        }
+
+        $resolutions           = get_option( 'asgm_schema_resolutions', array() );
+        $resolutions[ $type ]  = $choice;
+        update_option( 'asgm_schema_resolutions', $resolutions );
+
+        return array(
+            'success'    => true,
+            'type'       => $type,
+            'choice'     => $choice,
+            'resolutions' => $resolutions,
+        );
+    }
+
+    /**
+     * Build side-by-side schema comparison for a given post.
+     *
+     * @param int $post_id Post ID (0 for homepage types).
+     * @return array
+     */
+    public function get_schema_comparison( $post_id = 0 ) {
+        $detector = new Detector();
+        $detected = $detector->scan();
+        $plugins  = $detected['plugins'];
+
+        $yoast_active = ! empty( $plugins['yoast']['active'] );
+        $rm_active    = ! empty( $plugins['rank_math']['active'] );
+
+        if ( ! $yoast_active && ! $rm_active ) {
+            return array(
+                'active_seo'   => null,
+                'comparisons'  => array(),
+                'message'      => __( 'No third-party SEO plugin detected. AEO God Mode handles all schema output.', 'aeo-god-mode' ),
+            );
+        }
+
+        $seo_name    = $rm_active ? 'Rank Math' : 'Yoast SEO';
+        $settings    = get_option( 'asgm_settings', array() );
+        $business    = isset( $settings['business'] ) ? $settings['business'] : array();
+        $resolutions = get_option( 'asgm_schema_resolutions', array() );
+
+        // Build comparison for each schema type.
+        $types = array(
+            'Article'        => array(
+                'label'       => 'Article / BlogPosting',
+                'description' => __( 'Post-level article markup with headline, dates, author, and publisher.', 'aeo-god-mode' ),
+            ),
+            'Person'         => array(
+                'label'       => 'Person (Author / E-E-A-T)',
+                'description' => __( 'Author identity with credentials, expertise, and social profiles.', 'aeo-god-mode' ),
+            ),
+            'BreadcrumbList' => array(
+                'label'       => 'BreadcrumbList',
+                'description' => __( 'Navigation breadcrumb trail for search results display.', 'aeo-god-mode' ),
+            ),
+            'WebSite'        => array(
+                'label'       => 'WebSite',
+                'description' => __( 'Site-level identity with name, URL, and sitelinks search box.', 'aeo-god-mode' ),
+            ),
+            'Organization'   => array(
+                'label'       => 'Organization',
+                'description' => __( 'Business entity with name, logo, social profiles, and contact.', 'aeo-god-mode' ),
+            ),
+            'HowTo'          => array(
+                'label'       => 'HowTo',
+                'description' => __( 'Step-by-step instructions auto-detected from post content.', 'aeo-god-mode' ),
+            ),
+            'FAQPage'        => array(
+                'label'       => 'FAQPage',
+                'description' => __( 'Question/Answer pairs auto-detected from post content.', 'aeo-god-mode' ),
+            ),
+        );
+
+        $comparisons = array();
+
+        foreach ( $types as $type => $meta ) {
+            $ours_fields   = $this->get_our_schema_fields( $type, $post_id, $business );
+            $theirs_fields = $this->get_their_schema_fields( $type, $seo_name, $rm_active );
+
+            // Count unique fields on each side.
+            $ours_keys   = array_keys( $ours_fields );
+            $theirs_keys = array_keys( $theirs_fields );
+            $shared      = array_intersect( $ours_keys, $theirs_keys );
+            $ours_unique = array_diff( $ours_keys, $theirs_keys );
+            $theirs_unique = array_diff( $theirs_keys, $ours_keys );
+
+            // Determine recommendation.
+            $recommendation = 'theirs'; // Safe default.
+            if ( count( $ours_unique ) > count( $theirs_unique ) ) {
+                $recommendation = 'ours';
+            }
+            if ( 'Person' === $type ) {
+                $recommendation = 'ours'; // Our E-E-A-T Person is always richer.
+            }
+            if ( in_array( $type, array( 'HowTo', 'FAQPage' ), true ) ) {
+                $recommendation = 'ours'; // Only we auto-detect these.
+            }
+
+            $current_resolution = isset( $resolutions[ $type ] ) ? $resolutions[ $type ] : null;
+
+            $comparisons[] = array(
+                'type'               => $type,
+                'label'              => $meta['label'],
+                'description'        => $meta['description'],
+                'ours_fields'        => $ours_fields,
+                'theirs_fields'      => $theirs_fields,
+                'ours_field_count'   => count( $ours_keys ),
+                'theirs_field_count' => count( $theirs_keys ),
+                'shared_count'       => count( $shared ),
+                'ours_unique'        => array_values( $ours_unique ),
+                'theirs_unique'      => array_values( $theirs_unique ),
+                'recommendation'     => $recommendation,
+                'current_resolution' => $current_resolution,
+                'theirs_produces'    => ! empty( $theirs_fields ),
+                'ours_produces'      => ! empty( $ours_fields ),
+            );
+        }
+
+        return array(
+            'active_seo'  => $seo_name,
+            'comparisons' => $comparisons,
+            'resolutions' => $resolutions,
+        );
+    }
+
+    /**
+     * Get fields our plugin outputs for a schema type.
+     *
+     * @param string $type     Schema type.
+     * @param int    $post_id  Post ID.
+     * @param array  $business Business settings.
+     * @return array Field name => description or value preview.
+     */
+    private function get_our_schema_fields( $type, $post_id, $business ) {
+        switch ( $type ) {
+            case 'Article':
+                $fields = array(
+                    '@type'            => 'Article',
+                    'headline'         => 'Post title',
+                    'datePublished'    => 'ISO 8601 date',
+                    'dateModified'     => 'ISO 8601 date',
+                    'mainEntityOfPage' => 'WebPage @id reference',
+                    'isPartOf'         => 'WebPage @id reference',
+                    'inLanguage'       => 'Site language code',
+                    'articleSection'   => 'Primary category name',
+                    'wordCount'        => 'Integer',
+                    'url'              => 'Permalink',
+                    'image'            => 'Featured image object',
+                    'author'           => 'Person (name, url)',
+                    'publisher'        => 'Organization (name, logo)',
+                    'description'      => 'Post excerpt or auto-summary',
+                );
+                // Only include speakable if the setting is actually enabled.
+                $settings = get_option( 'asgm_settings', array() );
+                if ( ! empty( $settings['speakable_enabled'] ) ) {
+                    $fields['speakable'] = 'CSS selectors for voice search';
+                }
+                return $fields;
+
+            case 'Person':
+                return array(
+                    '@type'          => 'Person',
+                    'name'           => 'Display name',
+                    'url'            => 'Author archive URL',
+                    'image'          => 'Avatar URL',
+                    'jobTitle'       => 'E-E-A-T: Professional title',
+                    'description'    => 'E-E-A-T: Bio',
+                    'knowsAbout'     => 'E-E-A-T: Areas of expertise',
+                    'hasCredential'  => 'E-E-A-T: Certifications',
+                    'alumniOf'       => 'E-E-A-T: Education',
+                    'worksFor'       => 'E-E-A-T: Organization',
+                    'sameAs'         => 'Social profiles (up to 8)',
+                    'memberOf'       => 'E-E-A-T: Professional orgs',
+                );
+
+            case 'BreadcrumbList':
+                return array(
+                    '@type'           => 'BreadcrumbList',
+                    'itemListElement' => 'Home > Category > Post',
+                );
+
+            case 'WebSite':
+                return array(
+                    '@type'           => 'WebSite',
+                    'name'            => 'Business name from settings',
+                    'url'             => 'Home URL',
+                    'inLanguage'      => 'Site language code',
+                    'potentialAction' => 'SearchAction (sitelinks)',
+                );
+
+            case 'Organization':
+                return array(
+                    '@type'      => 'Organization',
+                    'name'       => 'Business name from settings',
+                    'url'        => 'Home URL',
+                    'inLanguage' => 'Site language code',
+                    'logo'       => 'Logo URL (if set)',
+                    'sameAs'     => 'Social profiles from settings',
+                );
+
+            case 'HowTo':
+                return array(
+                    '@type'           => 'HowTo',
+                    'name'            => 'Auto-detected from H2',
+                    'step'            => 'Auto-detected numbered/ordered steps',
+                    'totalTime'       => 'Estimated from step count',
+                    'description'     => 'Intro paragraph',
+                );
+
+            case 'FAQPage':
+                return array(
+                    '@type'      => 'FAQPage',
+                    'mainEntity' => 'Auto-detected Q&A pairs',
+                );
+
+            default:
+                return array();
+        }
+    }
+
+    /**
+     * Get fields the third-party plugin outputs for a schema type.
+     *
+     * @param string $type     Schema type.
+     * @param string $seo_name Plugin name (Rank Math, Yoast SEO).
+     * @param bool   $is_rm    Whether Rank Math is the active plugin.
+     * @return array Field name => description.
+     */
+    private function get_their_schema_fields( $type, $seo_name, $is_rm ) {
+        if ( $is_rm ) {
+            return $this->rank_math_fields( $type );
+        }
+        return $this->yoast_fields( $type );
+    }
+
+    /**
+     * Known schema fields Rank Math outputs.
+     */
+    private function rank_math_fields( $type ) {
+        switch ( $type ) {
+            case 'Article':
+                return array(
+                    '@type'            => 'BlogPosting',
+                    'headline'         => 'Post title',
+                    'datePublished'    => 'ISO 8601 date',
+                    'dateModified'     => 'ISO 8601 date',
+                    'url'              => 'Permalink',
+                    'mainEntityOfPage' => 'WebPage @id reference',
+                    'author'           => 'Person @id reference',
+                    'publisher'        => 'Organization @id reference',
+                    'image'            => 'Featured image object',
+                    'isPartOf'         => 'WebPage @id reference',
+                    'inLanguage'       => 'Site language code',
+                );
+
+            case 'Person':
+                return array(
+                    '@type' => 'Person',
+                    'name'  => 'Display name',
+                    'url'   => 'Author archive URL',
+                    'image' => 'Gravatar URL',
+                );
+
+            case 'BreadcrumbList':
+                return array(
+                    '@type'           => 'BreadcrumbList',
+                    'itemListElement' => 'Home > Category > Post',
+                );
+
+            case 'WebSite':
+                return array(
+                    '@type'          => 'WebSite',
+                    'name'           => 'Site name',
+                    'url'            => 'Home URL',
+                    'potentialAction' => 'SearchAction',
+                    'inLanguage'     => 'Site language code',
+                );
+
+            case 'Organization':
+                return array(
+                    '@type' => 'Organization (from Knowledge Graph)',
+                    'name'  => 'Business name',
+                    'url'   => 'Home URL',
+                    'logo'  => 'Logo URL',
+                );
+
+            case 'HowTo':
+            case 'FAQPage':
+                return array(); // Only if user configures RM's FAQ/HowTo blocks.
+        }
+        return array();
+    }
+
+    /**
+     * Known schema fields Yoast SEO outputs.
+     */
+    private function yoast_fields( $type ) {
+        switch ( $type ) {
+            case 'Article':
+                return array(
+                    '@type'            => 'Article',
+                    'headline'         => 'Post title',
+                    'datePublished'    => 'ISO 8601 date',
+                    'dateModified'     => 'ISO 8601 date',
+                    'mainEntityOfPage' => 'WebPage @id reference',
+                    'author'           => 'Person @id reference',
+                    'publisher'        => 'Organization @id reference',
+                    'image'            => 'Featured image object',
+                    'wordCount'        => 'Integer',
+                    'inLanguage'       => 'Site language code',
+                );
+
+            case 'Person':
+                return array(
+                    '@type'       => 'Person',
+                    'name'        => 'Display name',
+                    'url'         => 'Author archive URL',
+                    'image'       => 'Gravatar URL',
+                    'description' => 'Author bio',
+                    'sameAs'      => 'Social profiles (if set)',
+                );
+
+            case 'BreadcrumbList':
+                return array(
+                    '@type'           => 'BreadcrumbList',
+                    'itemListElement' => 'Home > Category > Post',
+                );
+
+            case 'WebSite':
+                return array(
+                    '@type'          => 'WebSite',
+                    'name'           => 'Site name',
+                    'url'            => 'Home URL',
+                    'potentialAction' => 'SearchAction',
+                    'inLanguage'     => 'Site language code',
+                    'publisher'      => 'Organization @id reference',
+                );
+
+            case 'Organization':
+                return array(
+                    '@type' => 'Organization',
+                    'name'  => 'Business name',
+                    'url'   => 'Home URL',
+                    'logo'  => 'Logo image object',
+                    'image' => 'Logo reference',
+                );
+
+            case 'HowTo':
+            case 'FAQPage':
+                return array(); // Only if using Yoast's deprecated blocks.
+        }
+        return array();
+    }
+}
