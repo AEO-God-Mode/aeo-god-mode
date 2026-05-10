@@ -69,7 +69,10 @@ class ContentGaps {
             'no_found_rows'  => true,
         );
         if ( ! empty( $exclude_ids ) ) {
-            $query_args['post__not_in'] = array_unique( $exclude_ids );
+            // Exclusion list is the user's small manual "ignore these posts"
+            // list, capped at a few dozen entries. The VIP performance note
+            // about post__not_in only matters at millions-of-posts scale.
+            $query_args['post__not_in'] = array_unique( $exclude_ids ); // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_post__not_in
         }
 
         $query = new \WP_Query( $query_args );

@@ -1,10 +1,10 @@
-=== AEO God Mode – Answer Engine Optimization, GEO, AIO & LLM SEO ===
+=== AEO God Mode: Answer Engine Optimization, GEO, AIO and LLM SEO ===
 Contributors: ariellejphoenix
 Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.1
+Stable tag: 1.6.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,14 @@ Terms of service: https://aeogodmode.io/terms
 
 
 == Changelog ==
+
+= 1.6.2 =
+* Citation Tracker now shows true day-over-day citation history per engine
+* New 7-day / 30-day / 60-day / 90-day period filters in the Citation Tracker dashboard
+* Cleaner Citation Tracker chart with permanent data markers and proper axis labels
+* More accurate citation detection across every supported AI search engine
+* Faster AI Crawler Log dashboard on sites with large activity histories
+* Performance and code-quality improvements throughout the admin
 
 = 1.6.1 =
 * Citation Tracker: Run Check now refreshes each query's per-engine result instead of stacking new rows alongside old ones

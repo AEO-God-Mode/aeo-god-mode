@@ -25,6 +25,7 @@ class Answer_Density {
 	const CRON_HOOK       = 'asgm_answer_density_nightly';
 	const BATCH_SIZE      = 50;
 	const ANSWER_WINDOW_W = 50; // words after a heading we look at for an answer
+	const CACHE_GROUP     = 'asgm_answer_density';
 
 	/**
 	 * Containment overlap of A inside B at the trigram level.
@@ -537,7 +538,9 @@ class Answer_Density {
 			return $blank;
 		}
 
-		$content    = (string) apply_filters( 'the_content', $post->post_content );
+		// "the_content" is a core WordPress filter; we are intentionally invoking
+		// it so shortcodes / blocks render before we count headings.
+		$content    = (string) apply_filters( 'the_content', $post->post_content ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
 		$word_count = str_word_count( wp_strip_all_tags( $content ) );
 
 		$headings = self::find_question_headings( $content );
@@ -665,6 +668,9 @@ class Answer_Density {
 		);
 
 		update_post_meta( $post_id, self::POSTMETA_KEY, $result );
+		// Invalidate the cached postmeta scan so the dashboard picks up the
+		// new value on its next refresh_summary() call.
+		wp_cache_delete( 'asgm_density_rows', self::CACHE_GROUP );
 		return $result;
 	}
 
@@ -681,18 +687,17 @@ class Answer_Density {
 	 * BATCH_SIZE at a time, oldest-scanned-first. Updates summary.
 	 */
 	public static function scan_all_posts() {
+		// Walk all published posts/pages oldest-modified first. The previous
+		// meta_query (NOT EXISTS OR EXISTS) was a no-op since every post
+		// matches one branch or the other. Removing it lets MySQL use the
+		// existing post_modified index and avoids the "slow meta_query" warning.
 		$posts = get_posts( array(
 			'post_type'      => array( 'post', 'page' ),
 			'post_status'    => 'publish',
 			'posts_per_page' => self::BATCH_SIZE,
 			'orderby'        => 'modified',
 			'order'          => 'ASC',
-			'meta_query'     => array(
-				'relation' => 'OR',
-				array( 'key' => self::POSTMETA_KEY, 'compare' => 'NOT EXISTS' ),
-				array( 'key' => self::POSTMETA_KEY, 'compare' => 'EXISTS' ),
-			),
-			'fields' => 'ids',
+			'fields'         => 'ids',
 		) );
 
 		foreach ( $posts as $pid ) { self::scan_post( $pid ); }
@@ -705,10 +710,21 @@ class Answer_Density {
 	 */
 	public static function refresh_summary() {
 		global $wpdb;
-		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s",
-			self::POSTMETA_KEY
-		) );
+
+		// Cache the postmeta scan for 5 minutes. The dashboard hits this
+		// repeatedly on render; the underlying data only changes when a post
+		// is scanned. flush_summary_cache() invalidates it after each scan.
+		$cache_key = 'asgm_density_rows';
+		$rows      = wp_cache_get( $cache_key, self::CACHE_GROUP );
+		if ( false === $rows ) {
+			$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				$wpdb->prepare(
+					"SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s",
+					self::POSTMETA_KEY
+				)
+			);
+			wp_cache_set( $cache_key, $rows, self::CACHE_GROUP, 5 * MINUTE_IN_SECONDS );
+		}
 
 		$total_scanned    = 0;
 		$applicable_posts = 0;   // posts that have at least 1 question heading

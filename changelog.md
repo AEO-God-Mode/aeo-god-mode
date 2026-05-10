@@ -5,6 +5,15 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.2
+
+- Citation Tracker now shows true day-over-day citation history per engine
+- New 7-day / 30-day / 60-day / 90-day period filters in the Citation Tracker dashboard
+- Cleaner Citation Tracker chart with permanent data markers and proper axis labels
+- More accurate citation detection across every supported AI search engine
+- Faster AI Crawler Log dashboard on sites with large activity histories
+- Performance and code-quality improvements throughout the admin
+
 ## 1.6.1
 
 - Citation Tracker: Run Check now refreshes each query's per-engine result instead of stacking new rows alongside old ones

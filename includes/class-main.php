@@ -236,12 +236,12 @@ class Main {
             return;
         }
 
-        $wizard_url = esc_url( admin_url( 'admin.php?page=aeo-god-mode#/wizard' ) );
+        $wizard_url = admin_url( 'admin.php?page=aeo-god-mode#/wizard' );
         echo '<div class="notice notice-info is-dismissible"><p><strong>' .
             esc_html__( 'AEO God Mode is ready to set up.', 'aeo-god-mode' ) .
             '</strong> ' .
             esc_html__( 'Run the 5-step Setup Wizard to configure AI crawlers, schema, and llms.txt for your site.', 'aeo-god-mode' ) .
-            ' <a href="' . $wizard_url . '" class="button button-primary" style="margin-left:8px;">' .
+            ' <a href="' . esc_url( $wizard_url ) . '" class="button button-primary" style="margin-left:8px;">' .
             esc_html__( 'Run Setup Wizard', 'aeo-god-mode' ) .
             '</a></p></div>';
     }
