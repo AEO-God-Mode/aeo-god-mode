@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: WordPress.org Support Forum
+    url: https://wordpress.org/support/plugin/aeo-god-mode/
+    about: General usage questions, setup help, and how-to questions belong here.
+  - name: AEO God Mode Website
+    url: https://aeogodmode.io
+    about: Documentation, Pro features, and commercial support.
+  - name: Security Vulnerability
+    url: https://github.com/AEO-God-Mode/aeo-god-mode/security/policy
+    about: Please report security issues privately. Do not open a public issue.

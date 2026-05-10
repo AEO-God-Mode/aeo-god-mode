@@ -75,9 +75,32 @@ jobs:
             --exclude='.github' \
             --exclude='README.md' \
             --exclude='LICENSE' \
+            --exclude='CONTRIBUTING.md' \
+            --exclude='CODE_OF_CONDUCT.md' \
+            --exclude='SECURITY.md' \
+            --exclude='AGENTS.md' \
+            --exclude='CLAUDE.md' \
+            --exclude='changelog.md' \
             --exclude='.svn-export' \
             .svn-export/ ./
           rm -rf .svn-export
+
+      - name: Regenerate changelog.md from readme.txt
+        if: steps.gh.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          {
+            printf '# Changelog\n\n'
+            printf 'Mirror of the `readme.txt` changelog from the WordPress.org repository.\n\n'
+            printf 'For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers\n\n'
+            awk '
+              /^== Changelog ==/ { in_cl=1; next }
+              /^== Upgrade Notice ==/ { exit }
+              in_cl && /^= [0-9]+\.[0-9]+/ { gsub(/^= /, ""); gsub(/ =$/, ""); print "## " $0 "\n"; next }
+              in_cl && /^\* / { sub(/^\* /, "- "); print; next }
+              in_cl { print }
+            ' readme.txt | sed $'s/ \xe2\x80\x94 /. /g'
+          } > changelog.md
 
       - name: Commit and tag
         if: steps.gh.outputs.exists == 'false'
@@ -85,8 +108,8 @@ jobs:
           VERSION: ${{ steps.svn.outputs.latest }}
         run: |
           set -euo pipefail
-          git config user.name  'AEO God Mode Mirror'
-          git config user.email 'noreply@aeogodmode.io'
+          git config user.name  'AEO God Mode'
+          git config user.email '268178827+AEO-God-Mode@users.noreply.github.com'
 
           git add -A
           if git diff --staged --quiet; then
