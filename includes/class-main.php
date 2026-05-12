@@ -140,6 +140,16 @@ class Main {
         add_action( 'wp_head', array( $this, 'render_frontend_output' ), 1 );
         add_action( 'init', array( $this, 'boot_modules' ) );
 
+        // Bust the site-health transient whenever the inputs that feed it
+        // change. Keeps the dashboard's Setup Details panel in sync after
+        // robots rules edits, settings saves, scan runs, or conflict
+        // resolutions, without waiting on the 5-minute cache.
+        $invalidate = function () { delete_transient( 'asgm_site_health' ); };
+        foreach ( array( 'asgm_settings', 'asgm_robots_rules', 'asgm_content_gap_results', 'asgm_schema_resolutions' ) as $opt ) {
+            add_action( "update_option_{$opt}", $invalidate );
+            add_action( "add_option_{$opt}", $invalidate );
+        }
+
         // Schema conflict resolution: when user picks "ours" for a type, strip it from Rank Math / Yoast.
         // Deferred to plugins_loaded p20 so RANK_MATH_VERSION / WPSEO_VERSION are defined when we check.
         // (Plugin load order is alphabetical: aeo-god-mode loads before seo-by-rank-math.)
@@ -372,6 +382,16 @@ class Main {
                 true
             );
 
+            // Load the admin bundle as type="module" so its top-level
+            // declarations are module-scoped. Without this, the Vite bundle's
+            // `var _ = ...` (React alias after minification) leaks to window._
+            // and collides with Underscore.js / Lodash loaded by themes like
+            // Salient or builders like WPBakery, producing
+            // `TypeError: _.useContext is not a function` on the admin page.
+            // The bundle is already self-contained (no runtime ES imports),
+            // so module scoping is purely additive.
+            add_filter( 'script_loader_tag', array( $this, 'admin_app_as_module' ), 10, 3 );
+
             // Pass data to the React app.
             $license = new License();
             wp_localize_script( 'asgm-admin-app', 'asgmData', array(
@@ -388,6 +408,27 @@ class Main {
                 'pricingUrl' => 'https://aeogodmode.io/pricing',
             ) );
         }
+    }
+
+    /**
+     * Add type="module" to the admin React bundle <script> tag so its
+     * top-level `var` declarations stay module-scoped and don't collide
+     * with globals (notably window._ from Underscore.js / Lodash).
+     *
+     * @param string $tag    The full <script> tag HTML.
+     * @param string $handle Script handle being filtered.
+     * @param string $src    Script src attribute.
+     * @return string
+     */
+    public function admin_app_as_module( $tag, $handle, $src ) {
+        if ( 'asgm-admin-app' !== $handle ) {
+            return $tag;
+        }
+        // Idempotent — bail if some other plugin already injected a type attr.
+        if ( false !== strpos( $tag, ' type=' ) ) {
+            return $tag;
+        }
+        return str_replace( '<script ', '<script type="module" ', $tag );
     }
 
     /**

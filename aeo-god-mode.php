@@ -3,7 +3,7 @@
  * Plugin Name:       AEO God Mode: Answer Engine Optimization, GEO, AIO and LLM SEO
  * Plugin URI:        https://aeogodmode.io
  * Description:       A comprehensive plugin for Answer Engine Optimization. Manage AI crawlers, citation tracking, schema, and llms.txt in one place.
- * Version:           1.6.3
+ * Version:           1.6.6
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            Metronyx AI SEO
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'ASGM_VERSION', '1.6.3' );
+define( 'ASGM_VERSION', '1.6.6' );
 define( 'ASGM_PLUGIN_FILE', __FILE__ );
 define( 'ASGM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ASGM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

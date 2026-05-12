@@ -694,7 +694,11 @@ class API {
         }
 
         $result = $this->run_site_health_checks();
-        set_transient( 'asgm_site_health', $result, 6 * HOUR_IN_SECONDS );
+        // Short TTL so the dashboard reflects recent changes (running a scan,
+        // saving robots rules, resolving a schema conflict) without forcing a
+        // 6-hour wait. Underlying writes also invalidate this transient via
+        // hooks in Main::boot().
+        set_transient( 'asgm_site_health', $result, 5 * MINUTE_IN_SECONDS );
 
         return rest_ensure_response( $result );
     }
@@ -872,18 +876,36 @@ class API {
                 'Applebot-Extended', 'Amazonbot', 'Bytespider', 'Cohere-AI',
             );
 
-            $allowed = 0;
-            $blocked_names = array();
+            $allowed         = 0;
+            $explicit_count  = 0; // Bots with an explicit Allow or Disallow.
+            $blocked_names   = array();
             foreach ( $ai_bots as $bot ) {
-                $status = isset( $rules[ $bot ] ) ? $rules[ $bot ] : 'allow';
-                if ( 'allow' === $status || 'not_set' === $status ) {
-                    ++$allowed;
-                } else {
+                $status = isset( $rules[ $bot ] ) ? $rules[ $bot ] : 'not_set';
+                if ( 'disallow' === $status ) {
                     $blocked_names[] = $bot;
+                } else {
+                    ++$allowed; // 'allow' OR 'not_set' both mean the bot can crawl.
+                }
+                if ( 'allow' === $status || 'disallow' === $status ) {
+                    ++$explicit_count;
                 }
             }
 
             $crawler_score += (int) round( ( $allowed / count( $ai_bots ) ) * 60 );
+
+            // If the user hasn't written any explicit Allow/Disallow rules,
+            // the plugin isn't doing what it advertises (managing crawler
+            // access) yet. Knock 25 points and surface a clear next step so
+            // the panel doesn't claim "all checks passing" for an unconfigured
+            // installation.
+            if ( 0 === $explicit_count ) {
+                $crawler_score = max( 0, $crawler_score - 25 );
+                $crawler_reasons[] = array(
+                    'message' => __( 'No AI crawler rules set yet. Pick Allow or Disallow for each engine in AI Crawlers to take control of who can crawl your content.', 'aeo-god-mode' ),
+                    'fix_url' => $crawlers_url,
+                    'cost'    => 25,
+                );
+            }
 
             if ( ! empty( $blocked_names ) ) {
                 $cost = 60 - (int) round( ( $allowed / count( $ai_bots ) ) * 60 );

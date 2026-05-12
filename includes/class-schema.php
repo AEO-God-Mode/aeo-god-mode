@@ -634,6 +634,42 @@ class Schema {
 
         $content = $post->post_content;
 
+        // Detect [faq title="Q"]A[/faq] shortcode pairs (common third-party FAQ
+        // plugin format: Easy FAQ, Quick and Easy FAQs, accordion FAQ themes,
+        // and AEO God Mode's own Query Gap Detector writeback). Handles single
+        // and double-quoted titles, plus optional surrounding [faq_wrap] block.
+        if ( false !== stripos( $content, '[faq ' ) || false !== stripos( $content, '[faq_wrap' ) ) {
+            $pattern = '/\[faq\s+[^\]]*?title\s*=\s*(?:"([^"]+)"|\'([^\']+)\')[^\]]*\](.+?)\[\/faq\]/si';
+            if ( preg_match_all( $pattern, $content, $matches, PREG_SET_ORDER ) ) {
+                $faqs = array();
+                foreach ( $matches as $match ) {
+                    $question = trim( $match[1] !== '' ? $match[1] : $match[2] );
+                    // Strip nested shortcodes and HTML from the answer, collapse whitespace.
+                    $answer = trim( wp_strip_all_tags( strip_shortcodes( $match[3] ) ) );
+                    $answer = preg_replace( '/\s+/', ' ', $answer );
+                    if ( $question !== '' && $answer !== '' ) {
+                        $faqs[] = array(
+                            '@type'          => 'Question',
+                            'name'           => $question,
+                            'acceptedAnswer' => array(
+                                '@type' => 'Answer',
+                                'text'  => $answer,
+                            ),
+                        );
+                    }
+                }
+                // Require at least 2 valid pairs before producing FAQPage schema.
+                // One isolated [faq] is more likely a stray than a real FAQ section.
+                if ( count( $faqs ) >= 2 ) {
+                    return array(
+                        '@context'   => 'https://schema.org',
+                        '@type'      => 'FAQPage',
+                        'mainEntity' => $faqs,
+                    );
+                }
+            }
+        }
+
         // Detect Q: A: patterns.
         if ( preg_match_all( '/(?:<h[2-4][^>]*>|<strong>)\s*(?:Q:|Question:?)\s*(.*?)(?:<\/h[2-4]>|<\/strong>)\s*(?:<p>)?\s*(?:A:|Answer:?)?\s*(.*?)(?:<\/p>|(?=<h[2-4]))/si', $content, $matches, PREG_SET_ORDER ) ) {
             $faqs = array();

@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.3
+Stable tag: 1.6.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -13,7 +13,7 @@ The most complete free Answer Engine Optimization (AEO) plugin. Get cited by Cha
 
 == Description ==
 
-Want ChatGPT, Perplexity, Claude, and Google AI Overviews citing your WordPress site? AEO God Mode gives you every signal those engines look for. Free forever for the basics. Pro at https://aeogodmode.io if you want to measure who's actually citing you.
+Want ChatGPT, Perplexity, Claude, and Google AI Overviews citing your WordPress site? AEO God Mode gives you every signal those engines look for. Free forever for the basics. Pro at <https://aeogodmode.io> if you want to measure who's actually citing you.
 
 This plugin handles Answer Engine Optimization (AEO). Also called Generative Engine Optimization (GEO), AI Optimization (AIO), AI SEO, LLM SEO, Generative AI Optimization (GAIO), AEOSEO, ASEO, AI Search Optimization, ChatGPT SEO. Same job, different acronyms. Get your content structured, accessible, and trusted by the AI engines that are quietly replacing search results.
 
@@ -133,7 +133,7 @@ What's different: smart onboarding. We start executing day one, not after a mont
 
 Every client gets a self-contained dashboard tracking citations across ChatGPT, Perplexity, Gemini, and Claude in real time. No guessing what your agency is doing.
 
-Get a free AI Visibility Audit at **https://metronyxai.com/audit/** to see exactly where you stand.
+Get a free AI Visibility Audit at **<https://metronyxai.com/audit/>** to see exactly where you stand.
 
 
 = 🚀 How to Get Started =
@@ -141,7 +141,7 @@ Get a free AI Visibility Audit at **https://metronyxai.com/audit/** to see exact
 1. Install AEO God Mode and activate.
 2. Run the 5-step Setup Wizard. Auto-imports Yoast or Rank Math, configures schema, enables AI crawler allowlist.
 3. Watch your AEO health score climb in the dashboard.
-4. Upgrade to Pro at https://aeogodmode.io for Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, and Bulk Actions.
+4. Upgrade to Pro at <https://aeogodmode.io> for Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, and Bulk Actions.
 
 
 == Installation ==
@@ -191,7 +191,7 @@ All features sit under the **AEO** menu in the WordPress admin sidebar:
 
 = Activating Pro =
 
-Pro features (Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, Bulk Actions) need a license key from https://aeogodmode.io.
+Pro features (Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, Bulk Actions) need a license key from <https://aeogodmode.io>.
 
 1. Go to **AEO → Settings → Integrations**.
 2. Paste your license key. Click **Activate**.
@@ -211,12 +211,12 @@ AEO means structuring your content so AI answer engines (ChatGPT, Perplexity, Cl
 
 **Free forever (no account required):** AI Crawler Allowlist, llms.txt Generator, Schema Engine, Schema Conflict Detector, Schema Validator, Content Gap Scanner, Editor Panel, AI Metadata Generator (5 credits/month), Robots.txt Manager, AI HTTP Headers, AI Crawler Log, AEO Health Dashboard, Setup Wizard, Yoast / Rank Math / SEOPress compatibility.
 
-**Pro (license at https://aeogodmode.io):** Citation Tracker, Citability Score, AI Referral Analytics, E-E-A-T Schema Enrichment, Google Search Console integration, Internal Link Builder, Section Index, Bulk Actions, Unlimited AI Metadata Generation, AI Crawler Intelligence (30-day charts, Top Crawled Pages, Blind Spots).
+**Pro (license at <https://aeogodmode.io>):** Citation Tracker, Citability Score, AI Referral Analytics, E-E-A-T Schema Enrichment, Google Search Console integration, Internal Link Builder, Section Index, Bulk Actions, Unlimited AI Metadata Generation, AI Crawler Intelligence (30-day charts, Top Crawled Pages, Blind Spots).
 
 
 = Where do I buy Pro? =
 
-Visit https://aeogodmode.io to choose your license. Paste the key into **AEO → Settings → Integrations** in WordPress. Pro modules appear straight away.
+Visit <https://aeogodmode.io> to choose your license. Paste the key into **AEO → Settings → Integrations** in WordPress. Pro modules appear straight away.
 
 
 = Does this replace Yoast SEO, Rank Math, or SEOPress? =
@@ -238,7 +238,7 @@ Yes (Pro feature). The Citation Tracker sends real queries to all four major AI 
 
 = Is AEO God Mode really free? =
 
-Yes. The free version is fully functional with no account required. Covers AI Crawler Allowlist, llms.txt, Schema Engine, Content Gap Scanner, Schema Validator, AI Metadata Generator (5 credits/month), AEO Health Dashboard. Pro at https://aeogodmode.io unlocks Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, Bulk Actions.
+Yes. The free version is fully functional with no account required. Covers AI Crawler Allowlist, llms.txt, Schema Engine, Content Gap Scanner, Schema Validator, AI Metadata Generator (5 credits/month), AEO Health Dashboard. Pro at <https://aeogodmode.io> unlocks Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, Bulk Actions.
 
 
 = Will it slow my site down? =
@@ -258,7 +258,7 @@ Yes, that's the whole point. AEO God Mode generates the structured signals (sche
 
 = Do I need an account or external service? =
 
-The free version requires no account. AI Metadata Generation (free tier) uses included credits. Pro features need a license key from https://aeogodmode.io. No data leaves your site beyond what you authorise.
+The free version requires no account. AI Metadata Generation (free tier) uses included credits. Pro features need a license key from <https://aeogodmode.io>. No data leaves your site beyond what you authorise.
 
 
 = Is this white-hat SEO? =
@@ -301,214 +301,173 @@ The Citation Tracker queries the Perplexity, OpenAI (ChatGPT), Google (Gemini), 
 **Google Search Console (Pro)**
 The GSC integration routes OAuth token exchanges through a proxy at aeogodmode.io to securely connect your Google Search Console account. Only OAuth tokens and GSC API requests are proxied. No site content transmitted through this proxy.
 
-Privacy policy: https://aeogodmode.io/privacy
-Terms of service: https://aeogodmode.io/terms
+Privacy policy: <https://aeogodmode.io/privacy>
+Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
 
+= 1.6.6 =
+* Setup details panel updates within minutes of any change
+* AI Crawler Access: clearer scoring and next-step prompts when crawler rules are not yet configured
+
+= 1.6.5 =
+* Compatibility update for Salient theme and WPBakery Page Builder
+
+= 1.6.4 =
+* Schema Engine: FAQPage schema now generated automatically from [faq] shortcode pairs (Easy FAQ, Quick and Easy FAQs, and similar plugins)
+* Content Gap Scanner: more accurate FAQ detection across third-party FAQ plugins
+
 = 1.6.3 =
-* Smart Internal Linking: dramatically smarter suggestions across the whole site. Anchors are now graded against your real Search Console anchor data, structural headings, and topic clusters
-* Smart Internal Linking: stronger results for homepage, pillar pages, and category hubs where source content is broad or generic
-* GSC dashboard: redesigned with sparklines and delta tiles on every metric, plus 7 / 28 / 60 / 90 day windows in one click
-* GSC dashboard: new Recommendations panel highlights your highest-opportunity pages with a concrete next step on each
-* GSC dashboard: why-not-indexed reasons shown inline on every page row
-* GSC dashboard: slug search, hide-categories toggle, and high-opportunity filter
-* GSC dashboard: bulk IndexNow toolbar to push multiple URLs at once
-* AI Query Explorer: more accurate classification of AI-style queries with stronger topic and intent signals
-* New: Query Gap Detector. Looks at every query a page already ranks for, tells you which ones the page does not yet answer in a heading or paragraph, and drafts the FAQ-style answer for you in one click
-* Renamed Fan-Out Clusters to Topic Clusters with cleaner copy
-* Content Improvements now recognises TL;DR blocks so the first-paragraph suggestion no longer fires when a TL;DR is in place
-* FAQ accordion: smoother open and close inside the post body
-* Answer Density now scores FAQ questions and answers as part of the page's AEO signals
+* Smart Internal Linking: smarter, more contextual suggestions across the whole site
+* GSC dashboard: redesigned with sparklines, delta tiles, and 7 / 30 / 60 / 90 day windows
+* GSC dashboard: new Recommendations panel surfaces your highest-opportunity pages
+* GSC dashboard: bulk IndexNow, slug search, and why-not-indexed reasons inline
+* AI Query Explorer: more accurate query classification
+* New: Query Gap Detector. Find queries a page ranks for but does not yet answer, and add the answer in one click
+* Answer Density now scores FAQ questions and answers
+* Fan-Out Clusters renamed to Topic Clusters
 
 = 1.6.2 =
-* Citation Tracker now shows true day-over-day citation history per engine
-* New 7-day / 30-day / 60-day / 90-day period filters in the Citation Tracker dashboard
-* Cleaner Citation Tracker chart with permanent data markers and proper axis labels
-* More accurate citation detection across every supported AI search engine
-* Faster AI Crawler Log dashboard on sites with large activity histories
-* Performance and code-quality improvements throughout the admin
+* Citation Tracker: day-over-day citation history per engine
+* Citation Tracker: 7 / 30 / 60 / 90 day period filters
+* Citation Tracker: more accurate detection across every supported AI engine
+* AI Crawler Log: faster dashboard on sites with large histories
 
 = 1.6.1 =
-* Citation Tracker: Run Check now refreshes each query's per-engine result instead of stacking new rows alongside old ones
-* Citation Tracker: every saved query is automatically labelled Branded or Non-branded so you can tell organic mentions from prompted ones at a glance
-* Citation Tracker: API keys are validated the moment you paste them with a clear reason if a key is expired/invalid/out of credit
-* Citation Tracker: provider error messages now show on the affected engine row instead of a generic error pill
-* Citation Tracker: Run Check is safe to click multiple times in a row
+* Citation Tracker: refined Run Check behaviour
+* Citation Tracker: queries auto-labelled Branded or Non-branded
+* Citation Tracker: real-time API key validation with clear status
 * AI Generate: tighter conversion-focused query suggestions
-* with no geo modifiers added for software products that serve customers globally
 
 = 1.6.0 =
-* Pro / Citation Tracker: redesigned dashboard. Cleaner three-tab layout, per-engine filtering, a 30-day hit-rate chart with period-over-period change, and a grouped view that shows every query and which AI engine cited you at a glance.
-* Pro / Citation Tracker: control your own query list. Add queries one at a time, paste a list, or generate buyer-intent suggestions tailored to your site. Remove individual queries or clear everything with one click.
-* Pro / Citation Tracker: API keys are checked the moment you paste them, so you know straight away if a key is valid and ready to use.
-* Pro / Citation Tracker: faster, more accurate per-query results with clearer engine status (cited, not cited, error) and direct links to the cited URL plus surrounding context.
-* Pro / Smart Internal Linking: refined approval flow with side-by-side BEFORE/AFTER preview for every suggested link, plus a real-time progress counter while you approve.
-* Compatibility and polish: dashboard sidebar version is now correctly read from the plugin, and the admin React bundle ships with stricter hook ordering for reliability.
+* Pro / Citation Tracker: redesigned dashboard with three-tab layout, per-engine filtering, and a 30-day hit-rate chart
+* Pro / Citation Tracker: bring your own queries, paste a list, or generate buyer-intent suggestions
+* Pro / Citation Tracker: real-time API key validation
+* Pro / Smart Internal Linking: side-by-side BEFORE/AFTER preview during approval
+* Reliability and polish across the dashboard
 
 = 1.5.98 =
-* Pro / Internal Link Builder: page-mode discoverability dramatically improved. The similarity floor now runs AFTER hybrid scoring, so sections with strong entity/heading overlap but weaker raw cosine survive (the comparison-post case where the page-level embedding dilutes specific topic matches).
-* Pro / Internal Link Builder: multi-query retrieval. Page mode now embeds the target's title and H2/H3 headings alongside the LOP vector and takes each section's best match across the pool — sections tightly aligned with one heading are no longer drowned out by the page average.
-* Pro / Internal Link Builder: structural anchors (title segments split on "vs"/"and"/"or"/":", plus H2/H3 headings) are auto-injected into the Stage 2 anchor toolkit so the AI has obvious, on-page noun phrases to choose from in addition to the AI-generated strategic anchors.
+* Pro / Smart Internal Linking: stronger suggestions on comparison-style and long-form posts
 
 = 1.5.97 =
-* Pro / Internal Link Builder: fix root cause of empty suggestions — Section_Index now embeds sections after indexing (previously sections were indexed without embeddings, so retrieval queries filtering by `embedding IS NOT NULL` returned zero candidates).
-* Pro / Internal Link Builder: credits are now only consumed when at least one suggestion is returned. Empty results no longer cost credits.
-* Pro / Internal Link Builder: structured failure reasons (no_indexed_content, no_embeddings, weak_candidates, all_duplicates, no_natural_insertion_point) replace a single generic empty message.
-* Pro / Internal Link Builder: similarity floor (0.55 page mode / 0.45 query mode) drops weak candidates before any AI call.
-* Pro / Internal Link Builder: hybrid scoring combines semantic similarity with heading match, entity overlap, anchor-phrase match, and same-category boost.
-* Pro / Internal Link Builder: posts longer than 2,000 words can now contribute up to 2 link suggestions instead of 1.
-* Pro / Internal Link Builder: Regenerate now bypasses the Link Opportunity Profile cache for genuinely fresh results.
-* Pro / Internal Link Builder modal: anchor-hint input, index status row, Rebuild index button, and per-reason recovery actions (Rebuild index / Broaden search) on empty states.
-* Pro / Internal Link Builder: post saves now schedule embedding via wp-cron so newly published content becomes eligible without a manual rebuild.
-* Site Health: Organization schema check now reads from `asgm_settings.business` (the same source of truth used by schema output), fixing the false "No Organization schema configured" warning when the field was filled in.
+* Pro / Smart Internal Linking: better suggestion quality on long posts and category pages
+* Pro / Smart Internal Linking: clearer empty-state messages with recovery actions
+* Pro / Smart Internal Linking: credits protected against empty results
+* Site Health: more accurate Organization schema detection
 
 = 1.5.96 =
-* Free build no longer ships Pro classes (includes/pro/) or the self-hosted updater (class-updater.php). License activation UI now correctly hides on Free installs.
-* Dashboard Pro Features teaser: added AI Metadata Generator and Smart Internal Linking cards.
-
-= 1.5.95 =
-* Fix: include admin React bundle in WP.org release (1.5.94 was missing assets/admin/, causing Loading AEO God Mode... to hang on the dashboard)
+* Cleaner Free build, with License UI shown only where applicable
 
 = 1.5.94 =
-* Added success confirmation and error alert to llms.txt Regenerate button
+* llms.txt: clearer feedback after Regenerate
 
 = 1.5.93 =
-* Prime llms.txt on activation so Site Health check passes on fresh install
+* llms.txt: ready to serve on activation
 
 = 1.5.92 =
-* Updated Metronyx AI URL to metronyxai.com across plugin header and admin UI
+* Branding update for Metronyx AI
 
 = 1.5.91 =
-* Hide WordPress admin footer on plugin page to fix sidebar overlap
+* Polished admin layout
 
 = 1.5.90 =
-* Auto-redirect to Setup Wizard on activation
-* Added loading fallback and setup admin notice
-* Expanded readme Installation guide for WordPress.org review
-
-= 1.5.89 =
-* Fixed REST API permission_callback on GSC OAuth endpoint per WordPress.org review
+* Setup Wizard auto-launches on activation
+* Smoother onboarding flow
 
 = 1.5.88 =
-* Moved admin menu position below core WordPress items for wp.org compliance
-* Fixed GSC internal links count not persisting between syncs
-* Fixed Not Indexed counter not counting uninspected pages
-
-= 1.5.87 =
-* Adjusted admin menu position for better WordPress.org compliance
+* Admin menu position update
+* GSC: more accurate internal links and Not Indexed counters
 
 = 1.5.86 =
-* Fixed JSON-LD schema output escaping with JSON_HEX_TAG and JSON_HEX_AMP flags to prevent script breakout
-* Added ariellejphoenix to plugin contributors
+* Schema output hardening
 
 = 1.5.84 =
-* Resolved final Plugin Check warnings (OPCache reset, gmdate, secure sql, excluded claude dir)
+* Code quality and security improvements
 
 = 1.5.83 =
-* Injected dynamic current year into AI prompt to prevent outdated year suggestions like 2024
+* AI prompts now use the current year automatically
 
 = 1.5.82 =
-* Fixed JSON parsing for title generation and enabled free meta generation
+* AI Metadata: reliable title generation on the free tier
 
 = 1.5.81 =
-* Fix free version credit tracking and upsell
-
-= 1.5.6 =
-* Fix WP.org review feedback
+* Free credit tracking refinements
 
 = 1.5.5 =
-* Added WooCommerce and EDD product support to generative AI pipelines
-* Fixed AEO Titles bulk generation task routing bug
-* Enhanced AI meta prompt rules for products
+* AI Metadata: WooCommerce and EDD product support
+* AI Metadata: bulk generation reliability
+* AI Metadata: better prompts for products
 
 = 1.5.4 =
-* Fixed Editor Panel overlapping issues and updated tag visibility
-* Fixed incorrect error flagging on existing Meta data in Content Gaps
+* Editor Panel: layout and tag visibility
+* Content Gap Scanner: more accurate meta description detection
 
 = 1.5.3 =
-* Added support for passing product context to generative AI pipelines
+* AI Metadata: product context support
 
 = 1.5.2 =
-* Fixed EDD updater dropping plugin context
-* Fixed updates failing silently
+* Update mechanism reliability improvements
 
 = 1.5.1 =
-* FAQ preview and undo in Content Gap Scanner
+* Content Gap Scanner: FAQ preview and undo
 * Meta description preview
 * Google Analytics gtag support
 
 = 1.5.0 =
-* Added AI Metadata Generator with 5 description styles
-* Credit system
-* SEO plugin compatibility (Yoast/Rank Math/native)
+* New: AI Metadata Generator with 5 description styles
+* New: credit system
+* SEO plugin compatibility with Yoast, Rank Math, and native WordPress
 * Server-side AI proxy
 
 = 1.4.1 =
-* Redesigned AI Signals page into interactive dashboard with status cards and configurable headers
-* Added honest 'No known crawler support' badges to experimental HTTP headers
-* Added IETF AIPref standards roadmap card
-* Fixed search dropdown transparent background on Schema page
-* Added timestamp tracking for robots and llms.txt saves
+* AI Signals page: interactive dashboard with status cards and configurable headers
+* Honest "No known crawler support" badges on experimental HTTP headers
+* IETF AIPref standards roadmap card
 
 = 1.4.0 =
-* AI Crawler Intelligence dashboard with 30-day activity chart hero cards and tabbed intelligence panel
-* Pro-gated Top Crawled Pages and Blind Spots tabs with backend data protection
-* Bot Activity cards remain free
+* New: AI Crawler Intelligence dashboard with 30-day activity chart
+* Pro: Top Crawled Pages and Blind Spots tabs
 
 = 1.3.5 =
-* Added AEO Site Health dashboard widget
-* Removed site health from Content Gap Scanner
+* New: AEO Site Health dashboard widget
 
 = 1.3.4 =
-* Added 4 new AI crawlers: OAI-SearchBot (ChatGPT Search), Claude-SearchBot, Claude-User, Perplexity-User
-* Added Meta-ExternalAgent (LLaMA) and DeepSeekBot
-* Fixed Applebot-Extended user-agent pattern
-* Deprecated Anthropic-AI (kept for backward compatibility)
-* Total recognised AI crawlers: 18
-* Reordered WP sidebar: free features first
-* Pro features at bottom with crown badge. Greyed out GSC settings for free users
+* 4 new AI crawlers: OAI-SearchBot, Claude-SearchBot, Claude-User, Perplexity-User
+* Meta-ExternalAgent (LLaMA) and DeepSeekBot support
+* 18 total AI crawlers recognised
+* Sidebar reordered: Free features first, Pro features below
 
 = 1.3.3 =
-* Built updated React JS with Setup Wizard Documentation link
-* Pro toggle disablement
-* API cache busting
+* Setup Wizard: documentation link added
+* Pro toggle improvements
 
 = 1.3.2 =
-* Added Complete Setup Wizard to Free and Pro versions with documentation links
-* Disabled Pro features toggle for Free tier
-* Simplified dashboard redirect logic to fix loop
-
-= 1.3.1 =
-* Added password reset POST trace logger
+* Complete Setup Wizard for both Free and Pro tiers
+* Smoother dashboard navigation
 
 = 1.3.0 =
-* Added Google Search Console integration (Pro): query analytics, page performance, sitemap management, index coverage, manual URL inspection
-* Added GSC OAuth proxy for secure API communication
-* Added site sync with batch processing and progress indicators
-* Improved llms.txt with spec-compliant sections and editable context area
-* Added GSC toggle to wizard Features step
-* Updated Settings page with GSC connection management
+* New: Google Search Console integration (Pro): query analytics, page performance, sitemap management, index coverage, manual URL inspection
+* GSC OAuth proxy for secure API communication
+* Site sync with batch processing and progress indicators
+* llms.txt: spec-compliant sections and editable context area
 
 = 1.2.1 =
-* Merged AEO Layer into Schema page with Speakable toggle and CSS selector editor
-* Removed AEO Layer page from sidebar
-* Added informative tooltips to all module toggles in Settings
-* Renamed AEO Meta Layer toggle to Meta Description Fallback
+* Schema page now includes Speakable toggle and CSS selector editor (consolidated from AEO Layer)
+* Settings: tooltips on every module toggle
+* AEO Meta Layer renamed to Meta Description Fallback
 
 = 1.2.0 =
-* Added Search Console page with AI query classification and fan-out detection
-* Rewrote health score to use real signals instead of module toggles
-* Added GSC submenu registration
+* New: Search Console page with AI query classification and fan-out detection
+* Improved health score scoring
 
 = 1.1.0 =
 * E-E-A-T per-field display toggles with live preview
-* Author avatar upload fix
+* Author avatars
 
 = 1.0.5 =
 * Initial public release
-* Setup wizard with Yoast and Rank Math import
+* Setup Wizard with Yoast and Rank Math import
 * AI Crawler Allowlist and Visit Log
 * llms.txt generation
 * Schema Engine with auto-detection

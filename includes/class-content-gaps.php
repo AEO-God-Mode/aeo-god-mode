@@ -1131,9 +1131,14 @@ class ContentGaps {
             return true;
         }
 
-        // [faq] shortcodes (many themes/plugins generate schema from these).
-        if ( false !== strpos( $content, '[faq]' ) ) {
-            return true;
+        // [faq] / [faq title="..."] shortcodes. Many themes/plugins generate
+        // FAQPage schema from these, and AEO God Mode's own Schema_Generator
+        // produces FAQPage schema for [faq title="..."]...[/faq] pairs.
+        // Require 2+ pairs to mirror what detect_faq_schema() actually emits.
+        if ( preg_match_all( '/\[faq\b[^\]]*\]/i', $content, $shortcode_matches ) ) {
+            if ( count( $shortcode_matches[0] ) >= 2 ) {
+                return true;
+            }
         }
 
         // Our plugin's schema override.
