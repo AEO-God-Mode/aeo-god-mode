@@ -5,6 +5,22 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.3
+
+- Smart Internal Linking: dramatically smarter suggestions across the whole site. Anchors are now graded against your real Search Console anchor data, structural headings, and topic clusters
+- Smart Internal Linking: stronger results for homepage, pillar pages, and category hubs where source content is broad or generic
+- GSC dashboard: redesigned with sparklines and delta tiles on every metric, plus 7 / 28 / 60 / 90 day windows in one click
+- GSC dashboard: new Recommendations panel highlights your highest-opportunity pages with a concrete next step on each
+- GSC dashboard: why-not-indexed reasons shown inline on every page row
+- GSC dashboard: slug search, hide-categories toggle, and high-opportunity filter
+- GSC dashboard: bulk IndexNow toolbar to push multiple URLs at once
+- AI Query Explorer: more accurate classification of AI-style queries with stronger topic and intent signals
+- New: Query Gap Detector. Looks at every query a page already ranks for, tells you which ones the page does not yet answer in a heading or paragraph, and drafts the FAQ-style answer for you in one click
+- Renamed Fan-Out Clusters to Topic Clusters with cleaner copy
+- Content Improvements now recognises TL;DR blocks so the first-paragraph suggestion no longer fires when a TL;DR is in place
+- FAQ accordion: smoother open and close inside the post body
+- Answer Density now scores FAQ questions and answers as part of the page's AEO signals
+
 ## 1.6.2
 
 - Citation Tracker now shows true day-over-day citation history per engine

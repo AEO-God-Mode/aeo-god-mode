@@ -113,6 +113,9 @@ class Main {
             if ( file_exists( $pro . 'class-internal-link-builder.php' ) ) {
                 require_once $pro . 'class-internal-link-builder.php';
             }
+            if ( file_exists( $pro . 'class-query-gap.php' ) ) {
+                require_once $pro . 'class-query-gap.php';
+            }
             if ( file_exists( $pro . 'class-ai-assist.php' ) ) {
                 require_once $pro . 'class-ai-assist.php';
                 \AISEOGodMode\AI_Assist::init();

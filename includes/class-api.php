@@ -320,6 +320,49 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            register_rest_route( self::NAMESPACE, '/gsc/daily-series', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_daily_series' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/recommendations', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_recommendations' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- Query Gap Detector ----
+            register_rest_route( self::NAMESPACE, '/query-gap/scan', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'query_gap_scan' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/query-gap/draft-answer', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'query_gap_draft_answer' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/query-gap/apply-faq', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'query_gap_apply_faq' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/query-gap/draft-heading', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'query_gap_draft_heading' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/query-gap/apply-heading', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'query_gap_apply_heading' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             register_rest_route( self::NAMESPACE, '/gsc/index-now', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'gsc_index_now' ),
@@ -1887,6 +1930,588 @@ class API {
     public function get_gsc_ai_summary() {
         $gsc = new GSC();
         return rest_ensure_response( $gsc->get_ai_summary() );
+    }
+
+    /**
+     * Get the cached 90-day daily series for sparklines and date-range
+     * windows. Each row is { date, clicks, impressions, ctr, position }.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_daily_series() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_daily_series() );
+    }
+
+    /**
+     * Get computed dashboard recommendations.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_recommendations() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_recommendations() );
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Gap Detector
+    // -----------------------------------------------------------------------
+
+    /**
+     * Scan every GSC query against its landing page and classify coverage.
+     *
+     * @return \WP_REST_Response
+     */
+    public function query_gap_scan() {
+        if ( ! class_exists( '\AISEOGodMode\Query_Gap' ) ) {
+            return rest_ensure_response( array( 'rows' => array(), 'error' => 'Query_Gap class not loaded.' ) );
+        }
+        $rows = \AISEOGodMode\Query_Gap::scan_all();
+        return rest_ensure_response( array(
+            'rows'  => $rows,
+            'count' => count( $rows ),
+        ) );
+    }
+
+    /**
+     * Draft an AI-written answer for a question (the GSC query) targeted at
+     * a specific page. Uses the same AI proxy as the Internal Link Builder
+     * with a custom prompt asking for a short, direct, on-brand answer.
+     * Costs 1 credit per draft.
+     *
+     * Caches drafts per (query, post_id) so reopening the modal doesn't re-bill.
+     *
+     * @param \WP_REST_Request $request
+     * @return \WP_REST_Response
+     */
+    public function query_gap_draft_answer( $request ) {
+        $query   = sanitize_text_field( (string) $request->get_param( 'query' ) );
+        $post_id = absint( $request->get_param( 'post_id' ) );
+
+        if ( empty( $query ) || ! $post_id ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Missing query or post_id.' ) );
+        }
+        $post = get_post( $post_id );
+        if ( ! $post || $post->post_status !== 'publish' ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
+        }
+
+        // ── Draft cache (in-option, not transient — survives sync, cheap reads) ──
+        $cache_key = md5( strtolower( trim( $query ) ) . '|' . $post_id );
+        $cache     = (array) get_option( 'asgm_query_gap_draft_cache', array() );
+        if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['answer'] ) ) {
+            $cached_q = ! empty( $cache[ $cache_key ]['question'] ) ? (string) $cache[ $cache_key ]['question'] : '';
+            if ( '' === $cached_q ) {
+                $cached_q = ucfirst( trim( $query ) );
+                if ( substr( $cached_q, -1 ) !== '?' ) {
+                    $cached_q .= '?';
+                }
+            }
+            return rest_ensure_response( array(
+                'success'  => true,
+                'question' => $cached_q,
+                'answer'   => (string) $cache[ $cache_key ]['answer'],
+                'cached'   => true,
+                'credits'  => \AISEOGodMode\MetadataGenerator::get_credits(),
+            ) );
+        }
+
+        // ── Credit check ──
+        $credits = \AISEOGodMode\MetadataGenerator::get_credits();
+        $credit_cost = 1;
+        if ( isset( $credits['remaining'] ) && $credits['remaining'] < $credit_cost ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'Not enough credits. This action requires ' . $credit_cost . ' credit. You have ' . $credits['remaining'] . ' remaining.',
+            ) );
+        }
+
+        $license_key = get_option( 'agm_license_key', '' );
+        if ( empty( $license_key ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'A Pro or Agency license is required to draft FAQ answers.',
+            ) );
+        }
+
+        // ── Build the prompt ──
+        // We give the AI: the page title, the page summary (first 1200 chars of
+        // plain text), any existing FAQ Q/A pairs for tone-matching, and the
+        // question. We ask for a 1-3 sentence direct answer in JSON.
+        $plain_content   = wp_strip_all_tags( apply_filters( 'the_content', $post->post_content ) );
+        $context_sample  = mb_substr( $plain_content, 0, 1200 );
+        $existing_faqs   = array();
+        $meta_faqs_json  = get_post_meta( $post_id, 'feature_faqs', true );
+        if ( ! empty( $meta_faqs_json ) ) {
+            $parsed = json_decode( $meta_faqs_json, true );
+            if ( is_array( $parsed ) ) {
+                foreach ( array_slice( $parsed, 0, 3 ) as $f ) {
+                    if ( ! empty( $f['q'] ) && ! empty( $f['a'] ) ) {
+                        $existing_faqs[] = "Q: {$f['q']}\nA: {$f['a']}";
+                    }
+                }
+            }
+        }
+        $existing_block = empty( $existing_faqs ) ? '' : "\n\nEXISTING FAQ PAIRS ON THIS PAGE (match this tone exactly):\n" . implode( "\n\n", $existing_faqs );
+
+        // Detect query shape so the prompt can reformulate noun-phrase queries
+        // into proper questions instead of pretending "schema checker" is a Q.
+        $shape = ( class_exists( '\AISEOGodMode\Query_Gap' ) )
+            ? \AISEOGodMode\Query_Gap::query_shape( $query )
+            : 'phrase';
+
+        $shape_guidance = ( 'question' === $shape )
+            ? "The query is already a well-formed question. Use it as the question (sentence-cased, ending with ?), with very light cleanup only."
+            : "The query is a noun phrase, not a question. Reformulate it into the most natural question a real user would ask about that phrase on this page. Examples: 'schema checker' → 'What is a schema checker?'; 'gpt citation tracker' → 'How does a GPT citation tracker work?'; 'aeo wordpress plugin' → 'What is the best AEO plugin for WordPress?'. The reformulated question must still feature the original phrase words verbatim where natural.";
+
+        $prompt = "You write ONE short FAQ Q&A pair for a query someone is already searching on Google. The output must match the tone of the page exactly.
+
+PAGE TITLE
+" . $post->post_title . "
+
+PAGE CONTEXT (first 1200 chars of body text)
+" . $context_sample . $existing_block . "
+
+THE QUERY (a real string from Google Search Console)
+" . $query . "
+
+QUERY SHAPE
+" . $shape_guidance . "
+
+YOUR TASK
+Return ONE JSON object only, no markdown fences:
+
+{
+  \"question\": \"<the final question, sentence-cased, ending with a question mark>\",
+  \"answer\":   \"<a single answer of 1-3 sentences. Direct first sentence. No marketing fluff. Match the existing FAQ tone if present. Use plain text, no HTML except an inline <strong> for the product name if useful. Never start with 'Yes' alone — explain. Never start with 'Well' or 'So' or 'Basically'.>\"
+}
+
+HARD RULES
+- The question MUST end with a question mark.
+- The question MUST contain the meaningful words from the original query (so it still answers the searcher's actual intent).
+- The answer is 1 to 3 sentences total. Anything longer is wrong.
+- Plain English. No em dashes anywhere — use commas, periods, or parens.
+- Never claim a feature exists if the PAGE CONTEXT does not support it.
+- Output ONLY the JSON object.";
+
+        // ── Send to proxy ──
+        $payload = wp_json_encode( array(
+            'license_key' => $license_key,
+            'task'        => 'link_micro_rewrite',  // reusing the generic prompt-relay task
+            'content'     => '',
+            'title'       => '',
+            'prompt'      => base64_encode( $prompt ),
+        ) );
+
+        $response = wp_remote_post( 'https://aeogodmode.io/wp-json/asgm/v1/ai-assist', array(
+            'body'    => $payload,
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'timeout' => 30,
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'AI proxy error: ' . $response->get_error_message(),
+            ) );
+        }
+        $status = wp_remote_retrieve_response_code( $response );
+        $body   = json_decode( wp_remote_retrieve_body( $response ), true );
+        if ( $status !== 200 || empty( $body['success'] ) ) {
+            $err = $body['error'] ?? ( 'AI proxy returned status ' . $status );
+            return rest_ensure_response( array( 'success' => false, 'error' => $err ) );
+        }
+
+        $result   = $body['result'] ?? array();
+        $answer   = is_array( $result ) && ! empty( $result['answer'] )   ? (string) $result['answer']   : '';
+        $question = is_array( $result ) && ! empty( $result['question'] ) ? (string) $result['question'] : '';
+
+        // Backward-compat default: derive question from query if AI omitted it.
+        if ( '' === $question ) {
+            $question = ucfirst( trim( $query ) );
+            if ( substr( $question, -1 ) !== '?' ) {
+                $question .= '?';
+            }
+        }
+        if ( '' === $answer ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'AI returned an empty answer. Try editing the question or rerunning.',
+            ) );
+        }
+
+        // Strip em dashes defensively (matches site copy rules).
+        $answer   = strtr( $answer,   array( '—' => ',', '–' => ',' ) );
+        $question = strtr( $question, array( '—' => ',', '–' => ',' ) );
+
+        // Cache the draft.
+        $cache[ $cache_key ] = array(
+            'question'  => $question,
+            'answer'    => $answer,
+            'cached_at' => time(),
+        );
+        if ( count( $cache ) > 500 ) {
+            $cache = array_slice( $cache, -500, null, true );
+        }
+        update_option( 'asgm_query_gap_draft_cache', $cache, false );
+
+        return rest_ensure_response( array(
+            'success'  => true,
+            'question' => $question,
+            'answer'   => $answer,
+            'cached'   => false,
+            'credits'  => \AISEOGodMode\MetadataGenerator::get_credits(),
+        ) );
+    }
+
+    /**
+     * Apply a drafted FAQ to the target page. Handles three page types:
+     *   1. Pages using feature_faqs meta (marketing /plugin/* pages)
+     *   2. Posts containing a [faq] shortcode — append [q]/[a] block
+     *   3. Posts without an FAQ block — append a new [faq] block at the end
+     *
+     * Records to asgm_query_gap_applied for audit + idempotence.
+     *
+     * @param \WP_REST_Request $request
+     * @return \WP_REST_Response
+     */
+    public function query_gap_apply_faq( $request ) {
+        $query     = sanitize_text_field( (string) $request->get_param( 'query' ) );
+        // The "question" param is the editable, user-confirmed phrasing.
+        // For backward compat, fall back to deriving it from the raw query.
+        $question  = sanitize_text_field( (string) $request->get_param( 'question' ) );
+        $answer    = wp_kses_post( (string) $request->get_param( 'answer' ) );
+        $post_id   = absint( $request->get_param( 'post_id' ) );
+
+        if ( empty( $query ) || empty( $answer ) || ! $post_id ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Missing query, answer, or post_id.' ) );
+        }
+        $post = get_post( $post_id );
+        if ( ! $post || $post->post_status !== 'publish' ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
+        }
+        if ( ! current_user_can( 'edit_post', $post_id ) ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'No permission to edit this page.' ) );
+        }
+
+        // Prefer the user-edited question; only fall back to the raw query if
+        // the caller didn't send one.
+        if ( '' === $question ) {
+            $question = ucfirst( trim( $query ) );
+        }
+        $question = trim( $question );
+        if ( '' !== $question && substr( $question, -1 ) !== '?' ) {
+            $question .= '?';
+        }
+        $answer = trim( $answer );
+
+        $mode = 'unknown';
+
+        // ── Path 1: feature_faqs meta (marketing pages) ──
+        $existing_meta = get_post_meta( $post_id, 'feature_faqs', true );
+        if ( ! empty( $existing_meta ) ) {
+            $faqs = json_decode( $existing_meta, true );
+            if ( is_array( $faqs ) ) {
+                // Idempotence: bail if a near-identical question is already there.
+                foreach ( $faqs as $f ) {
+                    if ( ! empty( $f['q'] ) && strtolower( trim( $f['q'] ) ) === strtolower( $question ) ) {
+                        return rest_ensure_response( array(
+                            'success' => false,
+                            'error'   => 'This question is already in the page FAQ.',
+                            'mode'    => 'feature_meta',
+                        ) );
+                    }
+                }
+                $faqs[] = array( 'q' => $question, 'a' => $answer );
+                update_post_meta( $post_id, 'feature_faqs', wp_slash( wp_json_encode( $faqs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) ) );
+                $mode = 'feature_meta';
+            }
+        }
+
+        // ── Path 2 + 3: post_content with or without existing [faq] block ──
+        if ( 'unknown' === $mode ) {
+            $content = $post->post_content;
+            $faq_q_block = '[q]' . $question . '[/q]' . "\n" . '[a]' . $answer . '[/a]';
+
+            if ( false !== strpos( $content, '[faq]' ) ) {
+                // Idempotence — bail if the EXACT question already appears.
+                if ( false !== stripos( $content, '[q]' . $question . '[/q]' ) ) {
+                    return rest_ensure_response( array(
+                        'success' => false,
+                        'error'   => 'This question is already in the page FAQ.',
+                        'mode'    => 'faq_shortcode',
+                    ) );
+                }
+                // Inject the new pair just before [/faq].
+                $new_content = preg_replace(
+                    '#\[/faq\]#',
+                    $faq_q_block . "\n" . '[/faq]',
+                    $content,
+                    1 // only the first occurrence
+                );
+                $mode = 'faq_shortcode';
+            } else {
+                // Append a new [faq] block at the end.
+                $new_content = $content . "\n\n" . '<h2>Frequently asked questions</h2>' . "\n" . '[faq]' . "\n" . $faq_q_block . "\n" . '[/faq]';
+                $mode = 'new_faq_block';
+            }
+
+            $upd = wp_update_post( array(
+                'ID'           => $post_id,
+                'post_content' => wp_slash( $new_content ),
+            ), true );
+            if ( is_wp_error( $upd ) ) {
+                return rest_ensure_response( array( 'success' => false, 'error' => 'Failed to update page: ' . $upd->get_error_message() ) );
+            }
+        }
+
+        // ── Audit log + cache invalidation ──
+        if ( class_exists( '\AISEOGodMode\Query_Gap' ) ) {
+            \AISEOGodMode\Query_Gap::record_applied( $query, $post_id, $answer, $mode );
+        }
+
+        return rest_ensure_response( array(
+            'success' => true,
+            'mode'    => $mode,
+            'edit_url' => get_edit_post_link( $post_id, 'raw' ),
+        ) );
+    }
+
+    /**
+     * Draft an AI-written H2 heading + intro paragraph for a phrase-shaped
+     * query, so phrase queries like "schema checker" can be added as a real
+     * page section instead of being forced into a fake FAQ pair.
+     *
+     * Caches per (query, post_id) in `asgm_query_gap_draft_heading_cache`.
+     * Costs 1 credit per fresh draft. Reuses the existing AI proxy.
+     *
+     * @param \WP_REST_Request $request
+     * @return \WP_REST_Response
+     */
+    public function query_gap_draft_heading( $request ) {
+        $query   = sanitize_text_field( (string) $request->get_param( 'query' ) );
+        $post_id = absint( $request->get_param( 'post_id' ) );
+
+        if ( empty( $query ) || ! $post_id ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Missing query or post_id.' ) );
+        }
+        $post = get_post( $post_id );
+        if ( ! $post || $post->post_status !== 'publish' ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
+        }
+
+        $cache_key = md5( strtolower( trim( $query ) ) . '|' . $post_id );
+        $cache     = (array) get_option( 'asgm_query_gap_draft_heading_cache', array() );
+        if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['heading'] ) ) {
+            return rest_ensure_response( array(
+                'success' => true,
+                'heading' => (string) $cache[ $cache_key ]['heading'],
+                'intro'   => (string) ( $cache[ $cache_key ]['intro'] ?? '' ),
+                'cached'  => true,
+                'credits' => \AISEOGodMode\MetadataGenerator::get_credits(),
+            ) );
+        }
+
+        $credits = \AISEOGodMode\MetadataGenerator::get_credits();
+        if ( isset( $credits['remaining'] ) && $credits['remaining'] < 1 ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'Not enough credits. This action requires 1 credit. You have ' . $credits['remaining'] . ' remaining.',
+            ) );
+        }
+
+        $license_key = get_option( 'agm_license_key', '' );
+        if ( empty( $license_key ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'A Pro or Agency license is required to draft headings.',
+            ) );
+        }
+
+        $plain_content  = wp_strip_all_tags( apply_filters( 'the_content', $post->post_content ) );
+        $context_sample = mb_substr( $plain_content, 0, 1200 );
+
+        // Pull existing H2s so the AI can match site voice + avoid duplicates.
+        $existing_h2s = array();
+        if ( preg_match_all( '#<h2[^>]*>(.*?)</h2>#is', $post->post_content, $h2m ) ) {
+            foreach ( array_slice( $h2m[1], 0, 8 ) as $h ) {
+                $existing_h2s[] = trim( wp_strip_all_tags( $h ) );
+            }
+        }
+        $existing_block = empty( $existing_h2s ) ? '' : "\n\nEXISTING H2 HEADINGS ON THIS PAGE (match this voice + style; do not duplicate):\n- " . implode( "\n- ", $existing_h2s );
+
+        $prompt = "You draft ONE new H2 section heading + a short intro paragraph for a topical query a user is searching on Google. The heading goes on an existing page, so the wording must match the page's tone.
+
+PAGE TITLE
+" . $post->post_title . "
+
+PAGE CONTEXT (first 1200 chars of body text)
+" . $context_sample . $existing_block . "
+
+THE QUERY (a real noun-phrase string from Google Search Console)
+" . $query . "
+
+YOUR TASK
+Return ONE JSON object only, no markdown fences:
+
+{
+  \"heading\": \"<short H2 text, 3-8 words, contains the meaningful words of the query verbatim where natural. Sentence case. Do not end with punctuation unless it's a colon.>\",
+  \"intro\":   \"<a single intro paragraph of 2-3 sentences that opens this new section. Direct first sentence. Match the page's tone. Use plain text, no HTML except an inline <strong> for the product name if useful.>\"
+}
+
+HARD RULES
+- The heading is a HEADLINE, not a question. Never end it with ?.
+- The heading MUST contain the meaningful words from the original query (so the section actually targets the search intent).
+- The intro is 2 to 3 sentences. Anything longer is wrong.
+- Plain English. No em dashes anywhere — use commas, periods, or parens.
+- Never claim a feature exists if the PAGE CONTEXT does not support it.
+- Do not reuse an existing heading on this page.
+- Output ONLY the JSON object.";
+
+        $payload = wp_json_encode( array(
+            'license_key' => $license_key,
+            'task'        => 'link_micro_rewrite',
+            'content'     => '',
+            'title'       => '',
+            'prompt'      => base64_encode( $prompt ),
+        ) );
+
+        $response = wp_remote_post( 'https://aeogodmode.io/wp-json/asgm/v1/ai-assist', array(
+            'body'    => $payload,
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'timeout' => 30,
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'AI proxy error: ' . $response->get_error_message(),
+            ) );
+        }
+        $status = wp_remote_retrieve_response_code( $response );
+        $body   = json_decode( wp_remote_retrieve_body( $response ), true );
+        if ( $status !== 200 || empty( $body['success'] ) ) {
+            $err = $body['error'] ?? ( 'AI proxy returned status ' . $status );
+            return rest_ensure_response( array( 'success' => false, 'error' => $err ) );
+        }
+
+        $result  = $body['result'] ?? array();
+        $heading = is_array( $result ) && ! empty( $result['heading'] ) ? (string) $result['heading'] : '';
+        $intro   = is_array( $result ) && ! empty( $result['intro'] )   ? (string) $result['intro']   : '';
+        if ( '' === $heading || '' === $intro ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'AI returned an incomplete draft. Try regenerating.',
+            ) );
+        }
+
+        // Strip em dashes defensively.
+        $heading = strtr( $heading, array( '—' => ',', '–' => ',' ) );
+        $intro   = strtr( $intro,   array( '—' => ',', '–' => ',' ) );
+
+        // Trim a trailing question mark if the AI ignored "do not end with ?".
+        $heading = rtrim( $heading, "?.;:!" );
+
+        $cache[ $cache_key ] = array(
+            'heading'   => $heading,
+            'intro'     => $intro,
+            'cached_at' => time(),
+        );
+        if ( count( $cache ) > 500 ) {
+            $cache = array_slice( $cache, -500, null, true );
+        }
+        update_option( 'asgm_query_gap_draft_heading_cache', $cache, false );
+
+        return rest_ensure_response( array(
+            'success' => true,
+            'heading' => $heading,
+            'intro'   => $intro,
+            'cached'  => false,
+            'credits' => \AISEOGodMode\MetadataGenerator::get_credits(),
+        ) );
+    }
+
+    /**
+     * Apply a drafted H2 heading + intro paragraph to the target page.
+     * Appends to the end of post_content so the position is predictable.
+     * The success response tells the user the section was added at the
+     * bottom so they can reposition in the editor if they prefer.
+     *
+     * Idempotence: refuses if an existing heading on the page already has
+     * >=70% token overlap with the proposed heading.
+     *
+     * @param \WP_REST_Request $request
+     * @return \WP_REST_Response
+     */
+    public function query_gap_apply_heading( $request ) {
+        $query   = sanitize_text_field( (string) $request->get_param( 'query' ) );
+        $heading = sanitize_text_field( (string) $request->get_param( 'heading' ) );
+        $intro   = wp_kses_post( (string) $request->get_param( 'intro' ) );
+        $post_id = absint( $request->get_param( 'post_id' ) );
+
+        if ( empty( $query ) || empty( $heading ) || empty( $intro ) || ! $post_id ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Missing query, heading, intro, or post_id.' ) );
+        }
+        $post = get_post( $post_id );
+        if ( ! $post || $post->post_status !== 'publish' ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
+        }
+        if ( ! current_user_can( 'edit_post', $post_id ) ) {
+            return rest_ensure_response( array( 'success' => false, 'error' => 'No permission to edit this page.' ) );
+        }
+
+        $heading = trim( rtrim( $heading, '?.!:;' ) );
+        $intro   = trim( $intro );
+
+        // Idempotence — check existing H2s on the page for token overlap.
+        if ( class_exists( '\AISEOGodMode\Query_Gap' ) ) {
+            $h_tokens = \AISEOGodMode\Query_Gap::tokens( $heading );
+            if ( ! empty( $h_tokens ) && preg_match_all( '#<h2[^>]*>(.*?)</h2>#is', $post->post_content, $hm ) ) {
+                foreach ( $hm[1] as $existing_h ) {
+                    $e_tokens = \AISEOGodMode\Query_Gap::tokens( wp_strip_all_tags( $existing_h ) );
+                    if ( empty( $e_tokens ) ) continue;
+                    $inter = array_intersect( $h_tokens, $e_tokens );
+                    $denom = min( count( $h_tokens ), count( $e_tokens ) );
+                    if ( $denom > 0 && ( count( $inter ) / $denom ) >= 0.7 ) {
+                        return rest_ensure_response( array(
+                            'success' => false,
+                            'error'   => 'A similar heading already exists on this page: "' . wp_strip_all_tags( $existing_h ) . '".',
+                        ) );
+                    }
+                }
+            }
+        }
+
+        // Build the section HTML. Two clean elements only — wpautop handles the rest.
+        $section = "\n\n<h2>" . esc_html( $heading ) . "</h2>\n<p>" . wp_kses_post( $intro ) . "</p>";
+
+        $new_content = $post->post_content . $section;
+        $upd = wp_update_post( array(
+            'ID'           => $post_id,
+            'post_content' => wp_slash( $new_content ),
+        ), true );
+        if ( is_wp_error( $upd ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'error'   => 'Failed to update page: ' . $upd->get_error_message(),
+            ) );
+        }
+
+        // Audit log entry with mode='h2_section'.
+        if ( class_exists( '\AISEOGodMode\Query_Gap' ) ) {
+            \AISEOGodMode\Query_Gap::record_applied(
+                $query,
+                $post_id,
+                $heading . "\n\n" . $intro,
+                'h2_section'
+            );
+        }
+
+        return rest_ensure_response( array(
+            'success'  => true,
+            'mode'     => 'h2_section',
+            'edit_url' => get_edit_post_link( $post_id, 'raw' ),
+        ) );
     }
 
     /**
