@@ -2048,7 +2048,7 @@ class API {
             ) );
         }
 
-        $license_key = get_option( 'agm_license_key', '' );
+        $license_key = \AISEOGodMode\License::get_key();
         if ( empty( $license_key ) ) {
             return rest_ensure_response( array(
                 'success' => false,
@@ -2060,6 +2060,7 @@ class API {
         // We give the AI: the page title, the page summary (first 1200 chars of
         // plain text), any existing FAQ Q/A pairs for tone-matching, and the
         // question. We ask for a 1-3 sentence direct answer in JSON.
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- "the_content" is a WordPress core filter; applying it here is the canonical way to get processed post HTML.
         $plain_content   = wp_strip_all_tags( apply_filters( 'the_content', $post->post_content ) );
         $context_sample  = mb_substr( $plain_content, 0, 1200 );
         $existing_faqs   = array();
@@ -2342,7 +2343,7 @@ HARD RULES
             ) );
         }
 
-        $license_key = get_option( 'agm_license_key', '' );
+        $license_key = \AISEOGodMode\License::get_key();
         if ( empty( $license_key ) ) {
             return rest_ensure_response( array(
                 'success' => false,
@@ -2350,6 +2351,7 @@ HARD RULES
             ) );
         }
 
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- "the_content" is a WordPress core filter; applying it here is the canonical way to get processed post HTML.
         $plain_content  = wp_strip_all_tags( apply_filters( 'the_content', $post->post_content ) );
         $context_sample = mb_substr( $plain_content, 0, 1200 );
 

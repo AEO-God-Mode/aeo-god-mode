@@ -56,8 +56,12 @@ class Main {
     private function load_dependencies() {
         $includes = ASGM_PLUGIN_DIR . 'includes/';
 
-        // License must load first so other classes can check Pro status.
-        require_once $includes . 'class-license.php';
+        // License stub. Class_exists-guarded so the Pro plugin's real License
+        // class (loaded at plugins_loaded priority 5, before this method runs
+        // at priority 10) takes precedence when both plugins are active.
+        // When Pro is not installed, this stub is the only License class and
+        // returns false for everything.
+        require_once $includes . 'class-license-stub.php';
 
         // Free classes — always loaded.
         require_once $includes . 'class-api.php';
@@ -73,57 +77,16 @@ class Main {
         require_once $includes . 'class-conflict.php';
         require_once $includes . 'class-ai-plugin.php';
         require_once $includes . 'class-ai-headers.php';
-    require_once $includes . 'class-editor-panel.php';
+        require_once $includes . 'class-editor-panel.php';
         require_once $includes . 'class-metadata-writer.php';
         require_once $includes . 'class-metadata-generator.php';
         require_once $includes . 'class-answer-density.php';
 
-        // Citation Tracker class is always loaded so the API can serve engine config data.
-        // The module itself (cron scheduling) is only instantiated with Pro.
-        $pro = $includes . 'pro/';
-        if ( file_exists( $pro . 'class-citation-tracker.php' ) ) {
-            require_once $pro . 'class-citation-tracker.php';
-        }
-        // GSC class loaded unconditionally so API routes resolve.
-        // Pro gating is handled at the frontend (ProGate) and class level.
-        if ( file_exists( $pro . 'class-gsc.php' ) ) {
-            require_once $pro . 'class-gsc.php';
-        }
-
-        // Pro classes — only loaded with an active license.
-        if ( License::is_pro() && is_dir( $pro ) ) {
-            if ( file_exists( $pro . 'class-ai-referrals.php' ) ) {
-                require_once $pro . 'class-ai-referrals.php';
-            }
-            if ( file_exists( $pro . 'class-citability-score.php' ) ) {
-                require_once $pro . 'class-citability-score.php';
-            }
-            if ( file_exists( $pro . 'class-eeat-schema.php' ) ) {
-                require_once $pro . 'class-eeat-schema.php';
-            }
-            if ( file_exists( $pro . 'class-section-index.php' ) ) {
-                require_once $pro . 'class-section-index.php';
-                add_action( 'save_post', array( '\AISEOGodMode\Section_Index', 'on_save_post' ), 20, 2 );
-                add_action( 'asgm_section_index_embed_post', array( '\AISEOGodMode\Section_Index', 'embed_post' ), 10, 1 );
-                // Run schema migration if version is stale.
-                if ( (int) get_option( 'asgm_section_index_schema_v', 0 ) < 2 ) {
-                    \AISEOGodMode\Section_Index::create_table();
-                }
-            }
-            if ( file_exists( $pro . 'class-internal-link-builder.php' ) ) {
-                require_once $pro . 'class-internal-link-builder.php';
-            }
-            if ( file_exists( $pro . 'class-query-gap.php' ) ) {
-                require_once $pro . 'class-query-gap.php';
-            }
-            if ( file_exists( $pro . 'class-ai-assist.php' ) ) {
-                require_once $pro . 'class-ai-assist.php';
-                \AISEOGodMode\AI_Assist::init();
-            }
-            if ( file_exists( $pro . 'class-bulk-actions.php' ) ) {
-                require_once $pro . 'class-bulk-actions.php';
-            }
-        }
+        // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
+        // themselves on plugins_loaded priority 5/10. Free does not require any
+        // Pro files. Free code paths that need Pro at runtime use class_exists()
+        // checks (see init_hooks() in this class) so they no-op gracefully when
+        // Pro is not installed.
     }
 
     /**
@@ -133,8 +96,16 @@ class Main {
         add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
         add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
+
+        // Defensive cache-busting: every REST response from this plugin
+        // explicitly tells page caches (LiteSpeed, WP Rocket, W3TC, etc.)
+        // never to cache. Activation also writes path-based excludes, but
+        // this header is the floor in case a customer adds a new cache
+        // plugin after activation.
+        add_filter( 'rest_post_dispatch', array( $this, 'set_rest_no_cache_headers' ), 10, 3 );
         add_action( 'admin_init', array( $this, 'maybe_redirect_to_wizard' ) );
         add_action( 'admin_notices', array( $this, 'maybe_show_setup_notice' ) );
+        add_action( 'admin_notices', array( $this, 'maybe_show_pro_migration_notice' ) );
 
         // Front-end hooks — schema, meta, crawler logging.
         add_action( 'wp_head', array( $this, 'render_frontend_output' ), 1 );
@@ -613,6 +584,79 @@ class Main {
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         dbDelta( $sql );
+
+        // Tell page caches (LiteSpeed et al.) never to cache our REST endpoints.
+        // Without this, an aggressive cache can store a 404 from the brief window
+        // between plugin install and route registration, then keep serving the
+        // stale 404 for hours. The React admin app then sits in "Loading..."
+        // forever because /status returns a cached 404.
+        self::configure_cache_exclusions();
+    }
+
+    /**
+     * Add /wp-json/aeo-god-mode/ and /wp-json/asgm/ to known page-cache exclusion
+     * lists so REST API responses never get cached. Runs on activation and is
+     * idempotent. Safe no-op on sites without a recognised cache plugin.
+     */
+    private static function configure_cache_exclusions() {
+        $excludes_to_add = array(
+            '/wp-json/aeo-god-mode/',
+            '/wp-json/asgm/',
+        );
+
+        // LiteSpeed Cache: cache-exc option holds a newline-separated list.
+        $ls_key = 'litespeed.conf.cache-exc';
+        $current = get_option( $ls_key );
+        if ( $current !== false ) {
+            $items = is_array( $current )
+                ? $current
+                : array_filter( array_map( 'trim', preg_split( '/[\r\n]+/', (string) $current ) ) );
+            $changed = false;
+            foreach ( $excludes_to_add as $path ) {
+                if ( ! in_array( $path, $items, true ) ) {
+                    $items[]  = $path;
+                    $changed = true;
+                }
+            }
+            if ( $changed ) {
+                update_option( $ls_key, implode( "\n", $items ) );
+            }
+        }
+
+        // WP Rocket: cache_reject_uri option also accepts a list.
+        $rocket = get_option( 'wp_rocket_settings' );
+        if ( is_array( $rocket ) && isset( $rocket['cache_reject_uri'] ) ) {
+            $list = is_array( $rocket['cache_reject_uri'] )
+                ? $rocket['cache_reject_uri']
+                : array_filter( array_map( 'trim', preg_split( '/[\r\n]+/', (string) $rocket['cache_reject_uri'] ) ) );
+            $changed = false;
+            foreach ( $excludes_to_add as $path ) {
+                if ( ! in_array( $path, $list, true ) ) {
+                    $list[]  = $path;
+                    $changed = true;
+                }
+            }
+            if ( $changed ) {
+                $rocket['cache_reject_uri'] = $list;
+                update_option( 'wp_rocket_settings', $rocket );
+            }
+        }
+
+        // Purge whatever cache is active so any pre-existing stale 404s clear immediately.
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- This is LiteSpeed Cache's own action; we are calling their hook so they purge their cache. Not a hook owned by this plugin.
+        do_action( 'litespeed_purge_all' );
+        if ( function_exists( 'rocket_clean_domain' ) ) {
+            rocket_clean_domain();
+        }
+        if ( function_exists( 'w3tc_pgcache_flush' ) ) {
+            w3tc_pgcache_flush();
+        }
+        if ( function_exists( 'wp_cache_clear_cache' ) ) {
+            wp_cache_clear_cache();
+        }
+        if ( function_exists( 'wp_cache_flush' ) ) {
+            wp_cache_flush();
+        }
     }
 
     /**
@@ -620,6 +664,52 @@ class Main {
      */
     public static function deactivate() {
         flush_rewrite_rules();
+    }
+
+    /**
+     * Force-disable page-cache storage for every REST response under our
+     * plugin's namespaces. Runs on `rest_post_dispatch` so headers land on
+     * BOTH successful responses and error responses (404 rest_no_route,
+     * 401/403 rest_forbidden, etc.). Without this, a cache plugin can
+     * store an early 404 and serve it back for hours, breaking the React
+     * admin UI's init flow.
+     *
+     * @param \WP_REST_Response $response The response object.
+     * @param \WP_REST_Server   $server   The REST server.
+     * @param \WP_REST_Request  $request  The request object.
+     * @return \WP_REST_Response
+     */
+    public function set_rest_no_cache_headers( $response, $server, $request ) {
+        unset( $server );
+        if ( ! is_a( $response, '\WP_REST_Response' ) ) {
+            return $response;
+        }
+
+        // Detect our plugin's namespaces from either the matched route
+        // (success path) or the raw request URL (so rest_no_route 404s
+        // for our namespace still get the header — that's the case that
+        // actually caused the LSCache-stale-404 incident on 2026-05-20).
+        $matched_route = is_a( $request, '\WP_REST_Request' ) ? (string) $request->get_route() : '';
+        $raw_path      = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+
+        $is_ours = (
+            strpos( $matched_route, '/aeo-god-mode/' ) === 0
+            || strpos( $matched_route, '/asgm/' ) === 0
+            || strpos( $raw_path, '/wp-json/aeo-god-mode/' ) !== false
+            || strpos( $raw_path, '/wp-json/asgm/' ) !== false
+            || strpos( $raw_path, 'rest_route=/aeo-god-mode/' ) !== false
+            || strpos( $raw_path, 'rest_route=/asgm/' ) !== false
+        );
+
+        if ( $is_ours ) {
+            $response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0', true );
+            $response->header( 'Pragma', 'no-cache', true );
+            // LiteSpeed reads this header and skips caching.
+            $response->header( 'X-LiteSpeed-Cache-Control', 'no-cache', true );
+            // WP Rocket / W3TC respect this too.
+            $response->header( 'X-Accel-Expires', '0', true );
+        }
+        return $response;
     }
     /**
      * Register filters that remove specific schema types from Rank Math / Yoast output
@@ -700,5 +790,47 @@ class Main {
                 } ) );
             }, 99 );
         }
+    }
+
+    /**
+     * Show a migration notice to legacy Pro customers who have not yet
+     * installed the dedicated Pro plugin (slug `aeo-god-mode-pro`).
+     *
+     * Fires when:
+     *   - The current user can activate plugins.
+     *   - A Pro license key is stored from a previous install.
+     *   - The new Pro plugin is NOT active.
+     *
+     * Customers in this state had Pro running inside the legacy mixed plugin
+     * folder before the 2026-05-19 split. After the next WordPress.org Free
+     * update, the legacy /includes/pro/ folder gets removed and Pro features
+     * stop working unless they install the new Pro plugin first.
+     */
+    public function maybe_show_pro_migration_notice() {
+        if ( ! current_user_can( 'activate_plugins' ) ) {
+            return;
+        }
+
+        // Only shown to legacy Pro customers (those with a stored key).
+        if ( ! get_option( 'agm_license_key', '' ) ) {
+            return;
+        }
+
+        // If the new Pro plugin is active, nothing to do.
+        if ( ! function_exists( 'is_plugin_active' ) ) {
+            include_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        if ( function_exists( 'is_plugin_active' ) && is_plugin_active( 'aeo-god-mode-pro/aeo-god-mode-pro.php' ) ) {
+            return;
+        }
+
+        $download_url = 'https://aeogodmode.io/my-account/';
+        echo '<div class="notice notice-warning"><p><strong>'
+            . esc_html__( 'Action needed: AEO God Mode Pro is now a separate plugin.', 'aeo-god-mode' )
+            . '</strong><br>'
+            . esc_html__( 'We have split Pro into its own plugin so future WordPress.org updates can never overwrite it. Your license stays valid; you just need to install the new Pro plugin alongside Free.', 'aeo-god-mode' )
+            . '<br><a href="' . esc_url( $download_url ) . '" class="button button-primary" style="margin-top:8px;">'
+            . esc_html__( 'Get the new Pro plugin', 'aeo-god-mode' )
+            . '</a></p></div>';
     }
 }

@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       AEO God Mode: Answer Engine Optimization, GEO, AIO and LLM SEO
  * Plugin URI:        https://aeogodmode.io
- * Description:       A comprehensive plugin for Answer Engine Optimization. Manage AI crawlers, citation tracking, schema, and llms.txt in one place.
- * Version:           1.6.6
+ * Description:       The best WordPress AEO plugin. Get cited by ChatGPT, Perplexity, Gemini, and Google AI Overviews, not just ranked by Google.
+ * Version:           1.6.7
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            Metronyx AI SEO
@@ -14,6 +14,17 @@
  * Domain Path:       /languages
  *
  * @package AISEOGodMode
+ *
+ * Scope (see /docs/architecture-free-pro-split.md):
+ *   - This is the Free plugin. Pro features live in the separate plugin
+ *     `aeo-god-mode-pro`, source at `Plugins/aeo-god-mode-pro/`.
+ *   - License activation code lives only in the Pro plugin. Free ships
+ *     `includes/class-license-stub.php`, a no-op stub class.
+ *   - `build.sh` and `tools/check-free-release.sh` scan this source on every
+ *     build and every commit. Pro source or license code in this directory
+ *     blocks the release.
+ *   - See CONTRIBUTING.md for the dev workflow and RELEASE_RULES.md for the
+ *     full release checklist.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -21,7 +32,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'ASGM_VERSION', '1.6.6' );
+define( 'ASGM_VERSION', '1.6.7' );
 define( 'ASGM_PLUGIN_FILE', __FILE__ );
 define( 'ASGM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ASGM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -48,24 +59,11 @@ function asgm_is_pro_active() {
     return \AISEOGodMode\License::is_pro();
 }
 
-// Boot the plugin.
-asgm();
-
-// Pro plugin updates via EDD Software Licensing.
-if ( asgm_is_pro_active() && file_exists( ASGM_PLUGIN_DIR . 'includes/class-updater.php' ) ) {
-    require_once ASGM_PLUGIN_DIR . 'includes/class-updater.php';
-    new ASGM_Plugin_Updater(
-        'https://aeogodmode.io',
-        __FILE__,
-        array(
-            'version'   => ASGM_VERSION,
-            'license'   => get_option( 'agm_license_key' ),
-            'item_name' => 'AEO God Mode Pro',
-            'author'    => 'Metronyx AI SEO',
-            'url'       => home_url(),
-        )
-    );
-}
+// Boot Free at plugins_loaded priority 10. Pro plugin (if installed) loads its
+// real License class at priority 5 first; Free's stub then sees the class is
+// already defined and skips. This is the load-order contract from the 2026-05-19
+// Free/Pro plugin split. See /docs/architecture-free-pro-split.md.
+add_action( 'plugins_loaded', 'asgm', 10 );
 
 // Activation hook.
 register_activation_hook( __FILE__, array( '\AISEOGodMode\Main', 'activate' ) );

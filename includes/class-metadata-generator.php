@@ -50,7 +50,7 @@ class MetadataGenerator {
      * @return array Credit balance data or error.
      */
     public static function get_credits() {
-        $key = get_option( 'agm_license_key', '' );
+        $key = License::get_key();
 
         if ( empty( $key ) || ! License::is_pro_build() ) {
             // Free tier: check local usage.
@@ -141,7 +141,7 @@ class MetadataGenerator {
             $clean_content = implode( ' ', $words ) . '...';
         }
 
-        $key = License::is_pro_build() ? get_option( 'agm_license_key', '' ) : '';
+        $key = License::is_pro_build() ? License::get_key() : '';
 
         // Build the AI prompt.
         $prompt = self::build_prompt( $context, $style );
@@ -226,7 +226,7 @@ class MetadataGenerator {
             $clean_content = implode( ' ', $words ) . '...';
         }
 
-    $key = License::is_pro_build() ? get_option( 'agm_license_key', '' ) : '';
+    $key = License::is_pro_build() ? License::get_key() : '';
 
         $prompt = self::build_title_prompt( $context, $clean_content );
 
@@ -523,7 +523,7 @@ class MetadataGenerator {
             return array( 'success' => false, 'error' => 'Missing heading or paragraph context.' );
         }
 
-        $key = License::is_pro_build() ? get_option( 'agm_license_key', '' ) : '';
+        $key = License::is_pro_build() ? License::get_key() : '';
         if ( empty( $key ) ) {
             return array( 'success' => false, 'error' => 'Pro license required for AI Rewrite.' );
         }

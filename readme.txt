@@ -4,11 +4,11 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.6
+Stable tag: 1.6.7
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-The most complete free Answer Engine Optimization (AEO) plugin. Get cited by ChatGPT, Perplexity, Claude, Gemini & Google AI Overviews.
+The best WordPress AEO plugin. Get cited by ChatGPT, Perplexity, Gemini, and Google AI Overviews, not just ranked by Google.
 
 
 == Description ==
@@ -306,6 +306,9 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.7 =
+* Performance and compatibility improvements
 
 = 1.6.6 =
 * Setup details panel updates within minutes of any change

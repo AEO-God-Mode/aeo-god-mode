@@ -5,6 +5,10 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.7
+
+- Performance and compatibility improvements
+
 ## 1.6.6
 
 - Setup details panel updates within minutes of any change

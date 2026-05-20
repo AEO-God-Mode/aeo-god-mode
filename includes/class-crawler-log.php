@@ -98,11 +98,11 @@ class CrawlerLog {
 		$cache_key = 'entries_' . $page . '_' . $per;
 
 		return $this->remember( $cache_key, function () use ( $wpdb, $table, $per, $offset, $page ) {
-			$total = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			$total = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Wrapped by the remember() cache layer above (wp_cache_get/set with CACHE_GROUP).
 				$wpdb->prepare( 'SELECT COUNT(*) FROM %i', $table )
 			);
 
-			$entries = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			$entries = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Wrapped by the remember() cache layer above (wp_cache_get/set with CACHE_GROUP).
 				$wpdb->prepare(
 					'SELECT * FROM %i ORDER BY created_at DESC LIMIT %d OFFSET %d',
 					$table,
@@ -142,7 +142,7 @@ class CrawlerLog {
 		$table = $this->table_name();
 
 		// Per-bot counts (last 30 days).
-		$by_bot = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$by_bot = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT bot_name, COUNT(*) as visits FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY bot_name ORDER BY visits DESC',
 				$table
@@ -151,7 +151,7 @@ class CrawlerLog {
 		);
 
 		// Per-page counts (last 30 days, top 20).
-		$by_page = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$by_page = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT url, COUNT(*) as visits FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY url ORDER BY visits DESC LIMIT 20',
 				$table
@@ -163,7 +163,7 @@ class CrawlerLog {
 		}
 
 		// Daily counts (last 30 days).
-		$daily = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$daily = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT DATE(created_at) as date, COUNT(*) as visits FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY DATE(created_at) ORDER BY date ASC',
 				$table
@@ -172,7 +172,7 @@ class CrawlerLog {
 		);
 
 		// 7-day total.
-		$seven_day = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$seven_day = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT COUNT(*) FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)',
 				$table
@@ -180,7 +180,7 @@ class CrawlerLog {
 		);
 
 		// 30-day total.
-		$thirty_day = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$thirty_day = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT COUNT(*) FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)',
 				$table
@@ -188,7 +188,7 @@ class CrawlerLog {
 		);
 
 		// Per-bot detail cards: visits, last seen, top page.
-		$bot_details = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$bot_details = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT bot_name, COUNT(*) as visits, MAX(created_at) as last_seen FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY bot_name ORDER BY visits DESC',
 				$table
@@ -199,7 +199,7 @@ class CrawlerLog {
 		// Add top page per bot.
 		if ( $bot_details ) {
 			foreach ( $bot_details as &$bot ) {
-				$top_page = $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				$top_page = $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 					$wpdb->prepare(
 						"SELECT url FROM %i WHERE bot_name = %s AND url != '/robots.txt' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY url ORDER BY COUNT(*) DESC LIMIT 1",
 						$table,
@@ -213,7 +213,7 @@ class CrawlerLog {
 		}
 
 		// Most crawled page (excluding robots.txt).
-		$most_crawled = $wpdb->get_row( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$most_crawled = $wpdb->get_row( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				"SELECT url, COUNT(*) as visits FROM %i WHERE url != '/robots.txt' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY url ORDER BY visits DESC LIMIT 1",
 				$table
@@ -222,13 +222,13 @@ class CrawlerLog {
 		);
 
 		// Trend: this week vs last week.
-		$this_week = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$this_week = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT COUNT(*) FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)',
 				$table
 			)
 		);
-		$last_week = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$last_week = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				'SELECT COUNT(*) FROM %i WHERE created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)',
 				$table
@@ -250,7 +250,7 @@ class CrawlerLog {
 
 		// Blind spots: published posts with zero AI bot visits.
 		$blind_spots = array();
-		$crawled_urls = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$crawled_urls = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				"SELECT DISTINCT url FROM %i WHERE url != '/robots.txt'",
 				$table
@@ -322,7 +322,7 @@ class CrawlerLog {
 		global $wpdb;
 		$table = $this->table_name();
 
-		$wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- DELETE on write path; caching not applicable. flush_cache() runs immediately after.
 			$wpdb->prepare(
 				'DELETE FROM %i WHERE created_at < DATE_SUB(NOW(), INTERVAL %d DAY)',
 				$table,
