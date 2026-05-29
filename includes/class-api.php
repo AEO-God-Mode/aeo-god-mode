@@ -287,7 +287,16 @@ class API {
             register_rest_route( self::NAMESPACE, '/gsc/callback', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'gsc_oauth_callback' ),
-                'permission_callback' => array( $this, 'admin_permission' ), // OAuth redirect — user's WP cookies are present. CSRF also verified via state transient in handle_callback().
+                // Public on purpose. OAuth redirects from Google can arrive
+                // without the user's WP session cookie (Safari ITP, SameSite,
+                // incognito, separate admin/front domains, ...). Security is
+                // enforced inside handle_callback() via the CSRF state token
+                // (wp_create_nonce stored as a 10-min transient before we
+                // bounce the user to Google). Anyone hitting this URL without
+                // a valid state token gets rejected with "Invalid OAuth state."
+                // Previously this was admin_permission, which 403'd a real
+                // chunk of customers (reported 2026-05-29 by Christian @ IC).
+                'permission_callback' => '__return_true',
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/disconnect', array(
@@ -3564,15 +3573,26 @@ HARD RULES
             $style = 'smart_mix';
         }
 
-        // Pre-check credits.
-        $credits = MetadataGenerator::get_credits();
-        $cost_per_item = ( 'titles' === $task_type || 'generate_aeo_titles' === $task_type ) ? 2 : 1;
-        $total_cost    = count( $post_ids ) * $cost_per_item;
+        // Pre-check credits. Cost depends on the task type so the pre-check
+        // matches what the server-side proxy will actually charge per call.
+        // Source of truth: asgm_ai_task_credit_cost() in asgm-ai-proxy.php.
+        //   metadata  = Title + Meta combined → 2 credits
+        //   titles    = AEO Titles Only       → 1 credit
+        //   meta_only = Meta Description only → 1 credit
+        $is_titles_task    = ( 'titles' === $task_type || 'generate_aeo_titles' === $task_type );
+        $is_meta_only_task = ( 'meta_only' === $task_type );
+        if ( $is_titles_task || $is_meta_only_task ) {
+            $cost_per_item = 1;
+        } else {
+            $cost_per_item = 2; // combined Title + Meta
+        }
+        $total_cost = count( $post_ids ) * $cost_per_item;
 
+        $credits = MetadataGenerator::get_credits();
         if ( ! empty( $credits['success'] ) && $credits['remaining'] < $total_cost ) {
             return new \WP_REST_Response( array(
                 'success'   => false,
-                'error'     => 'Not enough credits. You have ' . $credits['remaining'] . ' remaining, but requested ' . $total_cost . ' credits worth of generation.',
+                'error'     => 'Not enough credits. You have ' . $credits['remaining'] . ' remaining, but this batch needs ' . $total_cost . '.',
                 'remaining' => $credits['remaining'],
                 'needed'    => $total_cost,
             ), 429 );
@@ -3580,30 +3600,48 @@ HARD RULES
 
         $results = array();
         foreach ( $post_ids as $pid ) {
-            $context = MetadataWriter::get_post_context( $pid ); // Retrieve context for existing meta
+            $context = MetadataWriter::get_post_context( $pid );
             if ( empty( $context ) ) continue;
 
-            if ( 'titles' === $task_type || 'generate_aeo_titles' === $task_type ) {
+            if ( $is_titles_task ) {
                 $result = MetadataGenerator::generate_titles( $pid );
                 if ( ! empty( $result['success'] ) && ! empty( $result['result'] ) ) {
-                    $parsed = json_decode( $result['result'], true );
+                    $parsed      = json_decode( $result['result'], true );
                     $recommended = $parsed['recommended'] ?? '';
                     if ( empty( $recommended ) && ! empty( $parsed['titles'][0]['title'] ) ) {
                         $recommended = $parsed['titles'][0]['title'];
                     }
-                    
+
                     $results[] = array(
                         'success'  => true,
                         'post_id'  => $pid,
                         'style'    => 'titles',
                         'result'   => array(
-                            'meta_title' => $recommended,
+                            'meta_title'       => $recommended,
                             'meta_description' => '',
                         ),
                         'existing' => $context['existing_meta'],
                     );
                 } else {
-                    $results[] = array( 'success' => false, 'error' => $result['error'] ?? 'Title Generation Failed' );
+                    $results[] = array( 'success' => false, 'error' => $result['error'] ?? 'Title generation failed' );
+                }
+            } elseif ( $is_meta_only_task ) {
+                $result = MetadataGenerator::generate_meta_only( $pid );
+                if ( ! empty( $result['success'] ) && ! empty( $result['result'] ) ) {
+                    $parsed = is_array( $result['result'] ) ? $result['result'] : json_decode( $result['result'], true );
+                    $desc   = $parsed['meta_description'] ?? '';
+                    $results[] = array(
+                        'success'  => true,
+                        'post_id'  => $pid,
+                        'style'    => 'meta_only',
+                        'result'   => array(
+                            'meta_title'       => '', // Title left untouched on purpose.
+                            'meta_description' => $desc,
+                        ),
+                        'existing' => $context['existing_meta'],
+                    );
+                } else {
+                    $results[] = array( 'success' => false, 'error' => $result['error'] ?? 'Meta description generation failed' );
                 }
             } else {
                 $result = MetadataGenerator::generate( $pid, $style );

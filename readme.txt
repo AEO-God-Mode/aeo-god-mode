@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.7
+Stable tag: 1.6.8
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -41,7 +41,7 @@ AEO God Mode fixes that. It runs alongside Yoast, Rank Math, SEOPress, or All in
 
 ✅ **Editor Panel**. Edit AEO settings inside the Gutenberg sidebar where you write. No bouncing between editors.
 
-✅ **AI Metadata Generator** (5 free credits/month). Writes Search and LLM-optimised meta titles, meta descriptions, and product descriptions in 5 styles. Run on a single post or bulk-generate across many. See screenshot 10.
+✅ **AI Metadata Generator** (10 free credits/month). Writes Search and LLM-optimised meta titles, meta descriptions, and product descriptions in 5 styles. Run on a single post or bulk-generate across many. See screenshot 10.
 
 ✅ **Robots.txt Manager**. Generates the AI bot rules some engines need to find you at all.
 
@@ -178,7 +178,7 @@ All features sit under the **AEO** menu in the WordPress admin sidebar:
 ✅ **AI Crawlers** (Free). Allowlist for 18 AI bots.
 ✅ **Content Gaps** (Free). Scan for missing schema, FAQs, answer content.
 ✅ **llms.txt** (Free). View and edit the machine-readable site summary.
-✅ **AI Metadata** (Free 5 credits/month, Pro unlimited). Generate Search and LLM-optimised meta titles, descriptions, and product descriptions in 5 styles. Single-post or bulk.
+✅ **AI Metadata** (Free 10 credits/month, Pro 500/month). Generate Search and LLM-optimised meta titles, descriptions, and product descriptions in 5 styles. Single-post or bulk.
 ✅ **Crawler Log** (Free, advanced charts in Pro). Every AI bot visit with timestamps and paths.
 ✅ **Schema** (Free). Schema engine, validator, conflict resolution.
 ⚡ **Citation Tracker** (Pro)
@@ -209,7 +209,7 @@ AEO means structuring your content so AI answer engines (ChatGPT, Perplexity, Cl
 
 = What's free and what's Pro? =
 
-**Free forever (no account required):** AI Crawler Allowlist, llms.txt Generator, Schema Engine, Schema Conflict Detector, Schema Validator, Content Gap Scanner, Editor Panel, AI Metadata Generator (5 credits/month), Robots.txt Manager, AI HTTP Headers, AI Crawler Log, AEO Health Dashboard, Setup Wizard, Yoast / Rank Math / SEOPress compatibility.
+**Free forever (no account required):** AI Crawler Allowlist, llms.txt Generator, Schema Engine, Schema Conflict Detector, Schema Validator, Content Gap Scanner, Editor Panel, AI Metadata Generator (10 credits/month), Robots.txt Manager, AI HTTP Headers, AI Crawler Log, AEO Health Dashboard, Setup Wizard, Yoast / Rank Math / SEOPress compatibility.
 
 **Pro (license at <https://aeogodmode.io>):** Citation Tracker, Citability Score, AI Referral Analytics, E-E-A-T Schema Enrichment, Google Search Console integration, Internal Link Builder, Section Index, Bulk Actions, Unlimited AI Metadata Generation, AI Crawler Intelligence (30-day charts, Top Crawled Pages, Blind Spots).
 
@@ -238,7 +238,7 @@ Yes (Pro feature). The Citation Tracker sends real queries to all four major AI 
 
 = Is AEO God Mode really free? =
 
-Yes. The free version is fully functional with no account required. Covers AI Crawler Allowlist, llms.txt, Schema Engine, Content Gap Scanner, Schema Validator, AI Metadata Generator (5 credits/month), AEO Health Dashboard. Pro at <https://aeogodmode.io> unlocks Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, Bulk Actions.
+Yes. The free version is fully functional with no account required. Covers AI Crawler Allowlist, llms.txt, Schema Engine, Content Gap Scanner, Schema Validator, AI Metadata Generator (10 credits/month), AEO Health Dashboard. Pro at <https://aeogodmode.io> unlocks Citation Tracker, AI Referrals, Citability Score, E-E-A-T Schema, GSC, Internal Link Builder, Section Index, Bulk Actions.
 
 
 = Will it slow my site down? =
@@ -293,7 +293,7 @@ This plugin connects to external services in the following ways:
 Requests sent to aeogodmode.io to validate Pro license keys and check for Pro plugin updates. Only the license key and site URL are transmitted. No personal data sent.
 
 **AI Content Generation & Analysis**
-When you manually start an AI generation task (like creating AI Metadata), the plugin securely sends the post content (title and body text) to aeogodmode.io/wp-json/asgm/v1/ai-assist for processing. Free users get 5 credits per month (no rollover). Pro users unlock unlimited analysis features like FAQ extraction and advanced schema generation. Only activates when you explicitly click the 'Generate' button on a post.
+When you manually start an AI generation task (like creating AI Metadata), the plugin securely sends the post content (title and body text) to aeogodmode.io/wp-json/asgm/v1/ai-assist for processing. Free users get 10 credits per month (no rollover). Pro users get 500 credits per month and unlock the full AI feature set (FAQ extraction, Citability AI, Answer-First content suggestions, advanced schema, Internal Link Builder, GSC integrations). Only activates when you explicitly click the 'Generate' or 'Fix' button on a post.
 
 **Citation Tracking (Pro)**
 The Citation Tracker queries the Perplexity, OpenAI (ChatGPT), Google (Gemini), and Anthropic (Claude) APIs to check whether your domain appears in AI-generated responses. Requires explicit opt-in. Only activates after a valid Pro license is entered. API keys stored encrypted in the WordPress database with AES-256 using your WordPress salts. Never shared with any third party.
@@ -306,6 +306,12 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.8 =
+* Google Search Console: connection now completes reliably across all browsers (fixes intermittent 403 on the OAuth return step)
+* AI credit accounting now updates the dashboard counter immediately after every AI generation
+* Bulk Metadata: new "Meta Only" option to refresh just the meta description without rewriting the title
+* Clearer pricing across AI features so the credit cost shown before each action matches what gets used
 
 = 1.6.7 =
 * Performance and compatibility improvements

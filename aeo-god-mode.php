@@ -3,7 +3,7 @@
  * Plugin Name:       AEO God Mode: Answer Engine Optimization, GEO, AIO and LLM SEO
  * Plugin URI:        https://aeogodmode.io
  * Description:       The best WordPress AEO plugin. Get cited by ChatGPT, Perplexity, Gemini, and Google AI Overviews, not just ranked by Google.
- * Version:           1.6.7
+ * Version:           1.6.8
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            Metronyx AI SEO

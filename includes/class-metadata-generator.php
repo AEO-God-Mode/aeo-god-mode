@@ -30,8 +30,30 @@ class MetadataGenerator {
 
     /**
      * Credit consumption endpoint on the license server.
+     *
+     * As of plugin v1.6.8 / proxy v3.1.0 the proxy charges credits inline
+     * with the AI call, so the plugin no longer calls this endpoint directly.
+     * It's kept as a constant for backward reference and for the dedup safety
+     * net on the proxy side, which short-circuits this URL when it's hit by
+     * older plugin builds still in the wild.
      */
     const CREDIT_USE_URL = 'https://aeogodmode.io/wp-json/asgm/v1/credits/use';
+
+    /**
+     * Generate a per-call request_id (RFC4122-like, 36 chars) used by the
+     * proxy for idempotency. Replays of the same id return the cached row
+     * without charging a second credit.
+     */
+    private static function new_request_id() {
+        try {
+            $b = random_bytes( 16 );
+            $b[6] = chr( ( ord( $b[6] ) & 0x0f ) | 0x40 );
+            $b[8] = chr( ( ord( $b[8] ) & 0x3f ) | 0x80 );
+            return vsprintf( '%s%s-%s-%s-%s-%s%s%s', str_split( bin2hex( $b ), 4 ) );
+        } catch ( \Exception $e ) {
+            return 'aegm-' . substr( md5( uniqid( '', true ) . wp_rand() ), 0, 28 );
+        }
+    }
 
     /**
      * Available meta description styles.
@@ -76,7 +98,18 @@ class MetadataGenerator {
     }
 
     /**
-     * Track free tier credits locally (5/month, no rollover).
+     * Free tier monthly credit allowance. Centralised constant so a future
+     * bump only needs to change one place and we don't end up with the
+     * "5 credits/month" wording fixed in three files while the code charges 10.
+     *
+     * Bumped from 5 → 10 in v1.6.8 alongside the per-task credit cost map
+     * (Title + Meta combined now costs 2 credits per call; 10/month still
+     * covers 5 combined generations or 10 titles-only / meta-only generations).
+     */
+    const FREE_TIER_MONTHLY = 10;
+
+    /**
+     * Track free tier credits locally (10/month, no rollover).
      *
      * @return array
      */
@@ -89,7 +122,7 @@ class MetadataGenerator {
             update_option( 'asgm_free_metadata_usage', $usage );
         }
 
-        $limit = 5;
+        $limit = self::FREE_TIER_MONTHLY;
         return array(
             'success'       => true,
             'monthly_limit' => $limit,
@@ -146,15 +179,20 @@ class MetadataGenerator {
         // Build the AI prompt.
         $prompt = self::build_prompt( $context, $style );
 
-        // Call the AI proxy.
+        // Call the AI proxy. Proxy v3.1.0+ charges credits inline and returns
+        // the updated balance, so this is the only network call we make.
+        $request_id = self::new_request_id();
         $payload = array(
             'license_key' => $key,
             'task'        => 'generate_aeo_metadata',
+            'mode'        => 'combined', // Title + Meta in one call → 2 credits.
             'content'     => $clean_content,
             'title'       => $context['title'],
             'post_type'   => $context['post_type'],
             'style'       => $style,
             'prompt'      => base64_encode( $prompt ),
+            'request_id'  => $request_id,
+            'site_url'    => home_url(),
         );
 
         $response = wp_remote_post( self::API_URL, array(
@@ -171,34 +209,34 @@ class MetadataGenerator {
         $body   = json_decode( wp_remote_retrieve_body( $response ), true );
 
         if ( 200 !== $status || empty( $body['success'] ) ) {
-            $msg = $body['error'] ?? 'AI generation failed (status ' . $status . ').';
-            return array( 'success' => false, 'error' => $msg );
+            // Proxy now returns a user-facing "you weren't charged" message
+            // when OpenAI returned but the response was unparseable. Surface
+            // that verbatim so the writer knows their balance is intact.
+            return array(
+                'success'        => false,
+                'error'          => $body['error'] ?? ( 'AI generation failed (status ' . $status . ').' ),
+                'status'         => $body['status'] ?? null,
+                'credit_charged' => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+                'credits'        => $body['credits'] ?? null,
+            );
         }
 
-        // Consume a credit.
-        if ( ! empty( $key ) ) {
-            wp_remote_post( self::CREDIT_USE_URL, array(
-                'body'    => wp_json_encode( array(
-                    'license_key' => $key,
-                    'site_url'    => home_url(),
-                    'task_type'   => 'single_metadata',
-                    'post_type'   => $context['post_type'],
-                    'tokens_in'   => $body['usage']['prompt_tokens'] ?? 0,
-                    'tokens_out'  => $body['usage']['completion_tokens'] ?? 0,
-                ) ),
-                'headers' => array( 'Content-Type' => 'application/json' ),
-                'timeout' => 10,
-            ) );
-        } else {
+        // Free tier still tracks its own local 10/month allowance (see
+        // self::FREE_TIER_MONTHLY). Pro credit charging happens server-side
+        // inside the proxy.
+        if ( empty( $key ) ) {
             self::use_free_credit();
         }
 
         return array(
-            'success'  => true,
-            'post_id'  => $post_id,
-            'style'    => $style,
-            'result'   => $body['result'],
-            'existing' => $context['existing_meta'],
+            'success'        => true,
+            'post_id'        => $post_id,
+            'style'          => $style,
+            'result'         => $body['result'],
+            'existing'       => $context['existing_meta'],
+            'status'         => $body['status'] ?? 'success',
+            'credit_charged' => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+            'credits'        => $body['credits'] ?? null,
         );
     }
 
@@ -230,13 +268,17 @@ class MetadataGenerator {
 
         $prompt = self::build_title_prompt( $context, $clean_content );
 
+        $request_id = self::new_request_id();
         $payload = array(
             'license_key' => $key,
-            'task'        => 'generate_aeo_metadata', // Route custom encoded prompt to the dynamic AI agent
+            'task'        => 'generate_aeo_metadata', // Routes custom encoded prompt to the dynamic AI agent.
+            'mode'        => 'titles_only', // Title output only → 1 credit.
             'content'     => $clean_content,
             'title'       => $context['title'],
             'post_type'   => $context['post_type'],
             'prompt'      => base64_encode( $prompt ),
+            'request_id'  => $request_id,
+            'site_url'    => home_url(),
         );
 
         $response = wp_remote_post( self::API_URL, array(
@@ -253,25 +295,19 @@ class MetadataGenerator {
         $body   = json_decode( wp_remote_retrieve_body( $response ), true );
 
         if ( 200 !== $status || empty( $body['success'] ) ) {
-            $msg = $body['error'] ?? 'AI generation failed (status ' . $status . ').';
-            return array( 'success' => false, 'error' => $msg );
+            return array(
+                'success'        => false,
+                'error'          => $body['error'] ?? ( 'AI generation failed (status ' . $status . ').' ),
+                'status'         => $body['status'] ?? null,
+                'credit_charged' => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+                'credits'        => $body['credits'] ?? null,
+            );
         }
 
-        // Consume a credit.
-        if ( ! empty( $key ) ) {
-            wp_remote_post( self::CREDIT_USE_URL, array(
-                'body'    => wp_json_encode( array(
-                    'license_key' => $key,
-                    'site_url'    => home_url(),
-                    'task_type'   => 'generate_titles',
-                    'post_type'   => $context['post_type'],
-                    'tokens_in'   => $body['usage']['prompt_tokens'] ?? 0,
-                    'tokens_out'  => $body['usage']['completion_tokens'] ?? 0,
-                ) ),
-                'headers' => array( 'Content-Type' => 'application/json' ),
-                'timeout' => 10,
-            ) );
-        } else {
+        // Free tier still tracks its own local 10/month allowance (see
+        // self::FREE_TIER_MONTHLY). Pro credit charging happens server-side
+        // inside the proxy.
+        if ( empty( $key ) ) {
             self::use_free_credit();
         }
 
@@ -279,10 +315,142 @@ class MetadataGenerator {
         $result_data = $body['result'] ?? array();
 
         return array(
-            'success' => true,
-            'post_id' => $post_id,
-            'result'  => $result_data,
+            'success'        => true,
+            'post_id'        => $post_id,
+            'result'         => $result_data,
+            'status'         => $body['status'] ?? 'success',
+            'credit_charged' => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+            'credits'        => $body['credits'] ?? null,
         );
+    }
+
+    /**
+     * Generate ONLY the AEO meta description for a post (no title rewrite).
+     * Costs 1 credit. Useful when the customer already has a good title but
+     * wants a tighter, AEO-aligned meta description.
+     *
+     * @param int $post_id Post ID.
+     * @return array { success, post_id, result: { meta_description }, ... }
+     */
+    public static function generate_meta_only( $post_id ) {
+        $context = MetadataWriter::get_post_context( $post_id );
+        if ( empty( $context ) ) {
+            return array( 'success' => false, 'error' => 'Post not found.' );
+        }
+
+        $clean_content = trim( wp_strip_all_tags( $context['content'] ) );
+        if ( empty( $clean_content ) || str_word_count( $clean_content ) < 15 ) {
+            return array( 'success' => false, 'error' => 'Skipped: Not enough content (minimum ~15 words required).' );
+        }
+
+        $words = explode( ' ', $clean_content );
+        if ( count( $words ) > 600 ) {
+            $words = array_slice( $words, 0, 600 );
+            $clean_content = implode( ' ', $words ) . '...';
+        }
+
+        $key    = License::is_pro_build() ? License::get_key() : '';
+        $prompt = self::build_meta_only_prompt( $context, $clean_content );
+
+        $request_id = self::new_request_id();
+        $payload = array(
+            'license_key' => $key,
+            'task'        => 'generate_aeo_metadata',
+            'mode'        => 'meta_only', // Meta description only → 1 credit.
+            'content'     => $clean_content,
+            'title'       => $context['title'],
+            'post_type'   => $context['post_type'],
+            'prompt'      => base64_encode( $prompt ),
+            'request_id'  => $request_id,
+            'site_url'    => home_url(),
+        );
+
+        $response = wp_remote_post( self::API_URL, array(
+            'body'    => wp_json_encode( $payload ),
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'timeout' => 45,
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            return array( 'success' => false, 'error' => 'AI service unavailable: ' . $response->get_error_message() );
+        }
+
+        $status = wp_remote_retrieve_response_code( $response );
+        $body   = json_decode( wp_remote_retrieve_body( $response ), true );
+
+        if ( 200 !== $status || empty( $body['success'] ) ) {
+            return array(
+                'success'        => false,
+                'error'          => $body['error'] ?? ( 'AI generation failed (status ' . $status . ').' ),
+                'status'         => $body['status'] ?? null,
+                'credit_charged' => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+                'credits'        => $body['credits'] ?? null,
+            );
+        }
+
+        if ( empty( $key ) ) {
+            self::use_free_credit();
+        }
+
+        return array(
+            'success'        => true,
+            'post_id'        => $post_id,
+            'result'         => $body['result'] ?? array(),
+            'existing'       => $context['existing_meta'],
+            'status'         => $body['status'] ?? 'success',
+            'credit_charged' => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+            'credits'        => $body['credits'] ?? null,
+        );
+    }
+
+    /**
+     * Build the prompt for meta-description-only generation. Same AEO rules
+     * as the combined prompt minus the title and product_description sections.
+     */
+    private static function build_meta_only_prompt( $context, $clean_content ) {
+        $is_product = in_array( $context['post_type'], array( 'product', 'download' ), true );
+        $categories = self::format_list( $context['categories'] );
+        $tags       = self::format_list( $context['tags'] );
+
+        $prompt  = 'You are an AEO (Answer Engine Optimization) copywriter. Write a meta description that works for two audiences simultaneously: standard search display limits AND AI engines that extract it as a standalone answer chunk.' . "\n\n";
+
+        $prompt .= "## YOUR TASK\n";
+        $prompt .= 'Generate ONLY the meta_description (145-158 characters) for this ' . $context['post_type'] . ". The existing title is kept as-is — do not rewrite it.\n\n";
+
+        $prompt .= "## AEO META DESCRIPTION RULES (MANDATORY)\n";
+        $prompt .= "Current year context: " . gmdate( 'Y' ) . ". Avoid outdated year references.\n";
+        $prompt .= "Follow every rule. Breaking any means the output fails:\n\n";
+        $prompt .= "1. Lead with the direct answer or outcome — never with the brand name or a question (BLUFF method).\n";
+        $prompt .= "2. Include the primary keyword naturally in the first 60 characters.\n";
+        if ( $is_product ) {
+            $prompt .= "3. Include critical product specs, price (if provided), or who the product is directly for.\n";
+            $prompt .= "4. Do NOT use generic sales copy. Treat this like an answer to 'What is [product name]?'\n";
+        } else {
+            $prompt .= "3. Include one specific, concrete detail (number, timeframe, result, or differentiator) from the content.\n";
+        }
+        $prompt .= "5. Standalone sentence that makes complete sense out of context. No 'this article' or 'this page'.\n";
+        $prompt .= "6. Tightly 145-158 characters including spaces.\n";
+        $prompt .= "7. No clickbait, no ellipsis, no em dashes.\n";
+        $prompt .= "8. End with a clear implication of value, not a generic CTA.\n\n";
+
+        $prompt .= "## ANTI-AI WRITING EXCLUSIONS\n";
+        $prompt .= "NEVER use: delve, comprehensive, unlock, harness, elevate, revolutionize, landscape, embark, journey, transformative, groundbreaking, discover, uncover, explore, dive, crucial, pivotal, robust, seamlessly, leverage, facilitate, intricate, nuanced, multifaceted, paramount.\n\n";
+
+        $prompt .= "## CONTENT CONTEXT\n";
+        $prompt .= 'Page title (keep as-is): ' . $context['title'] . "\n";
+        $prompt .= 'Page type: ' . $context['post_type'] . "\n";
+        $prompt .= 'Categories: ' . $categories . "\n";
+        $prompt .= 'Tags: ' . $tags . "\n";
+        if ( ! empty( $context['price'] ) ) {
+            $prompt .= 'Price: ' . $context['price'] . "\n";
+        }
+
+        $prompt .= "\n## OUTPUT FORMAT\n";
+        $prompt .= "Return ONLY a valid JSON object with this single key:\n";
+        $prompt .= "- \"meta_description\": string (145-158 chars)\n";
+        $prompt .= "\nNo explanations, no markdown fences, no other keys.\n";
+
+        return $prompt;
     }
 
     /**
@@ -574,6 +742,7 @@ class MetadataGenerator {
             . "CLASSIFICATION: {$classification}"
             . $extra_block;
 
+        $request_id = self::new_request_id();
         $payload = array(
             'license_key' => $key,
             'task'        => 'rewrite_opener',
@@ -581,6 +750,8 @@ class MetadataGenerator {
             'content'     => '',
             'title'       => $context['title'],
             'post_type'   => $context['post_type'],
+            'request_id'  => $request_id,
+            'site_url'    => home_url(),
         );
 
         $response = wp_remote_post( self::API_URL, array(
@@ -597,7 +768,16 @@ class MetadataGenerator {
         $body   = json_decode( wp_remote_retrieve_body( $response ), true );
 
         if ( 200 !== $status || empty( $body['success'] ) ) {
-            return array( 'success' => false, 'error' => $body['error'] ?? 'AI rewrite failed (status ' . $status . ').' );
+            // Proxy returns status=parse_error + a "you weren't charged"
+            // message when OpenAI returned but JSON was malformed. Surface it
+            // verbatim along with the unchanged credits block.
+            return array(
+                'success'        => false,
+                'error'          => $body['error'] ?? ( 'AI rewrite failed (status ' . $status . ').' ),
+                'status'         => $body['status'] ?? null,
+                'credit_charged' => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+                'credits'        => $body['credits'] ?? null,
+            );
         }
 
         // Proxy returns the model's text in $body['result']. The prompt asks
@@ -623,19 +803,9 @@ class MetadataGenerator {
         $parsed['rewrite']         = $strip_dashes( $parsed['rewrite'] );
         $parsed['answer_sentence'] = isset( $parsed['answer_sentence'] ) ? $strip_dashes( $parsed['answer_sentence'] ) : '';
 
-        // Charge one credit on success.
-        wp_remote_post( self::CREDIT_USE_URL, array(
-            'body'    => wp_json_encode( array(
-                'license_key' => $key,
-                'site_url'    => home_url(),
-                'task_type'   => 'rewrite_opener',
-                'post_type'   => $context['post_type'],
-                'tokens_in'   => $body['usage']['prompt_tokens'] ?? 0,
-                'tokens_out'  => $body['usage']['completion_tokens'] ?? 0,
-            ) ),
-            'headers' => array( 'Content-Type' => 'application/json' ),
-            'timeout' => 10,
-        ) );
+        // Credit charging moved server-side into the proxy as of v3.1.0.
+        // The credits block returned from the proxy is forwarded to the
+        // caller below so the dashboard widget can reflect the new total.
 
         $final_rewrite = trim( (string) $parsed['rewrite'] );
 
@@ -677,6 +847,9 @@ class MetadataGenerator {
             'overlap_score'       => $overlap,                      // 0..1 trigram containment of opener in body. Hidden in UI for now; surfaced for tuning.
             'subject_position'    => $subject_position,             // word index of the heading subject inside the rewrite. -1 if not found.
             'subject_token'       => $subject_token,                // the heading subject we looked for (for debugging only).
+            'status'              => $body['status'] ?? 'success',
+            'credit_charged'      => isset( $body['credit_charged'] ) ? (bool) $body['credit_charged'] : null,
+            'credits'             => $body['credits'] ?? null,
         );
     }
 }

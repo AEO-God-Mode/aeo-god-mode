@@ -5,6 +5,13 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.8
+
+- Google Search Console: connection now completes reliably across all browsers (fixes intermittent 403 on the OAuth return step)
+- AI credit accounting now updates the dashboard counter immediately after every AI generation
+- Bulk Metadata: new "Meta Only" option to refresh just the meta description without rewriting the title
+- Clearer pricing across AI features so the credit cost shown before each action matches what gets used
+
 ## 1.6.7
 
 - Performance and compatibility improvements
