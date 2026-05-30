@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.9
+Stable tag: 1.6.10
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,9 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.10 =
+* Answer Density: site scans now cover every published post and page on sites of any size, so your score reflects your whole catalog. The nightly refresh and the Re-scan button both walk the full library.
 
 = 1.6.9 =
 * Bulk Metadata: AEO God Mode actions now appear in the bulk-action menu on the Posts, Pages, Products and Downloads lists. Tick posts, pick "Write AEO Title + Meta" (or Titles Only / Meta Only), review the selection in the AEO God Mode admin, click Generate when ready.

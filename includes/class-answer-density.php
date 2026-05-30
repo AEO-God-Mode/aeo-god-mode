@@ -20,10 +20,13 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 class Answer_Density {
 
 	const POSTMETA_KEY    = '_asgm_answer_density';
+	const SCAN_TS_KEY     = '_asgm_ad_scanned'; // numeric post meta: unix time of last scan. Drives rotation ordering.
 	const DISMISS_KEY     = '_asgm_ad_dismissed'; // post meta: array of normalized heading strings the user has dismissed.
 	const SUMMARY_OPT     = 'asgm_answer_density_summary';
 	const CRON_HOOK       = 'asgm_answer_density_nightly';
-	const BATCH_SIZE      = 50;
+	const CONTINUE_HOOK   = 'asgm_answer_density_continue'; // one-off event that drains the tail of a full pass.
+	const QUEUE_OPT       = 'asgm_answer_density_queue';    // pending post IDs for an in-progress full pass.
+	const BATCH_SIZE      = 50; // posts refreshed per nightly rotation. NOT a cap on total coverage.
 	const ANSWER_WINDOW_W = 50; // words after a heading we look at for an answer
 	const CACHE_GROUP     = 'asgm_answer_density';
 
@@ -668,6 +671,10 @@ class Answer_Density {
 		);
 
 		update_post_meta( $post_id, self::POSTMETA_KEY, $result );
+		// Lightweight numeric stamp used purely for rotation ordering. Lets the
+		// nightly cron find never-scanned and least-recently-scanned posts with
+		// a plain indexed meta query instead of unserializing every scan row.
+		update_post_meta( $post_id, self::SCAN_TS_KEY, time() );
 		// Invalidate the cached postmeta scan so the dashboard picks up the
 		// new value on its next refresh_summary() call.
 		wp_cache_delete( 'asgm_density_rows', self::CACHE_GROUP );
@@ -683,25 +690,166 @@ class Answer_Density {
 	}
 
 	/**
-	 * Cron-friendly batch scanner. Walks all published posts/pages
-	 * BATCH_SIZE at a time, oldest-scanned-first. Updates summary.
+	 * Full-catalog scan — the manual "Re-scan" path.
+	 *
+	 * Walks EVERY published post and page, scanning in a time-budgeted loop so a
+	 * single request never runs away. Whatever can't be reached inside the
+	 * budget is queued and a background event drains the rest, chaining until
+	 * the entire catalog is covered. Coverage is complete regardless of how many
+	 * posts the site has — the old fixed 50-post cap that left larger sites
+	 * partially graded is gone.
+	 *
+	 * @return array Site summary reflecting the synchronous portion of the pass.
 	 */
 	public static function scan_all_posts() {
-		// Walk all published posts/pages oldest-modified first. The previous
-		// meta_query (NOT EXISTS OR EXISTS) was a no-op since every post
-		// matches one branch or the other. Removing it lets MySQL use the
-		// existing post_modified index and avoids the "slow meta_query" warning.
-		$posts = get_posts( array(
-			'post_type'      => array( 'post', 'page' ),
-			'post_status'    => 'publish',
-			'posts_per_page' => self::BATCH_SIZE,
-			'orderby'        => 'modified',
-			'order'          => 'ASC',
-			'fields'         => 'ids',
-		) );
+		self::run_scan_pass( self::all_published_ids(), self::time_budget() );
+		return self::get_summary();
+	}
 
-		foreach ( $posts as $pid ) { self::scan_post( $pid ); }
+	/**
+	 * Background continuation of a full pass. Drains the queued tail the same
+	 * time-budgeted way and reschedules itself until the queue is empty.
+	 */
+	public static function continue_scan() {
+		$ids = get_option( self::QUEUE_OPT, array() );
+		if ( empty( $ids ) || ! is_array( $ids ) ) {
+			delete_option( self::QUEUE_OPT );
+			return;
+		}
+		self::run_scan_pass( $ids, self::time_budget() );
+	}
+
+	/**
+	 * Nightly rotation — the cron path.
+	 *
+	 * Refreshes up to BATCH_SIZE posts per night, never-scanned first and then
+	 * least-recently-scanned, so the whole catalog cycles through over a few
+	 * nights without re-grading the same set every run. Any site left
+	 * under-covered by an older build self-heals within a few nightly cycles.
+	 */
+	public static function scan_rotation() {
+		foreach ( self::rotation_targets( self::BATCH_SIZE ) as $pid ) {
+			self::scan_post( (int) $pid );
+		}
 		self::refresh_summary();
+	}
+
+	/**
+	 * Scan a list of post IDs within a wall-clock budget. IDs not reached are
+	 * persisted to the queue and a single background event is scheduled to
+	 * continue. Always refreshes the summary so the dashboard tracks progress
+	 * after each chunk.
+	 *
+	 * @param int[] $ids
+	 * @param float $budget Seconds of wall-clock to spend this request.
+	 */
+	private static function run_scan_pass( $ids, $budget ) {
+		$ids   = array_values( array_unique( array_map( 'intval', (array) $ids ) ) );
+		$start = microtime( true );
+
+		while ( ! empty( $ids ) ) {
+			self::scan_post( (int) array_shift( $ids ) );
+			if ( ( microtime( true ) - $start ) >= $budget ) { break; }
+		}
+
+		if ( ! empty( $ids ) ) {
+			// Tail remains — persist it and schedule one continuation. The
+			// wp_next_scheduled guard keeps a single chain even if traffic
+			// fires cron while a continuation is already pending.
+			update_option( self::QUEUE_OPT, array_values( $ids ), false );
+			if ( ! wp_next_scheduled( self::CONTINUE_HOOK ) ) {
+				wp_schedule_single_event( time() + 30, self::CONTINUE_HOOK );
+			}
+		} else {
+			delete_option( self::QUEUE_OPT );
+		}
+
+		self::refresh_summary();
+	}
+
+	/**
+	 * Every published post + page ID, oldest-modified first. IDs only, so this
+	 * stays cheap even on catalogs with thousands of entries.
+	 *
+	 * @return int[]
+	 */
+	private static function all_published_ids() {
+		$ids = get_posts( array(
+			'post_type'           => array( 'post', 'page' ),
+			'post_status'         => 'publish',
+			'posts_per_page'      => -1,
+			'orderby'             => 'modified',
+			'order'               => 'ASC',
+			'fields'              => 'ids',
+			'no_found_rows'       => true,
+			'ignore_sticky_posts' => true,
+			'suppress_filters'    => true,
+		) );
+		return array_map( 'intval', (array) $ids );
+	}
+
+	/**
+	 * Rotation targets for the nightly cron: never-scanned posts first (no scan
+	 * stamp yet), then the least-recently-scanned, up to $limit. Two plain
+	 * indexed meta queries — no full-table unserialization.
+	 *
+	 * @param int $limit
+	 * @return int[]
+	 */
+	private static function rotation_targets( $limit ) {
+		$limit = max( 1, (int) $limit );
+
+		// 1) Never-scanned posts (no rotation stamp) take priority.
+		$never = get_posts( array(
+			'post_type'        => array( 'post', 'page' ),
+			'post_status'      => 'publish',
+			'posts_per_page'   => $limit,
+			'orderby'          => 'modified',
+			'order'            => 'ASC',
+			'fields'           => 'ids',
+			'no_found_rows'    => true,
+			'suppress_filters' => true,
+			'meta_query'       => array(
+				array( 'key' => self::SCAN_TS_KEY, 'compare' => 'NOT EXISTS' ),
+			),
+		) );
+		$never = array_map( 'intval', (array) $never );
+
+		if ( count( $never ) >= $limit ) {
+			return array_slice( $never, 0, $limit );
+		}
+
+		// 2) Fill the remainder with the oldest-scanned posts. The meta_key +
+		// meta_value_num orderby inner-joins on the stamp, so this returns only
+		// already-scanned posts — no overlap with step 1.
+		$old = get_posts( array(
+			'post_type'        => array( 'post', 'page' ),
+			'post_status'      => 'publish',
+			'posts_per_page'   => $limit - count( $never ),
+			'orderby'          => 'meta_value_num',
+			'meta_key'         => self::SCAN_TS_KEY,
+			'order'            => 'ASC',
+			'fields'           => 'ids',
+			'no_found_rows'    => true,
+			'suppress_filters' => true,
+		) );
+		$old = array_map( 'intval', (array) $old );
+
+		return array_values( array_unique( array_merge( $never, $old ) ) );
+	}
+
+	/**
+	 * Wall-clock budget for one synchronous scan request. Uses most of the
+	 * host's max_execution_time but stays well under common proxy/CDN timeouts
+	 * so the Re-scan call returns promptly; the tail (if any) finishes in the
+	 * background.
+	 *
+	 * @return float Seconds.
+	 */
+	private static function time_budget() {
+		$max = (int) ini_get( 'max_execution_time' ); // 0 = unlimited (CLI / some hosts).
+		if ( $max <= 0 ) { return 25.0; }
+		return max( 8.0, min( 25.0, $max * 0.6 ) );
 	}
 
 	/**
@@ -829,11 +977,14 @@ class Answer_Density {
 	 * Bootstrap: cron + on-save scanning. Called from class-main.php.
 	 */
 	public static function init() {
-		// Nightly batch.
-		add_action( self::CRON_HOOK, array( __CLASS__, 'scan_all_posts' ) );
+		// Nightly rotation (bounded + self-healing).
+		add_action( self::CRON_HOOK, array( __CLASS__, 'scan_rotation' ) );
 		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
 			wp_schedule_event( time() + 600, 'daily', self::CRON_HOOK );
 		}
+
+		// Background drain of a full (manual) pass on large catalogs.
+		add_action( self::CONTINUE_HOOK, array( __CLASS__, 'continue_scan' ) );
 
 		// On-save: scan changed posts immediately so the editor panel sees
 		// the new score on next refresh.
