@@ -630,6 +630,39 @@ class API {
             'callback'            => array( $this, 'accept_metadata' ),
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
+
+        // Consumes a short-lived bulk-action transient created when the user
+        // clicks an AEO God Mode bulk action on the WP Posts list. Returns
+        // the selected post IDs + mode so the React Metadata page can
+        // pre-populate the selection for review-before-commit. One-use:
+        // hitting the endpoint deletes the transient.
+        register_rest_route( self::NAMESPACE, '/metadata/bulk-payload', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'consume_bulk_payload' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+    }
+
+    /**
+     * Consume the bulk-meta hand-off transient and return the selection.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function consume_bulk_payload( $request ) {
+        $token = sanitize_text_field( $request->get_param( 'token' ) ?? '' );
+        if ( '' === $token ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Missing token.' ), 400 );
+        }
+        $payload = \AISEOGodMode\BulkMeta::consume_bulk_payload( $token );
+        if ( ! $payload ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Bulk selection expired or already used. Re-select posts and try again.' ), 410 );
+        }
+        return rest_ensure_response( array(
+            'success'  => true,
+            'mode'     => $payload['mode'],
+            'post_ids' => array_values( array_map( 'absint', (array) $payload['post_ids'] ) ),
+        ) );
     }
 
     /**

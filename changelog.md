@@ -5,6 +5,10 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.9
+
+- Bulk Metadata: AEO God Mode actions now appear in the bulk-action menu on the Posts, Pages, Products and Downloads lists. Tick posts, pick "Write AEO Title + Meta" (or Titles Only / Meta Only), review the selection in the AEO God Mode admin, click Generate when ready.
+
 ## 1.6.8
 
 - Google Search Console: connection now completes reliably across all browsers (fixes intermittent 403 on the OAuth return step)
