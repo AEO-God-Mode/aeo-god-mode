@@ -5,26 +5,35 @@
  * Adds three AEO-God-Mode-branded bulk actions to every public post type's
  * list table (Posts, Pages, Products, Downloads, custom CPTs):
  *
- *   ↓ AEO God Mode
+ *   AEO God Mode
  *     Write AEO Title + Meta  (2 credits per post)
  *     Write AEO Titles Only   (1 credit per post)
  *     Write AEO Meta Only     (1 credit per post)
  *
- * Selecting an action does NOT run AI inline. Instead the user is redirected
- * to our React admin Metadata page with the selected posts pre-loaded so they
- * can review the generated output BEFORE accepting (no silent overwrites of
- * carefully-crafted existing meta titles or descriptions).
+ * Selecting an action runs generation right there on the Posts list. A
+ * progress overlay shows what is happening, processes the selection a few
+ * posts at a time, reports any items that were skipped or failed, then
+ * refreshes the list so the new titles and descriptions are visible. No
+ * redirect to a separate screen.
+ *
+ * Generation flows through the same two endpoints the dashboard uses:
+ *   POST /metadata/generate  writes nothing, returns the AI output, and is
+ *                            where credits are charged server-side.
+ *   POST /metadata/accept    saves the chosen fields. Empty fields are
+ *                            skipped, so a Titles Only run never clears an
+ *                            existing description and a Meta Only run never
+ *                            clears an existing title.
  *
  * Differentiator vs Rank Math's bulk AI actions: ours generate answer-first
  * metadata tuned for AI engine extraction (BLUFF method, anti-AI-writing word
- * exclusions, year-aware, 145-158 char tightness band). Optimised to be
- * cited by ChatGPT / Perplexity / Google AI Overviews, not just ranked.
+ * exclusions, year-aware, 145 to 158 char tightness band). Optimised to be
+ * cited by ChatGPT, Perplexity and Google AI Overviews, not just ranked.
  *
  * Free tier uses the local 10-credit monthly allowance enforced server-side
  * in the AI proxy via asgm_ai_task_credit_cost(). Pro tier uses the 500
  * monthly allowance. The cost map is the single source of truth, so the
- * action labels here are descriptive — actual charging happens server-side
- * when the customer clicks Generate in the Metadata UI.
+ * action labels here are descriptive and the actual charging happens
+ * server-side on /metadata/generate.
  *
  * @package AISEOGodMode
  * @since   1.6.9
@@ -44,27 +53,27 @@ class BulkMeta {
     const ADMIN_PAGE_SLUG = 'aeo-god-mode';
 
     /**
-     * Action prefix. Used to detect our actions in the bulk handler and to
-     * keep our keys from colliding with WordPress core or other plugins.
+     * Action prefix. Used to detect our actions and to keep our keys from
+     * colliding with WordPress core or other plugins.
      */
     const ACTION_PREFIX = 'aeogm_meta_';
 
     /**
-     * Action → mode mapping. The mode value is sent in the AI proxy payload
-     * (`mode` field) and read by asgm_ai_task_credit_cost() to charge the
-     * right number of credits.
+     * Action key to AI task type. The task type is sent to /metadata/generate
+     * and read by asgm_ai_task_credit_cost() to charge the right number of
+     * credits (combined = 2, titles = 1, meta only = 1).
      *
      * @var array
      */
-    private static $action_modes = array(
-        'aeogm_meta_combined' => 'combined',
-        'aeogm_meta_titles'   => 'titles_only',
+    private static $action_tasks = array(
+        'aeogm_meta_combined' => 'metadata',
+        'aeogm_meta_titles'   => 'titles',
         'aeogm_meta_only'     => 'meta_only',
     );
 
     public function __construct() {
         add_action( 'admin_init', array( $this, 'register_bulk_actions' ) );
-        add_action( 'admin_notices', array( $this, 'maybe_show_notice' ) );
+        add_action( 'admin_footer-edit.php', array( $this, 'inject_progress_ui' ) );
     }
 
     /**
@@ -88,7 +97,6 @@ class BulkMeta {
 
         foreach ( $post_types as $pt ) {
             add_filter( "bulk_actions-edit-{$pt}", array( $this, 'add_bulk_actions' ), 20 );
-            add_filter( "handle_bulk_actions-edit-{$pt}", array( $this, 'handle_bulk_action' ), 10, 3 );
         }
     }
 
@@ -99,11 +107,10 @@ class BulkMeta {
      * @return array
      */
     public function add_bulk_actions( $actions ) {
-        // Brand header. Disabled-looking visually but still selectable; the
-        // bulk handler treats it as a no-op so accidentally clicking Apply
-        // with this selected does nothing instead of throwing an error.
+        // Brand header. Selectable but treated as a no-op by the handler so
+        // accidentally clicking Apply with this selected does nothing.
         $aeogm_actions = array(
-            'aeogm_meta_header'   => '── ' . __( 'AEO God Mode', 'aeo-god-mode' ) . ' ──',
+            'aeogm_meta_header'   => '-- ' . __( 'AEO God Mode', 'aeo-god-mode' ) . ' --',
             'aeogm_meta_combined' => __( 'Write AEO Title + Meta (2 credits/post)', 'aeo-god-mode' ),
             'aeogm_meta_titles'   => __( 'Write AEO Titles Only (1 credit/post)', 'aeo-god-mode' ),
             'aeogm_meta_only'     => __( 'Write AEO Meta Only (1 credit/post)', 'aeo-god-mode' ),
@@ -113,94 +120,268 @@ class BulkMeta {
     }
 
     /**
-     * Handle an AEO bulk action click.
-     *
-     * WP's bulk-action machinery already nonce-verifies the request before
-     * this filter runs, so we focus on:
-     *   - confirming the user can edit posts (capability gate)
-     *   - filtering to a clean integer list of post IDs
-     *   - mapping the action key to the AI proxy mode
-     *   - redirecting to our React admin Metadata page with the selection
-     *     pre-loaded for review
-     *
-     * Returning the original $redirect_url unchanged is the WP convention
-     * for "not my action" — keeps other bulk handlers running normally.
-     *
-     * @param string $redirect_url The URL WP would otherwise redirect to.
-     * @param string $action       The selected bulk action key.
-     * @param int[]  $post_ids     IDs the user ticked.
-     * @return string
+     * Print the JavaScript that intercepts our bulk actions and runs the
+     * generation in place with a progress overlay. Only loaded on the
+     * edit.php list-table screen.
      */
-    public function handle_bulk_action( $redirect_url, $action, $post_ids ) {
-        // Header is a non-action; treat as no-op silently.
-        if ( 'aeogm_meta_header' === $action ) {
-            return $redirect_url;
-        }
-
-        if ( ! isset( self::$action_modes[ $action ] ) ) {
-            return $redirect_url;
-        }
-
+    public function inject_progress_ui() {
         if ( ! current_user_can( 'edit_posts' ) ) {
-            // No capability — let WP show its standard "you cannot do this"
-            // error rather than us inventing a custom one.
-            return $redirect_url;
+            return;
         }
 
-        $mode     = self::$action_modes[ $action ];
-        $post_ids = array_values( array_filter( array_map( 'absint', (array) $post_ids ) ) );
+        $nonce        = wp_create_nonce( 'wp_rest' );
+        $generate_url = esc_url_raw( rest_url( self::ADMIN_PAGE_SLUG . '/v1/metadata/generate' ) );
+        $accept_url   = esc_url_raw( rest_url( self::ADMIN_PAGE_SLUG . '/v1/metadata/accept' ) );
+        ?>
+        <script>
+        ( function() {
+            document.addEventListener( 'DOMContentLoaded', function() {
+                var form = document.getElementById( 'posts-filter' );
+                if ( ! form ) {
+                    return;
+                }
 
-        if ( empty( $post_ids ) ) {
-            return add_query_arg( 'aeogm_bulk', 'no_posts', $redirect_url );
-        }
+                var GENERATE_URL = '<?php echo esc_url_raw( $generate_url ); ?>';
+                var ACCEPT_URL   = '<?php echo esc_url_raw( $accept_url ); ?>';
+                var NONCE        = '<?php echo esc_js( $nonce ); ?>';
 
-        // Hand-off via a short-lived transient keyed to the current user.
-        // Avoids 2KB-URL-length problems on large selections, and keeps the
-        // post IDs out of the address bar (cleaner UX, less to copy-paste
-        // wrong into a support ticket).
-        $token   = wp_generate_password( 20, false, false );
-        $payload = array(
-            'mode'     => $mode,
-            'post_ids' => $post_ids,
-            'created'  => time(),
-        );
-        set_transient( $this->transient_key_for_user( $token ), $payload, 5 * MINUTE_IN_SECONDS );
+                // Action key to generation settings. cost is per item and
+                // mirrors the server-side credit cost map.
+                var AEO_ACTIONS = {
+                    'aeogm_meta_combined': { task: 'metadata',  cost: 2, doing: 'AEO titles and meta descriptions' },
+                    'aeogm_meta_titles':   { task: 'titles',    cost: 1, doing: 'AEO titles' },
+                    'aeogm_meta_only':     { task: 'meta_only', cost: 1, doing: 'AEO meta descriptions' }
+                };
 
-        $admin_url = admin_url( 'admin.php?page=' . self::ADMIN_PAGE_SLUG );
-        $hash      = '#/metadata?from=bulk&token=' . rawurlencode( $token );
+                form.addEventListener( 'submit', function( e ) {
+                    var sel1 = document.getElementById( 'bulk-action-selector-top' );
+                    var sel2 = document.getElementById( 'bulk-action-selector-bottom' );
+                    var v1   = sel1 ? sel1.value : '';
+                    var v2   = sel2 ? sel2.value : '';
+                    var action = AEO_ACTIONS[ v1 ] ? v1 : ( AEO_ACTIONS[ v2 ] ? v2 : '' );
 
-        wp_safe_redirect( $admin_url . $hash );
-        exit;
+                    // Not one of our generation actions (could be the header
+                    // separator or a core action). Let WordPress handle it.
+                    if ( ! action ) {
+                        return;
+                    }
+
+                    e.preventDefault();
+                    var cfg = AEO_ACTIONS[ action ];
+
+                    var checks  = document.querySelectorAll( 'input[name="post[]"]:checked' );
+                    var postIds = [];
+                    checks.forEach( function( cb ) { postIds.push( cb.value ); } );
+
+                    if ( postIds.length === 0 ) {
+                        alert( 'Select at least one item first, then choose an AEO God Mode action.' );
+                        return;
+                    }
+
+                    // ----- Overlay + modal -----
+                    if ( ! document.getElementById( 'aeo-bulk-style' ) ) {
+                        var style = document.createElement( 'style' );
+                        style.id = 'aeo-bulk-style';
+                        style.innerHTML = '@keyframes aeo-shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } } .aeo-shimmer-bar { background: linear-gradient(90deg, #2563eb 25%, #60a5fa 50%, #2563eb 75%) !important; background-size: 1000px 100% !important; animation: aeo-shimmer 2s infinite linear !important; }';
+                        document.head.appendChild( style );
+                    }
+
+                    var overlay = document.createElement( 'div' );
+                    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,23,42,0.85);backdrop-filter:blur(4px);z-index:999999;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;';
+
+                    var modal = document.createElement( 'div' );
+                    modal.style.cssText = 'background:#1e1e2d;padding:40px;border-radius:16px;width:460px;max-width:92vw;text-align:center;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);color:#fff;border:1px solid #333346;';
+
+                    var title = document.createElement( 'h2' );
+                    title.innerText = 'AEO God Mode';
+                    title.style.cssText = 'margin-top:0;color:#fff;font-size:22px;margin-bottom:12px;text-shadow:0 0 15px rgba(79,70,229,0.4);font-weight:600;';
+
+                    var text = document.createElement( 'p' );
+                    text.innerText = 'Generating ' + cfg.doing + ' for ' + postIds.length + ' item(s). Uses up to ' + ( postIds.length * cfg.cost ) + ' AI credit(s).';
+                    text.style.color = '#94a3b8';
+                    text.style.fontSize = '15px';
+                    text.style.marginBottom = '28px';
+
+                    var progressContainer = document.createElement( 'div' );
+                    progressContainer.style.cssText = 'width:100%;height:12px;background:#333346;border-radius:6px;overflow:hidden;margin-bottom:15px;position:relative;';
+
+                    var progressBar = document.createElement( 'div' );
+                    progressBar.style.cssText = 'height:100%;width:0%;transition:width 0.4s cubic-bezier(0.4, 0, 0.2, 1);border-radius:6px;min-width:5%;';
+                    progressBar.className = 'aeo-shimmer-bar';
+
+                    var status = document.createElement( 'div' );
+                    status.innerText = '0 / ' + postIds.length + ' (Starting...)';
+                    status.style.cssText = 'font-size:14px;font-weight:500;color:#cbd5e1;';
+
+                    var loadingText = document.createElement( 'div' );
+                    loadingText.innerText = 'Connecting to AI...';
+                    loadingText.style.cssText = 'font-size:13px;color:#94a3b8;font-style:italic;margin-top:4px;';
+
+                    var errorLog = document.createElement( 'div' );
+                    errorLog.style.cssText = 'margin-top:15px;max-height:100px;overflow-y:auto;text-align:left;font-size:12px;color:#f87171;';
+
+                    progressContainer.appendChild( progressBar );
+                    modal.appendChild( title );
+                    modal.appendChild( text );
+                    modal.appendChild( progressContainer );
+                    modal.appendChild( status );
+                    modal.appendChild( loadingText );
+                    modal.appendChild( errorLog );
+                    overlay.appendChild( modal );
+                    document.body.appendChild( overlay );
+
+                    // ----- Async loop with a small concurrency limit -----
+                    var current = 0, completed = 0, errors = 0, skipped = 0, active = 0;
+                    var concurrencyLimit = 4;
+
+                    var loadingPhrases = [
+                        'Connecting to AI...',
+                        'Analyzing content...',
+                        'Extracting entities...',
+                        'Writing answer-first metadata...',
+                        'Optimizing for AI engines...'
+                    ];
+                    var phraseIdx = 0;
+                    var loadingInterval = setInterval( function() {
+                        if ( active > 0 || current < postIds.length ) {
+                            phraseIdx = ( phraseIdx + 1 ) % loadingPhrases.length;
+                            loadingText.innerText = loadingPhrases[ phraseIdx ];
+                        }
+                    }, 2500 );
+
+                    function logErrorMsg( pid, msg ) {
+                        var line = document.createElement( 'div' );
+                        line.style.marginBottom = '4px';
+                        line.innerText = 'ID ' + pid + ': ' + msg;
+                        errorLog.appendChild( line );
+                        errorLog.scrollTop = errorLog.scrollHeight;
+                    }
+
+                    function updateProgress() {
+                        var percent = ( completed / postIds.length ) * 100;
+                        progressBar.style.width = Math.max( percent, 5 ) + '%';
+                        status.innerText = completed + ' / ' + postIds.length + ( active > 0 ? ' (Generating...)' : '' );
+                    }
+
+                    function processNext() {
+                        if ( completed >= postIds.length && active === 0 ) {
+                            clearInterval( loadingInterval );
+                            loadingText.style.display = 'none';
+                            progressBar.className = '';
+                            progressBar.style.background = errors > 0 ? '#f59e0b' : '#10b981';
+                            progressBar.style.width = '100%';
+                            var updated = postIds.length - errors - skipped;
+                            text.innerText = 'Done. Updated ' + updated + ', skipped ' + skipped + ', failed ' + errors + '. Refreshing...';
+                            text.style.color = errors > 0 ? '#f59e0b' : '#10b981';
+                            setTimeout( function() { window.location.reload(); }, 2500 );
+                            return;
+                        }
+
+                        while ( active < concurrencyLimit && current < postIds.length ) {
+                            var pid = postIds[ current ];
+                            current++;
+                            active++;
+                            updateProgress();
+                            processItem( pid );
+                        }
+                    }
+
+                    function processItem( pid ) {
+                        function finishItem() {
+                            active--;
+                            completed++;
+                            updateProgress();
+                            processNext();
+                        }
+
+                        fetch( GENERATE_URL, {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': NONCE },
+                            body: JSON.stringify( { post_ids: [ pid ], style: 'smart_mix', task_type: cfg.task } )
+                        } )
+                        .then( function( res ) { return res.json(); } )
+                        .then( function( data ) {
+                            var item = data && data.results ? data.results[ 0 ] : null;
+
+                            if ( ! data.success || ! item || ! item.success ) {
+                                var err = ( item && item.error ) ? item.error : ( data.error || data.message || 'Generation failed' );
+                                if ( item && item.error && item.error.indexOf( 'Skipped' ) !== -1 ) {
+                                    skipped++;
+                                } else {
+                                    errors++;
+                                    logErrorMsg( pid, err );
+                                }
+                                finishItem();
+                                return;
+                            }
+
+                            // The proxy may return result as an object or a
+                            // JSON string. Normalise to an object.
+                            var gen = item.result;
+                            if ( typeof gen === 'string' ) {
+                                try {
+                                    gen = JSON.parse( gen.replace( /```json\n?|```/g, '' ).trim() );
+                                } catch ( ex ) {
+                                    errors++;
+                                    logErrorMsg( pid, 'Could not read AI output' );
+                                    finishItem();
+                                    return;
+                                }
+                            }
+                            gen = gen || {};
+
+                            // Save via accept. Empty fields are skipped server
+                            // side, so titles only never clears a description
+                            // and meta only never clears a title.
+                            fetch( ACCEPT_URL, {
+                                method: 'POST',
+                                credentials: 'same-origin',
+                                headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': NONCE },
+                                body: JSON.stringify( { items: [ {
+                                    post_id: pid,
+                                    meta_title: gen.meta_title || '',
+                                    meta_description: gen.meta_description || '',
+                                    product_description: gen.product_description || ''
+                                } ] } )
+                            } )
+                            .then( function( res ) { return res.json(); } )
+                            .then( function( save ) {
+                                if ( ! save.success ) {
+                                    errors++;
+                                    logErrorMsg( pid, 'Could not save metadata' );
+                                }
+                                finishItem();
+                            } )
+                            .catch( function() {
+                                errors++;
+                                logErrorMsg( pid, 'Network error while saving' );
+                                finishItem();
+                            } );
+                        } )
+                        .catch( function() {
+                            errors++;
+                            logErrorMsg( pid, 'Network error while generating' );
+                            finishItem();
+                        } );
+                    }
+
+                    processNext();
+                } );
+            } );
+        } )();
+        </script>
+        <?php
     }
 
     /**
-     * Show an admin notice for the "no posts selected" edge case so the user
-     * understands why nothing happened. Other failure modes (capability,
-     * unknown action) are handled by WP's own admin notice plumbing.
-     */
-    public function maybe_show_notice() {
-        if ( ! isset( $_GET['aeogm_bulk'] ) ) {
-            return;
-        }
-        $key = sanitize_key( wp_unslash( $_GET['aeogm_bulk'] ) );
-        if ( 'no_posts' !== $key ) {
-            return;
-        }
-        printf(
-            '<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
-            esc_html__( 'Select at least one post before running an AEO God Mode bulk action.', 'aeo-god-mode' )
-        );
-    }
-
-    /**
-     * REST endpoint helper exposed to our React admin so it can fetch the
-     * IDs + mode from the transient using the URL token. Called from the
-     * Metadata page when ?from=bulk&token=... is present in the URL.
-     *
-     * Returns the payload and deletes the transient so the token is one-use.
+     * REST helper exposed to the admin app. Kept for backward compatibility
+     * with the /metadata/bulk-payload route registered in class-api.php.
+     * The Posts list no longer hands off through a transient (generation now
+     * runs in place), so this returns null unless an older flow set one.
      *
      * @param string $token Token from the URL.
-     * @return array|null Payload or null if expired / invalid / wrong user.
+     * @return array|null Payload or null if expired, invalid or wrong user.
      */
     public static function consume_bulk_payload( $token ) {
         $token = sanitize_text_field( $token );
@@ -217,19 +398,9 @@ class BulkMeta {
     }
 
     /**
-     * Build a transient key that's both token-scoped AND user-scoped, so a
-     * URL someone copies cannot be used by a different admin to pop the
-     * other admin's selection.
+     * Build a transient key that is both token-scoped and user-scoped.
      */
     private static function transient_key_for_user( $token ) {
         return 'aeogm_bulk_meta_' . get_current_user_id() . '_' . substr( $token, 0, 32 );
-    }
-
-    /**
-     * Instance helper that proxies to the static version (used by the
-     * REST endpoint registration in class-api.php).
-     */
-    private function transient_key_for_user_inst( $token ) {
-        return self::transient_key_for_user( $token );
     }
 }

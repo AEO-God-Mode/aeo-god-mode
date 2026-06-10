@@ -5,6 +5,10 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.11
+
+- AI Metadata: generate AEO titles and descriptions in bulk straight from your Posts, Pages and Products list, with a live progress view. No extra screen, fewer clicks.
+
 ## 1.6.10
 
 - Answer Density: site scans now cover every published post and page on sites of any size, so your score reflects your whole catalog. The nightly refresh and the Re-scan button both walk the full library.

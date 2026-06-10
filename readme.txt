@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.10
+Stable tag: 1.6.11
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,9 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.11 =
+* AI Metadata: generate AEO titles and descriptions in bulk straight from your Posts, Pages and Products list, with a live progress view. No extra screen, fewer clicks.
 
 = 1.6.10 =
 * Answer Density: site scans now cover every published post and page on sites of any size, so your score reflects your whole catalog. The nightly refresh and the Re-scan button both walk the full library.
