@@ -341,6 +341,12 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            register_rest_route( self::NAMESPACE, '/gsc/keyword-optimize', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'gsc_keyword_optimize' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             // ---- Query Gap Detector ----
             register_rest_route( self::NAMESPACE, '/query-gap/scan', array(
                 'methods'             => 'GET',
@@ -2012,6 +2018,20 @@ class API {
      *
      * @return \WP_REST_Response
      */
+    /**
+     * Keyword Optimize: weave a cluster's queries into the page (Pro).
+     * Thin delegate; the implementation lives in the Pro plugin.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function gsc_keyword_optimize( $request ) {
+        if ( ! class_exists( '\AISEOGodMode\KeywordOptimize' ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'AEO God Mode Pro is required for Keyword Optimize.' ), 403 );
+        }
+        return KeywordOptimize::handle( $request );
+    }
+
     public function get_gsc_recommendations() {
         $gsc = new GSC();
         return rest_ensure_response( $gsc->get_recommendations() );

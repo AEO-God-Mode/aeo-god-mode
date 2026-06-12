@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.11
+Stable tag: 1.6.12
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,11 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.12 =
+* Keyword Optimize (Pro): one click on any Keyword Cluster weaves the real queries users type into your page copy where they fit naturally. Shows exactly what changed, what was left alone and why, and saves a revision so you can undo.
+* Search Console: the Topic Clusters tab is now called Keyword Clusters.
+* Posts list: the AEO God Mode group header in the bulk-actions menu can no longer be selected by mistake.
 
 = 1.6.11 =
 * AI Metadata: generate AEO titles and descriptions in bulk straight from your Posts, Pages and Products list, with a live progress view. No extra screen, fewer clicks.

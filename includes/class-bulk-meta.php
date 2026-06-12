@@ -107,16 +107,15 @@ class BulkMeta {
      * @return array
      */
     public function add_bulk_actions( $actions ) {
-        // Brand header. Selectable but treated as a no-op by the handler so
-        // accidentally clicking Apply with this selected does nothing.
-        $aeogm_actions = array(
-            'aeogm_meta_header'   => '-- ' . __( 'AEO God Mode', 'aeo-god-mode' ) . ' --',
-            'aeogm_meta_combined' => __( 'Write AEO Title + Meta (2 credits/post)', 'aeo-god-mode' ),
-            'aeogm_meta_titles'   => __( 'Write AEO Titles Only (1 credit/post)', 'aeo-god-mode' ),
-            'aeogm_meta_only'     => __( 'Write AEO Meta Only (1 credit/post)', 'aeo-god-mode' ),
+        // Nested array renders as an <optgroup> (WP 5.6+). The group label is
+        // greyed out and cannot be selected, same as Rank Math's separators.
+        $actions[ '⚡️ ' . __( 'AEO God Mode', 'aeo-god-mode' ) ] = array(
+            'aeogm_meta_combined' => '⚡️ ' . __( 'Write AEO Title + Meta (2 credits/post)', 'aeo-god-mode' ),
+            'aeogm_meta_titles'   => '⚡️ ' . __( 'Write AEO Titles Only (1 credit/post)', 'aeo-god-mode' ),
+            'aeogm_meta_only'     => '⚡️ ' . __( 'Write AEO Meta Only (1 credit/post)', 'aeo-god-mode' ),
         );
 
-        return array_merge( $actions, $aeogm_actions );
+        return $actions;
     }
 
     /**

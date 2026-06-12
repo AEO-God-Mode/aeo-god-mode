@@ -5,6 +5,12 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.12
+
+- Keyword Optimize (Pro): one click on any Keyword Cluster weaves the real queries users type into your page copy where they fit naturally. Shows exactly what changed, what was left alone and why, and saves a revision so you can undo.
+- Search Console: the Topic Clusters tab is now called Keyword Clusters.
+- Posts list: the AEO God Mode group header in the bulk-actions menu can no longer be selected by mistake.
+
 ## 1.6.11
 
 - AI Metadata: generate AEO titles and descriptions in bulk straight from your Posts, Pages and Products list, with a live progress view. No extra screen, fewer clicks.
