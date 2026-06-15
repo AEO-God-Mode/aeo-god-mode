@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.12
+Stable tag: 1.6.13
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -307,25 +307,27 @@ Terms of service: <https://aeogodmode.io/terms>
 
 == Changelog ==
 
+= 1.6.13 =
+* Citation Tracker: visual polish for the ChatGPT, Perplexity, Gemini and Claude engine icons.
+
 = 1.6.12 =
-* Keyword Optimize (Pro): one click on any Keyword Cluster weaves the real queries users type into your page copy where they fit naturally. Shows exactly what changed, what was left alone and why, and saves a revision so you can undo.
+* Keyword Optimize (Pro): one click on any Keyword Cluster weaves the real queries users type into your page copy where they fit naturally. Shows what it changed, what it left as-is, and saves a revision so you can undo.
 * Search Console: the Topic Clusters tab is now called Keyword Clusters.
-* Posts list: the AEO God Mode group header in the bulk-actions menu can no longer be selected by mistake.
 
 = 1.6.11 =
-* AI Metadata: generate AEO titles and descriptions in bulk straight from your Posts, Pages and Products list, with a live progress view. No extra screen, fewer clicks.
+* AI Metadata: generate AEO titles and descriptions in bulk right from your Posts, Pages and Products list, with a live progress view.
 
 = 1.6.10 =
-* Answer Density: site scans now cover every published post and page on sites of any size, so your score reflects your whole catalog. The nightly refresh and the Re-scan button both walk the full library.
+* Answer Density: your score reflects your whole catalog, with the nightly refresh and the Re-scan button covering every published post and page.
 
 = 1.6.9 =
-* Bulk Metadata: AEO God Mode actions now appear in the bulk-action menu on the Posts, Pages, Products and Downloads lists. Tick posts, pick "Write AEO Title + Meta" (or Titles Only / Meta Only), review the selection in the AEO God Mode admin, click Generate when ready.
+* Bulk Metadata: AEO God Mode actions in the bulk-actions menu on your Posts, Pages, Products and Downloads lists.
 
 = 1.6.8 =
-* Google Search Console: connection now completes reliably across all browsers (fixes intermittent 403 on the OAuth return step)
-* AI credit accounting now updates the dashboard counter immediately after every AI generation
-* Bulk Metadata: new "Meta Only" option to refresh just the meta description without rewriting the title
-* Clearer pricing across AI features so the credit cost shown before each action matches what gets used
+* Google Search Console: smoother account connection.
+* AI credits: the dashboard balance updates the moment a generation finishes.
+* Bulk Metadata: new "Meta Only" option to refresh the meta description on its own.
+* AI features show the exact credit cost before each action.
 
 = 1.6.7 =
 * Performance and compatibility improvements
