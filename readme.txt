@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.14
+Stable tag: 1.6.15
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,11 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.15 =
+* Open Knowledge Format: each concept type now has its own colour in the knowledge map
+* A smoother and faster knowledge graph
+* Search now highlights every matching concept at once
 
 = 1.6.14 =
 * New: Open Knowledge Format (OKF) publisher. Generate a standards-based knowledge bundle for AI agents and serve it live at /okf/.
