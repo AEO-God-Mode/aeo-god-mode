@@ -82,6 +82,7 @@ class Main {
         require_once $includes . 'class-metadata-generator.php';
         require_once $includes . 'class-answer-density.php';
         require_once $includes . 'class-bulk-meta.php';
+        require_once $includes . 'class-okf.php';
 
         // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
         // themselves on plugins_loaded priority 5/10. Free does not require any
@@ -438,6 +439,7 @@ class Main {
         $this->modules['ai_headers']   = new AIHeaders();
     $this->modules['editor_panel'] = new EditorPanel();
     $this->modules['bulk_meta']    = new BulkMeta();
+    $this->modules['okf']          = new OKF();
 
         // Pro modules — only boot with an active license AND class exists.
         // class_exists() guards protect against Free builds where pro/ is stripped
@@ -551,6 +553,9 @@ class Main {
 
         // Flush rewrite rules for custom endpoints.
         add_rewrite_rule( '^llms\.txt$', 'index.php?asgm_llms=1', 'top' );
+        add_rewrite_rule( '^okf\.zip$', 'index.php?asgm_okf=__zip', 'top' );
+        add_rewrite_rule( '^okf/?$', 'index.php?asgm_okf=index.md', 'top' );
+        add_rewrite_rule( '^okf/(.+?)/?$', 'index.php?asgm_okf=$matches[1]', 'top' );
         flush_rewrite_rules();
 
         // Prime llms.txt on activation so Site Health doesn't incorrectly report

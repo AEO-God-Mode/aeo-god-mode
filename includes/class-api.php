@@ -245,6 +245,19 @@ class API {
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
 
+        // ---- Open Knowledge Format ----
+        register_rest_route( self::NAMESPACE, '/okf', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_okf' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/okf/generate', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'generate_okf' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
         // ---- Validation ----
         register_rest_route( self::NAMESPACE, '/validate/(?P<post_id>\d+)', array(
             'methods'             => 'GET',
@@ -1850,6 +1863,28 @@ class API {
         $fix_type = sanitize_text_field( $request->get_param( 'fix_type' ) );
         $gaps     = new ContentGaps();
         return rest_ensure_response( $gaps->apply_fix( $post_id, $fix_type, $request->get_params() ) );
+    }
+
+    /**
+     * OKF bundle status (stats, graph, serving URLs).
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_okf( $request ) {
+        $okf = new OKF();
+        return rest_ensure_response( $okf->get_status() );
+    }
+
+    /**
+     * Force-regenerate the OKF bundle.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function generate_okf( $request ) {
+        $okf = new OKF();
+        return rest_ensure_response( $okf->regenerate() );
     }
 
     // -----------------------------------------------------------------------

@@ -5,6 +5,14 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.14
+
+- New: Open Knowledge Format (OKF) publisher. Generate a standards-based knowledge bundle for AI agents and serve it live at /okf/.
+- New: Redesigned Content Gaps with triage and group-by-fix views, bulk fixes, and sorting.
+- New: Cleaner, faster dashboard for your AEO health at a glance.
+- New: One-click AEO title options you can generate and apply to a post.
+- Refinements across the admin interface.
+
 ## 1.6.13
 
 - Citation Tracker: visual polish for the ChatGPT, Perplexity, Gemini and Claude engine icons.

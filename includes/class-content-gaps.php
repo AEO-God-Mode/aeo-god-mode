@@ -473,7 +473,7 @@ class ContentGaps {
      * @param string $fix_type Type of fix to apply.
      * @return array
      */
-    public function apply_fix( $post_id, $fix_type ) {
+    public function apply_fix( $post_id, $fix_type, $extra = array() ) {
         switch ( $fix_type ) {
             case 'add_article_schema':
                 $schema_engine = new Schema();

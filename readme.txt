@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.13
+Stable tag: 1.6.14
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,13 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.14 =
+* New: Open Knowledge Format (OKF) publisher. Generate a standards-based knowledge bundle for AI agents and serve it live at /okf/.
+* New: Redesigned Content Gaps with triage and group-by-fix views, bulk fixes, and sorting.
+* New: Cleaner, faster dashboard for your AEO health at a glance.
+* New: One-click AEO title options you can generate and apply to a post.
+* Refinements across the admin interface.
 
 = 1.6.13 =
 * Citation Tracker: visual polish for the ChatGPT, Perplexity, Gemini and Claude engine icons.
