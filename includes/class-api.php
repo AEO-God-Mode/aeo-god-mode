@@ -1363,6 +1363,7 @@ class API {
         $body     = $request->get_json_params();
         $current  = get_option( 'asgm_settings', array() );
         $merged   = $this->deep_merge( $current, $body );
+        $merged   = $this->sanitize_affiliate_settings( $merged );
 
         update_option( 'asgm_settings', $merged );
 
@@ -1373,6 +1374,56 @@ class API {
             'success'  => true,
             'settings' => $merged,
         ) );
+    }
+
+    /**
+     * Sanitize the affiliate settings subtree server-side (defense in depth).
+     *
+     * Affiliate ID is restricted to a safe character set; badge style and
+     * placement are allow-listed; the badge cannot be enabled without an ID.
+     *
+     * @param array $settings Merged settings.
+     * @return array
+     */
+    private function sanitize_affiliate_settings( $settings ) {
+        if ( empty( $settings['affiliate'] ) || ! is_array( $settings['affiliate'] ) ) {
+            return $settings;
+        }
+        $aff = $settings['affiliate'];
+
+        if ( isset( $aff['id'] ) ) {
+            $aff['id'] = substr( preg_replace( '/[^A-Za-z0-9._\-]/', '', (string) $aff['id'] ), 0, 64 );
+        }
+        if ( isset( $aff['connected'] ) ) {
+            $aff['connected'] = ! empty( $aff['connected'] );
+        }
+        if ( isset( $aff['name'] ) ) {
+            $aff['name'] = sanitize_text_field( (string) $aff['name'] );
+        }
+
+        if ( isset( $aff['badge'] ) && is_array( $aff['badge'] ) ) {
+            $b = $aff['badge'];
+            if ( isset( $b['enabled'] ) ) {
+                $b['enabled'] = ! empty( $b['enabled'] );
+            }
+            if ( isset( $b['style'] ) && ! in_array( $b['style'], array( 'light', 'dark', 'minimal' ), true ) ) {
+                $b['style'] = 'light';
+            }
+            if ( isset( $b['placement'] ) && ! in_array( $b['placement'], array( 'footer', 'manual', 'off' ), true ) ) {
+                $b['placement'] = 'footer';
+            }
+            if ( isset( $b['label'] ) ) {
+                $b['label'] = substr( sanitize_text_field( (string) $b['label'] ), 0, 80 );
+            }
+            // A badge can never be enabled without a connected affiliate ID.
+            if ( empty( $aff['id'] ) ) {
+                $b['enabled'] = false;
+            }
+            $aff['badge'] = $b;
+        }
+
+        $settings['affiliate'] = $aff;
+        return $settings;
     }
 
     // -----------------------------------------------------------------------
@@ -1496,9 +1547,16 @@ class API {
      */
     public function get_answer_density_for_post( $request ) {
         $post_id = absint( $request->get_param( 'post_id' ) );
-        $data    = Answer_Density::get_for_post( $post_id );
-        if ( null === $data ) {
+        $force   = filter_var( $request->get_param( 'force' ), FILTER_VALIDATE_BOOLEAN );
+        if ( $force ) {
+            // Editor "check now" forces a fresh scan via GET (the POST /rescan/
+            // route is blocked by the host WAF on some installs).
             $data = Answer_Density::scan_post( $post_id );
+        } else {
+            $data = Answer_Density::get_for_post( $post_id );
+            if ( null === $data ) {
+                $data = Answer_Density::scan_post( $post_id );
+            }
         }
         return rest_ensure_response( $data );
     }
@@ -1637,32 +1695,40 @@ class API {
         $heading_end = $hm[0][1] + strlen( $hm[0][0] );
         $tail        = substr( $content, $heading_end );
 
-        if ( ! preg_match( '#<p\b[^>]*>(.*?)</p>#is', $tail, $pm, PREG_OFFSET_CAPTURE ) ) {
-            return new \WP_Error( 'no_paragraph', 'No paragraph found after the heading. Open in editor and rewrite manually.', array( 'status' => 422 ) );
+        // Skip whitespace between the heading and the opener.
+        $ws        = strlen( $tail ) - strlen( ltrim( $tail, " \t\r\n" ) );
+        $tail_trim = substr( $tail, $ws );
+
+        if ( preg_match( '#^<p\b[^>]*>(.*?)</p>#is', $tail_trim, $pm ) ) {
+            // Opener is an explicit <p>...</p>.
+            $p_full_length = strlen( $pm[0] );
+            $new_p         = '<p>' . esc_html( $rewrite ) . '</p>';
+        } elseif ( ! preg_match( '#^<(?:ul|ol|h[1-6]|table|blockquote|figure|div|pre|hr|section|aside|dl|details)\b#i', $tail_trim )
+                   && preg_match( '#^(.+?)(?=\R\s*\R|\R?\s*<(?:ul|ol|h[1-6]|p|table|blockquote|figure|div|pre|hr)\b|$)#isu', $tail_trim, $pm )
+                   && trim( wp_strip_all_tags( $pm[1] ) ) !== '' ) {
+            // Opener is bare text (wpautop style): posts authored with newline
+            // paragraph breaks store no <p> wrappers; WordPress adds them on
+            // render. Only when the heading is NOT immediately followed by a
+            // block element (a list/table is not an opener to rewrite). Match the
+            // run of text up to the next block-level tag or blank line (\R covers
+            // LF and CRLF) and replace it bare so it stays consistent.
+            $p_full_length = strlen( $pm[1] );
+            $new_p         = esc_html( $rewrite );
+        } else {
+            return new \WP_Error( 'no_paragraph', 'No opening paragraph found after the heading. Open in the editor and rewrite manually.', array( 'status' => 422 ) );
         }
 
-        $p_full_offset = $heading_end + $pm[0][1];
-        $p_full_length = strlen( $pm[0][0] );
-        $new_p         = '<p>' . esc_html( $rewrite ) . '</p>';
+        $p_full_offset = $heading_end + $ws;
+        $new_content   = substr( $content, 0, $p_full_offset ) . $new_p . substr( $content, $p_full_offset + $p_full_length );
 
-        $new_content = substr( $content, 0, $p_full_offset ) . $new_p . substr( $content, $p_full_offset + $p_full_length );
-
-        // Save as a draft revision: update the post but explicitly preserve
-        // the original status. wp_update_post triggers the on-save hook so
-        // the answer-density score refreshes on next dashboard load.
-        $update = wp_update_post( array(
-            'ID'           => $post_id,
-            'post_content' => $new_content,
-        ), true );
-
-        if ( is_wp_error( $update ) ) {
-            return $update;
-        }
-
+        // Return the rewritten content for the editor to load in-memory. We do
+        // NOT save server-side: the block editor owns the content and the author
+        // saves after reviewing. Saving here would leave the editor showing the
+        // old opener, and the next editor save would overwrite our change.
         return rest_ensure_response( array(
-            'success'  => true,
-            'post_id'  => $post_id,
-            'edit_url' => get_edit_post_link( $post_id, 'raw' ),
+            'success' => true,
+            'post_id' => $post_id,
+            'content' => $new_content,
         ) );
     }
 

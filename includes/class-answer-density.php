@@ -355,7 +355,11 @@ class Answer_Density {
 		// hyphens, AND periods (for "robots.txt", "U.S.", file extensions,
 		// version numbers). Without periods we miss legitimate definitional
 		// openers like "The robots.txt file works on..."
-		$subject = "[A-Z][A-Za-z0-9][A-Za-z0-9\\s'\\-\\.]{0,50}";
+		// Allow a single-letter leading word so article-led definitions like
+		// "A citation is...", "An audit is...", "A brand mention is..." are
+		// recognised, not downgraded to "could be more direct". The verb anchor
+		// below keeps this from over-matching.
+		$subject = "[A-Z][A-Za-z0-9\\s'\\-\\.]{1,50}";
 
 		// Definitional copulas: "X is Y", "This means Y", "AEO refers to Y".
 		if ( preg_match( '/^' . $subject . '\s+(is|are|refers\s+to|means|stands\s+for|describes|equals|represents)\b/u', $s ) ) {
@@ -397,18 +401,39 @@ class Answer_Density {
 			'overwrites','syncs','synchronises','synchronizes','imports','installs','activates','deactivates',
 			// Composition phrases
 			'consists\s+of','contains','includes','excludes',
+			// Causal / outcome verbs — answers to "Why X ...", "What happens when ...",
+			// "Why X fails". These were missing, so "Isolation exercises fail because..."
+			// (a textbook direct answer) was scored as no_answer.
+			'fail','fails','fall','falls','break','breaks','cause','causes','lead','leads','result','results',
+			'happen','happens','occur','occurs','hurt','hurts','help','helps','improve','improves','increase','increases',
+			'decrease','decreases','reduce','reduces','drop','drops','boost','boosts','harm','harms','drive','drives',
+			'beat','beats','win','wins','lose','loses','matter','matters','suffer','suffers','struggle','struggles',
+			'succeed','succeeds','backfire','backfires','stall','stalls','plateau','plateaus','outperform','outperforms',
 		) );
 		if ( preg_match( '/^' . $subject . '\s+(' . $action_verbs . ')\b/u', $s ) ) {
 			return true;
 		}
 
-		// Imperative how-to thesis: "Add X", "Use Y", "Set Z to N".
-		if ( preg_match( '/^(Add|Use|Set|Configure|Install|Enable|Disable|Place|Put|Write|Include|Choose|Pick|Run|Block|Allow|Open|Close|Delete|Edit|Update|Replace)\s+[A-Z]?\w/u', $s ) ) {
+		// Causal answer: a named subject explained with a causal connective answers a
+		// "Why X ..." heading directly, whatever the main verb is. "Isolation exercises
+		// fail because they only stress one muscle." Pronoun-led leads ("This is because...")
+		// are still vetoed by the filler classifier, which runs separately.
+		if ( preg_match( '/^' . $subject . '\b/u', $s )
+			&& preg_match( '/\b(because|due\s+to|owing\s+to|thanks\s+to|the\s+reason|caused\s+by|results?\s+from|stems?\s+from|comes?\s+down\s+to|boils?\s+down\s+to|comes\s+from)\b/iu', $s ) ) {
 			return true;
 		}
 
-		// Affirmative.
-		if ( preg_match( '/^(Yes|No)[\s,\-—:.]/i', $s ) ) { return true; }
+		// Imperative how-to thesis: "Add X", "Use Y", "Set Z to N".
+		if ( preg_match( '/^(Add|Use|Set|Configure|Install|Enable|Disable|Place|Put|Write|Include|Choose|Pick|Run|Block|Allow|Open|Close|Delete|Edit|Update|Replace|Track|Treat|Keep|Avoid|Check|Focus|Aim|Start|Stop|Measure|Monitor|Watch|Test|Make|Ensure|Build|Map|Match|Filter|Score|Compare|Limit|Prioriti[sz]e|Prefer|Send|Read|Scan|Audit|Verify|Review|Count|Tag|Name|Mark|Find|Stick|Treat)\s+[A-Z]?\w/u', $s ) ) {
+			return true;
+		}
+
+		// Affirmative, including committed qualifiers. "Partly, and badly.",
+		// "A little, ...", "Mostly", "Not really" all answer a yes/no or
+		// how-much heading directly, even without a literal "Yes"/"No" lead.
+		// (Hedges like "It depends" / "There are several" are vetoed later by
+		// the filler classifier, so this stays safe.)
+		if ( preg_match( '/^(Yes|No|Not\s+(really|quite|always|necessarily)|Partly|Mostly|Largely|Mainly|Sometimes|Rarely|Seldom|Usually|Often|Occasionally|Generally|Typically|Somewhat|Slightly|Almost|Barely|Hardly|Always|Never|A\s+(little|bit)|Kind\s+of|Sort\s+of)[\s,\-—:.]/i', $s ) ) { return true; }
 
 		// Fact-first. Concrete numbers, dates, multi-cap proper nouns. Short.
 		$word_count = str_word_count( $s );
@@ -527,7 +552,9 @@ class Answer_Density {
 	 */
 	public static function scan_post( $post_id ) {
 		$post = get_post( $post_id );
-		if ( ! $post || $post->post_status !== 'publish' ) {
+		// Analyze any real, editable post (drafts/pending/private included) so the
+		// editor panel scores work-in-progress. Only skip non-content statuses.
+		if ( ! $post || in_array( $post->post_status, array( 'trash', 'auto-draft', 'inherit' ), true ) ) {
 			$blank = array(
 				'post_id'              => (int) $post_id,
 				'scanned_at'           => gmdate( 'c' ),
@@ -642,11 +669,15 @@ class Answer_Density {
 		$ratio            = $Q > 0 ? ( $weighted_answers / $Q ) : 0.0;
 		$score            = $ratio * 100;
 
-		// Quality modifier.
-		$score += $first_sentence * 5;             // +5 per above-fold answer
+		// Quality modifier. The base ratio already credits direct (1.0) and
+		// buried (0.5) answers, so the score IS the share of question headings
+		// that answer up front. We deliberately add NO per-answer or per-heading
+		// bonuses: the old "+5 per above-fold answer" double-counted every direct
+		// answer, and the flat "+10 for 3+ headings" let a post that answered
+		// barely half its headings cap out at 100. Only a small penalty remains,
+		// for answers that exist but sit deep in the section.
 		$avg_before = $words_before ? array_sum( $words_before ) / count( $words_before ) : 0;
-		if ( $avg_before > 30 ) { $score -= 10; }
-		if ( $Q >= 3 ) { $score += 10; }
+		if ( $avg_before > 30 ) { $score -= 8; }
 
 		// Long-form fluff penalty — with the user's exemption: a deep tutorial
 		// that nails one question with one above-fold answer is doing exactly

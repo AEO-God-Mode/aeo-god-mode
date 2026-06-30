@@ -5,6 +5,11 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.16
+
+- New: optional AI Search Optimized badge with a Settings toggle (off by default)
+- Improved: answer-first content scoring now recognises more answer styles
+
 ## 1.6.15
 
 - Open Knowledge Format: each concept type now has its own colour in the knowledge map

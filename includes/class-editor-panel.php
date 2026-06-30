@@ -166,12 +166,21 @@ class EditorPanel {
         }
 
         $base_url = ASGM_PLUGIN_URL . 'assets/editor/';
+        $base_dir = ASGM_PLUGIN_DIR . 'assets/editor/';
+
+        // Cache-bust on the built file's mtime so every deploy ships fresh assets
+        // without waiting for a plugin version bump. One stat per asset; falls back
+        // to the plugin version if the file is missing or unreadable (filemtime false).
+        $asset_ver = function ( $rel ) use ( $base_dir ) {
+            $mtime = @filemtime( $base_dir . $rel );
+            return ( false !== $mtime ) ? ASGM_VERSION . '.' . $mtime : ASGM_VERSION;
+        };
 
         wp_enqueue_script(
             'asgm-editor-panel',
             $base_url . $entry['file'],
             array( 'wp-plugins', 'wp-edit-post', 'wp-element', 'wp-components', 'wp-data', 'wp-api-fetch' ),
-            ASGM_VERSION,
+            $asset_ver( $entry['file'] ),
             true
         );
 
@@ -182,7 +191,7 @@ class EditorPanel {
                     'asgm-editor-panel-' . $i,
                     $base_url . $css_file,
                     array(),
-                    ASGM_VERSION
+                    $asset_ver( $css_file )
                 );
             }
         }
@@ -194,7 +203,7 @@ class EditorPanel {
                 'asgm-editor-panel-style',
                 $base_url . $style_entry['file'],
                 array(),
-                ASGM_VERSION
+                $asset_ver( $style_entry['file'] )
             );
         }
 

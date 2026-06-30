@@ -698,6 +698,46 @@ class ContentGaps {
                     'source'       => 'ai',
                 );
 
+            case 'apply_improvement':
+                $post = get_post( $post_id );
+                if ( ! $post ) break;
+                if ( ! class_exists( '\AISEOGodMode\AI_Assist' ) ) {
+                    return array( 'success' => false, 'message' => 'AI Assist module requires Pro.' );
+                }
+                $suggestion = isset( $extra['suggestion'] ) ? trim( (string) wp_unslash( $extra['suggestion'] ) ) : '';
+                if ( $suggestion === '' ) {
+                    return array( 'success' => false, 'message' => 'No suggestion text provided.' );
+                }
+                $ai  = new \AISEOGodMode\AI_Assist();
+                $res = $ai->apply_improvement( $post, $suggestion );
+                if ( is_wp_error( $res ) ) {
+                    return array( 'success' => false, 'message' => $res->get_error_message() );
+                }
+                $find    = isset( $res['find'] ) ? (string) $res['find'] : '';
+                $replace = isset( $res['replace'] ) ? (string) $res['replace'] : '';
+                $summary = isset( $res['summary'] ) ? (string) $res['summary'] : '';
+                if ( $find === '' || strpos( $post->post_content, $find ) === false ) {
+                    return array(
+                        'success'  => false,
+                        'fix_type' => $fix_type,
+                        'matched'  => false,
+                        'message'  => 'Could not pinpoint the exact spot to edit automatically. Here is the suggested rewrite to paste in by hand.',
+                        'replace'  => $replace,
+                        'summary'  => $summary,
+                    );
+                }
+                $pos         = strpos( $post->post_content, $find );
+                $new_content = substr( $post->post_content, 0, $pos ) . $replace . substr( $post->post_content, $pos + strlen( $find ) );
+                return array(
+                    'success'         => true,
+                    'fix_type'        => $fix_type,
+                    'post_id'         => $post_id,
+                    'matched'         => true,
+                    'applied_content' => $new_content,
+                    'summary'         => $summary,
+                    'source'          => 'ai',
+                );
+
             case 'generate_speakable_summary':
                 $post = get_post( $post_id );
                 if ( ! $post ) break;
