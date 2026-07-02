@@ -5,6 +5,11 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.17
+
+- New: Agency plan with white-label branding and a hosted agency console
+- Improved: license activation management
+
 ## 1.6.16
 
 - New: optional AI Search Optimized badge with a Settings toggle (off by default)
