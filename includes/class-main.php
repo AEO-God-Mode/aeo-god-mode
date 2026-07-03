@@ -114,6 +114,11 @@ class Main {
         add_action( 'wp_head', array( $this, 'render_frontend_output' ), 1 );
         add_action( 'init', array( $this, 'boot_modules' ) );
 
+        // Daily site-score refresh. Keeps the cached AEO score fresh for the
+        // agency console even when nobody opens the dashboard.
+        add_action( 'init', array( $this, 'schedule_site_score_refresh' ) );
+        add_action( 'asgm_refresh_site_score', array( $this, 'run_site_score_refresh' ) );
+
         // Bust the site-health transient whenever the inputs that feed it
         // change. Keeps the dashboard's Setup Details panel in sync after
         // robots rules edits, settings saves, scan runs, or conflict
@@ -411,6 +416,23 @@ class Main {
     public function register_rest_routes() {
         $api = new API();
         $api->register_routes();
+    }
+
+    /**
+     * Schedule the daily site-score refresh once.
+     */
+    public function schedule_site_score_refresh() {
+        if ( ! wp_next_scheduled( 'asgm_refresh_site_score' ) ) {
+            wp_schedule_event( time() + 300, 'daily', 'asgm_refresh_site_score' );
+        }
+    }
+
+    /**
+     * Cron callback: recompute and cache the site AEO score.
+     */
+    public function run_site_score_refresh() {
+        $api = new API();
+        $api->refresh_site_score();
     }
 
     /**

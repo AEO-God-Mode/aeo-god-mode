@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.17
+Stable tag: 1.6.18
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,10 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.18 =
+* New: agency console now shows each client site's live AEO score
+* Improved: onboarding guidance
 
 = 1.6.17 =
 * New: Agency plan with white-label branding and a hosted agency console

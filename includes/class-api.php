@@ -1332,11 +1332,29 @@ class API {
         // Overall score: weighted average of 3 pillars.
         $score = (int) round( array_sum( $breakdown ) / count( $breakdown ) );
 
+        // Persist the headline score. The agency console shows this exact
+        // number, and the Pro license check-in reads it from here, so a
+        // client never has to open this dashboard for its score to report.
+        update_option( 'asgm_site_score', array( 'score' => $score, 'at' => time() ), false );
+
         return array(
             'score'             => $score,
             'breakdown'         => $breakdown,
             'breakdown_reasons' => $breakdown_reasons,
         );
+    }
+
+    /**
+     * Recompute and cache the site AEO score. Cheap enough for a daily cron,
+     * and the single source of truth for the agency console. Returns the
+     * fresh score, or null if it could not be computed.
+     *
+     * @return int|null
+     */
+    public function refresh_site_score() {
+        $settings = get_option( 'asgm_settings', array() );
+        $result   = $this->calculate_health_score( $settings );
+        return isset( $result['score'] ) ? (int) $result['score'] : null;
     }
 
     // -----------------------------------------------------------------------

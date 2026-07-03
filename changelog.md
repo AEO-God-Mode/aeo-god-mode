@@ -5,6 +5,11 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.18
+
+- New: agency console now shows each client site's live AEO score
+- Improved: onboarding guidance
+
 ## 1.6.17
 
 - New: Agency plan with white-label branding and a hosted agency console
