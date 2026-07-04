@@ -676,7 +676,7 @@ class MetadataGenerator {
      * @param string $classification       setup | hedge | filler | no_answer.
      * @return array{success:bool,rewrite?:string,answer_sentence?:string,error?:string}
      */
-    public static function rewrite_opener( $post_id, $heading, $original_paragraph, $buried_opener, $classification, $extra_context = '' ) {
+    public static function rewrite_opener( $post_id, $heading, $original_paragraph, $buried_opener, $classification, $extra_context = '', $use_kb = null ) {
         $context = MetadataWriter::get_post_context( $post_id );
         if ( empty( $context ) ) {
             return array( 'success' => false, 'error' => 'Post not found.' );
@@ -741,6 +741,16 @@ class MetadataGenerator {
             . "BODY_CONTEXT: {$original_paragraph}\n"
             . "CLASSIFICATION: {$classification}"
             . $extra_block;
+
+        // Knowledge Base (Pro): verified owner facts relevant to this heading.
+        // Class only exists on Pro installs; Free ships no reference to it
+        // beyond this guarded name string.
+        if ( class_exists( '\AISEOGodMode\Knowledge_Base' ) ) {
+            $kb_block = \AISEOGodMode\Knowledge_Base::context_for( $heading . ' ' . $buried_opener . ' ' . $original_paragraph, $use_kb );
+            if ( '' !== $kb_block ) {
+                $prompt .= "\n\n" . $kb_block;
+            }
+        }
 
         $request_id = self::new_request_id();
         $payload = array(

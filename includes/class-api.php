@@ -272,6 +272,68 @@ class API {
         ) );
 
         if ( License::is_pro_build() ) {
+            // ---- Topical Map (Content Gaps tab) ----
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_topical_map' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/build', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'build_topical_map' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/(?P<id>\d+)/generate', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'generate_topical_map_item' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/(?P<id>\d+)/outline', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'outline_topical_map_item' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/(?P<id>\d+)/titles', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'titles_topical_map_item' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/(?P<id>\d+)/dismiss', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'dismiss_topical_map_item' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- Knowledge Base (RAG) ----
+            register_rest_route( self::NAMESPACE, '/kb', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_kb' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/kb/upload', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'upload_kb' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/kb/delete', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'delete_kb' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/kb/view', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'view_kb' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             // ---- GSC ----
             register_rest_route( self::NAMESPACE, '/gsc/status', array(
                 'methods'             => 'GET',
@@ -1670,7 +1732,8 @@ class API {
             (string) $target['first_paragraph'],
             (string) ( $target['first_sentence'] ?? '' ),
             $classification ?: ( $target['opener_kind'] ?? 'setup' ),
-            $extra_context
+            $extra_context,
+            $request->has_param( 'use_kb' ) ? rest_sanitize_boolean( $request->get_param( 'use_kb' ) ) : null
         );
 
         return rest_ensure_response( $result );
@@ -3866,5 +3929,146 @@ HARD RULES
             'count'      => count( $written ),
             'seo_plugin' => MetadataWriter::detect_seo_plugin(),
         ) );
+    }
+
+    /* ─── Topical Map (Pro) ─── */
+
+    /**
+     * Shared guard: the Pro class must exist and the license must be active.
+     *
+     * @return true|\WP_REST_Response
+     */
+    private function topical_map_guard() {
+        if ( ! class_exists( '\AISEOGodMode\Topical_Map' ) || ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Topical Map is a Pro feature.' ), 403 );
+        }
+        return true;
+    }
+
+    /** Normalise Topical_Map results into REST responses. */
+    private function topical_map_respond( $result ) {
+        if ( is_wp_error( $result ) ) {
+            $data    = $result->get_error_data();
+            $payload = array( 'success' => false, 'error' => $result->get_error_message() );
+            if ( is_array( $data ) && isset( $data['credits'] ) ) {
+                $payload['credits'] = $data['credits'];
+            }
+            return new \WP_REST_Response( $payload, 400 );
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), (array) $result ) );
+    }
+
+    public function get_topical_map() {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), \AISEOGodMode\Topical_Map::get_map() ) );
+    }
+
+    public function build_topical_map() {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return $this->topical_map_respond( \AISEOGodMode\Topical_Map::build() );
+    }
+
+    public function generate_topical_map_item( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $length   = sanitize_key( $request->get_param( 'length' ) ?? 'standard' );
+        $guidance = sanitize_textarea_field( (string) ( $request->get_param( 'guidance' ) ?? '' ) );
+        $use_kb   = $request->has_param( 'use_kb' ) ? rest_sanitize_boolean( $request->get_param( 'use_kb' ) ) : null;
+        return $this->topical_map_respond(
+            \AISEOGodMode\Topical_Map::generate( (int) $request['id'], $length, $guidance, $use_kb )
+        );
+    }
+
+    public function outline_topical_map_item( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $guidance = sanitize_textarea_field( (string) ( $request->get_param( 'guidance' ) ?? '' ) );
+        $use_kb   = $request->has_param( 'use_kb' ) ? rest_sanitize_boolean( $request->get_param( 'use_kb' ) ) : null;
+        return $this->topical_map_respond(
+            \AISEOGodMode\Topical_Map::outline( (int) $request['id'], $guidance, $use_kb )
+        );
+    }
+
+    public function titles_topical_map_item( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return $this->topical_map_respond( \AISEOGodMode\Topical_Map::titles( (int) $request['id'] ) );
+    }
+
+    public function dismiss_topical_map_item( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $ok = \AISEOGodMode\Topical_Map::dismiss( (int) $request['id'] );
+        return rest_ensure_response( array( 'success' => (bool) $ok ) );
+    }
+
+    /* ─── Knowledge Base (Pro) ─── */
+
+    private function kb_guard() {
+        if ( ! class_exists( '\AISEOGodMode\Knowledge_Base' ) || ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'The Knowledge Base is a Pro feature.' ), 403 );
+        }
+        return true;
+    }
+
+    public function get_kb() {
+        $guard = $this->kb_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), \AISEOGodMode\Knowledge_Base::status() ) );
+    }
+
+    public function upload_kb( $request ) {
+        $guard = $this->kb_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $name = (string) $request->get_param( 'name' );
+        $b64  = (string) $request->get_param( 'content_base64' );
+        $raw  = base64_decode( $b64, true );
+        if ( false === $raw || '' === $raw ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Upload payload was empty or corrupted.' ), 400 );
+        }
+        $result = \AISEOGodMode\Knowledge_Base::ingest( $name, $raw );
+        if ( is_wp_error( $result ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => $result->get_error_message() ), 400 );
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
+    }
+
+    public function delete_kb( $request ) {
+        $guard = $this->kb_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $result = \AISEOGodMode\Knowledge_Base::delete_file( (string) $request->get_param( 'name' ) );
+        return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
+    }
+
+    public function view_kb( $request ) {
+        $guard = $this->kb_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $doc = \AISEOGodMode\Knowledge_Base::get_document( (string) $request->get_param( 'name' ) );
+        if ( null === $doc ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Document not found.' ), 404 );
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), $doc ) );
     }
 }

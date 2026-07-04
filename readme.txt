@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.18
+Stable tag: 1.6.19
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,12 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.19 =
+* Added light and dark mode so you can pick the look you prefer from the sidebar
+* New for Pro: Topical Map plans topic clusters and drafts outlines from your keywords
+* Knowledge Base now lets you open a document and see the exact text we stored
+* Polished the new light theme for clear contrast on every screen
 
 = 1.6.18 =
 * New: agency console now shows each client site's live AEO score

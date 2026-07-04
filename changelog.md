@@ -5,6 +5,13 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.19
+
+- Added light and dark mode so you can pick the look you prefer from the sidebar
+- New for Pro: Topical Map plans topic clusters and drafts outlines from your keywords
+- Knowledge Base now lets you open a document and see the exact text we stored
+- Polished the new light theme for clear contrast on every screen
+
 ## 1.6.18
 
 - New: agency console now shows each client site's live AEO score
