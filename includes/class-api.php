@@ -309,6 +309,21 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            // Full-market keyword pull (Growth only). The handler enforces the
+            // Growth tier; registering the route for every Pro build is fine.
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/market', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'market_topical_map' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // ---- Consensus Score (Growth) ----
+            register_rest_route( self::NAMESPACE, '/consensus-score', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'consensus_score' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             // ---- Knowledge Base (RAG) ----
             register_rest_route( self::NAMESPACE, '/kb', array(
                 'methods'             => 'GET',
@@ -558,6 +573,54 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            // ---- AI Mentions & Citation Tracking (Growth, no keys) ----
+            // Each handler enforces the Growth tier server-side; registering the
+            // routes for every Pro build is fine (the handler 403s a non-Growth
+            // licence, on top of the proxy's own plan check).
+            register_rest_route( self::NAMESPACE, '/citations/ai-mentions', array(
+                array(
+                    'methods'             => 'GET',
+                    'callback'            => array( $this, 'get_ai_mentions' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+                array(
+                    'methods'             => 'POST',
+                    'callback'            => array( $this, 'run_ai_mentions' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/competitor-spy', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'run_competitor_spy' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/competitor-spy/topic', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'select_competitor_topic' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/will-ai-quote', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'run_will_ai_quote' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/competitors', array(
+                array(
+                    'methods'             => 'GET',
+                    'callback'            => array( $this, 'get_competitors' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+                array(
+                    'methods'             => 'POST',
+                    'callback'            => array( $this, 'set_competitors' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+            ) );
+
             // ---- AI Referrals ----
             register_rest_route( self::NAMESPACE, '/referrals', array(
                 'methods'             => 'GET',
@@ -786,11 +849,16 @@ class API {
             $ecommerce[] = 'edd';
         }
 
+        // Growth is a Pro superset. The Free License stub has no is_growth(),
+        // so guard the call with method_exists() to stay fatal-free on Free.
+        $is_growth = method_exists( '\AISEOGodMode\License', 'is_growth' ) && \AISEOGodMode\License::is_growth();
+
         return rest_ensure_response( array(
             'version'              => ASGM_VERSION,
             'is_pro'               => License::is_pro(),
+            'is_growth'            => $is_growth,
             'is_pro_build'         => License::is_pro_build(),
-            'plan'                 => License::is_pro() ? 'pro' : 'free',
+            'plan'                 => $is_growth ? 'growth' : ( License::is_pro() ? 'pro' : 'free' ),
             'safe_mode'            => ! empty( $settings['safe_mode'] ),
             'wizard_completed'     => ! empty( $settings['wizard_completed'] ),
             'health_score'         => $health['score'],
@@ -1238,29 +1306,10 @@ class API {
                     }
                 }
 
-                // 5. Conflict resolution (15 points).
-                // Full points if no SEO plugin detected, or if all conflicts are resolved.
-                $conflicts = get_option( 'asgm_detected_conflicts', array() );
-                $resolutions = get_option( 'asgm_schema_resolutions', array() );
-                if ( empty( $conflicts ) ) {
-                    $schema_score += 15; // No conflicts to resolve.
-                } else {
-                    $schema_conflicts = 0;
-                    $resolved_count   = 0;
-                    foreach ( $conflicts as $c ) {
-                        if ( isset( $c['type'] ) && 'schema_overlap' === $c['type'] ) {
-                            ++$schema_conflicts;
-                        }
-                    }
-                    // Each resolution decision counts.
-                    $resolved_count = count( $resolutions );
-                    if ( $schema_conflicts > 0 ) {
-                        $resolve_ratio = min( $resolved_count / max( $schema_conflicts, 1 ), 1.0 );
-                        $schema_score += (int) round( $resolve_ratio * 15 );
-                    } else {
-                        $schema_score += 15;
-                    }
-                }
+                // 5. Conflict resolution (15 points). Always awarded: conflict
+                // scans are computed on demand, never persisted, so there is
+                // no stored conflict list to grade against.
+                $schema_score += 15;
 
                 // 6. Valid structure (15 points).
                 // Deduct if we detect issues: duplicates, empty required fields.
@@ -1764,43 +1813,84 @@ class API {
 
         $content = (string) $post->post_content;
 
-        // Find the matching heading (h2/h3) by exact text match, then find
-        // the FIRST <p>...</p> after it and swap its inner content.
-        $heading_quoted = preg_quote( $heading, '#' );
-        $heading_re = '#<h([23])\b[^>]*>\s*' . $heading_quoted . '\s*</h\1>#iu';
+        // Find the matching heading (h2/h3) by NORMALIZED text match. The
+        // scanner reads the rendered content, where wptexturize has curled
+        // apostrophes and quotes ("you're" becomes "you’re"), while this
+        // method searches the raw post_content, which still holds straight
+        // ones. An exact-text match therefore fails for any heading with an
+        // apostrophe, quote, dash, or entity. Normalize both sides the same
+        // way and compare, keeping the raw offsets for the splice below.
+        $normalize = static function ( $s ) {
+            $s = wp_strip_all_tags( (string) $s );
+            $s = html_entity_decode( $s, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+            $s = str_replace( array( "\xE2\x80\x99", "\xE2\x80\x98", "\xE2\x80\x9C", "\xE2\x80\x9D" ), array( "'", "'", '"', '"' ), $s );
+            $s = str_replace( array( "\xE2\x80\x93", "\xE2\x80\x94", "\xC2\xA0" ), array( '-', '-', ' ' ), $s );
+            $s = preg_replace( '/\s+/u', ' ', $s );
+            return function_exists( 'mb_strtolower' ) ? mb_strtolower( trim( $s ), 'UTF-8' ) : strtolower( trim( $s ) );
+        };
 
-        if ( ! preg_match( $heading_re, $content, $hm, PREG_OFFSET_CAPTURE ) ) {
+        $want = $normalize( $heading );
+        $hm   = null;
+        if ( '' !== $want && preg_match_all( '#<h([23])\b[^>]*>(.*?)</h\1>#isu', $content, $all_headings, PREG_OFFSET_CAPTURE | PREG_SET_ORDER ) ) {
+            foreach ( $all_headings as $cand ) {
+                if ( $normalize( $cand[2][0] ) === $want ) {
+                    $hm = array( $cand[0] ); // [full match, offset], same shape the splice math expects
+                    break;
+                }
+            }
+        }
+
+        if ( ! $hm ) {
             return new \WP_Error( 'heading_not_found', 'Could not locate heading in post content.', array( 'status' => 422 ) );
         }
 
-        $heading_end = $hm[0][1] + strlen( $hm[0][0] );
-        $tail        = substr( $content, $heading_end );
+        $cursor = $hm[0][1] + strlen( $hm[0][0] );
+
+        // Block-editor content closes the heading with a serializer comment;
+        // any replacement or insertion must land AFTER it or the block breaks.
+        $tail = substr( $content, $cursor );
+        if ( preg_match( '#^\s*<!--\s*/wp:heading\s*-->#', $tail, $cm ) ) {
+            $cursor += strlen( $cm[0] );
+            $tail    = substr( $content, $cursor );
+        }
 
         // Skip whitespace between the heading and the opener.
         $ws        = strlen( $tail ) - strlen( ltrim( $tail, " \t\r\n" ) );
+        $cursor   += $ws;
         $tail_trim = substr( $tail, $ws );
 
+        // Block-editor paragraph opener: skip the wp:paragraph comment so the
+        // replacement swaps only the <p> and the serializer comments survive.
+        if ( preg_match( '#^<!--\s*wp:paragraph[^>]*-->\s*#', $tail_trim, $bm ) ) {
+            $cursor   += strlen( $bm[0] );
+            $tail_trim = substr( $tail_trim, strlen( $bm[0] ) );
+        }
+
+        $is_blocks = ( false !== strpos( $content, '<!-- wp:' ) );
+
         if ( preg_match( '#^<p\b[^>]*>(.*?)</p>#is', $tail_trim, $pm ) ) {
-            // Opener is an explicit <p>...</p>.
+            // Opener is an explicit <p>...</p>: swap it.
             $p_full_length = strlen( $pm[0] );
             $new_p         = '<p>' . esc_html( $rewrite ) . '</p>';
-        } elseif ( ! preg_match( '#^<(?:ul|ol|h[1-6]|table|blockquote|figure|div|pre|hr|section|aside|dl|details)\b#i', $tail_trim )
-                   && preg_match( '#^(.+?)(?=\R\s*\R|\R?\s*<(?:ul|ol|h[1-6]|p|table|blockquote|figure|div|pre|hr)\b|$)#isu', $tail_trim, $pm )
+        } elseif ( ! preg_match( '#^(?:<(?:ul|ol|h[1-6]|table|blockquote|figure|div|pre|hr|section|aside|dl|details)\b|<!--\s*wp:)#i', $tail_trim )
+                   && preg_match( '#^(.+?)(?=\R\s*\R|\R?\s*<(?:ul|ol|h[1-6]|p|table|blockquote|figure|div|pre|hr)\b|\R?\s*<!--\s*wp:|$)#isu', $tail_trim, $pm )
                    && trim( wp_strip_all_tags( $pm[1] ) ) !== '' ) {
-            // Opener is bare text (wpautop style): posts authored with newline
-            // paragraph breaks store no <p> wrappers; WordPress adds them on
-            // render. Only when the heading is NOT immediately followed by a
-            // block element (a list/table is not an opener to rewrite). Match the
-            // run of text up to the next block-level tag or blank line (\R covers
-            // LF and CRLF) and replace it bare so it stays consistent.
+            // Opener is bare text (wpautop style): replace the text run.
             $p_full_length = strlen( $pm[1] );
             $new_p         = esc_html( $rewrite );
         } else {
-            return new \WP_Error( 'no_paragraph', 'No opening paragraph found after the heading. Open in the editor and rewrite manually.', array( 'status' => 422 ) );
+            // No opener exists: the heading is followed directly by a list,
+            // table, or other block (checklist-style sections do this). The
+            // answer-first opener's whole job is to give such sections a direct
+            // opening answer, so INSERT a new paragraph between the heading and
+            // the block instead of failing. Nothing is replaced.
+            $p_full_length = 0;
+            $new_p         = $is_blocks
+                ? "<!-- wp:paragraph -->\n<p>" . esc_html( $rewrite ) . "</p>\n<!-- /wp:paragraph -->\n\n"
+                : '<p>' . esc_html( $rewrite ) . "</p>\n\n";
         }
 
-        $p_full_offset = $heading_end + $ws;
-        $new_content   = substr( $content, 0, $p_full_offset ) . $new_p . substr( $content, $p_full_offset + $p_full_length );
+        $new_content = substr( $content, 0, $cursor ) . $new_p . substr( $content, $cursor + $p_full_length );
 
         // Return the rewritten content for the editor to load in-memory. We do
         // NOT save server-side: the block editor owns the content and the author
@@ -2196,11 +2286,6 @@ class API {
     }
 
     /**
-     * Get computed dashboard recommendations.
-     *
-     * @return \WP_REST_Response
-     */
-    /**
      * Keyword Optimize: weave a cluster's queries into the page (Pro).
      * Thin delegate; the implementation lives in the Pro plugin.
      *
@@ -2214,6 +2299,11 @@ class API {
         return KeywordOptimize::handle( $request );
     }
 
+    /**
+     * Get computed dashboard recommendations.
+     *
+     * @return \WP_REST_Response
+     */
     public function get_gsc_recommendations() {
         $gsc = new GSC();
         return rest_ensure_response( $gsc->get_recommendations() );
@@ -3027,6 +3117,157 @@ HARD RULES
         $api_key = sanitize_text_field( $request->get_param( 'api_key' ) );
         $tracker = new CitationTracker();
         return rest_ensure_response( $tracker->save_api_key( $engine, $api_key ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // AI Mentions & Citation Tracking (Growth, no keys — DataForSEO)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Shared Growth gate for the no-keys AI mention/citation features. The Pro
+     * class must exist, the licence must be Pro (superset check), AND the
+     * licence must be Growth and carry the given capability. Mirrors the
+     * server-side gate in market_topical_map(): a non-Growth licence is
+     * rejected here regardless of what the client sends, on top of the same
+     * check inside the Pro class and the plan check in the proxy.
+     *
+     * @param string $feature Growth feature key.
+     * @return true|\WP_REST_Response
+     */
+    private function ai_mentions_guard( $feature ) {
+        if ( ! class_exists( '\AISEOGodMode\AI_Mentions' ) || ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'AI mention tracking is a Growth feature.' ), 403 );
+        }
+        if ( ! method_exists( '\AISEOGodMode\License', 'is_growth' )
+            || ! \AISEOGodMode\License::is_growth_feature( $feature )
+            || ! \AISEOGodMode\License::is_growth() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'This is a Growth feature.' ), 403 );
+        }
+        return true;
+    }
+
+    /** Normalise AI_Mentions results into REST responses (forwards cap fields). */
+    private function ai_mentions_respond( $result ) {
+        if ( is_wp_error( $result ) ) {
+            $data    = $result->get_error_data();
+            $payload = array( 'success' => false, 'error' => $result->get_error_message() );
+            if ( is_array( $data ) ) {
+                foreach ( array( 'credits', 'cap', 'cap_used' ) as $k ) {
+                    if ( isset( $data[ $k ] ) ) {
+                        $payload[ $k ] = $data[ $k ];
+                    }
+                }
+            }
+            return new \WP_REST_Response( $payload, 400 );
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), (array) $result ) );
+    }
+
+    /** GET /citations/ai-mentions — the stored Growth overview (no charge). */
+    public function get_ai_mentions() {
+        $guard = $this->ai_mentions_guard( 'ai_mentions' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), \AISEOGodMode\AI_Mentions::get_overview() ) );
+    }
+
+    /** POST /citations/ai-mentions — run an always-on mention pull (3 credits). */
+    public function run_ai_mentions( \WP_REST_Request $request ) {
+        $guard = $this->ai_mentions_guard( 'ai_mentions' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $queries = $request->get_param( 'queries' );
+        $queries = is_array( $queries ) ? array_map( 'sanitize_text_field', $queries ) : array();
+        $loc     = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
+        $lang    = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::ai_mentions( $queries, $loc, $lang ) );
+    }
+
+    /** POST /citations/competitor-spy — who is being quoted instead of you (2 credits). */
+    public function run_competitor_spy( \WP_REST_Request $request ) {
+        $guard = $this->ai_mentions_guard( 'competitor_spy' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $keywords = $request->get_param( 'keywords' );
+        $keywords = is_array( $keywords ) ? array_map( 'sanitize_text_field', $keywords ) : array();
+        $mode     = sanitize_key( (string) ( $request->get_param( 'mode' ) ?? 'pages' ) );
+        $loc      = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
+        $lang     = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        // Only an explicit Refresh goes to the network. Everything else is
+        // served from the site's own saved topics, free.
+        $force    = (bool) $request->get_param( 'force' );
+        return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::competitor_spy( $keywords, $mode, $loc, $lang, $force ) );
+    }
+
+    /** POST /citations/competitor-spy/topic — switch or forget a saved topic. Never charges. */
+    public function select_competitor_topic( \WP_REST_Request $request ) {
+        $guard = $this->ai_mentions_guard( 'competitor_spy' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $key = sanitize_text_field( (string) $request->get_param( 'key' ) );
+        if ( 'delete' === sanitize_key( (string) $request->get_param( 'action' ) ) ) {
+            return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::forget_spy_topic( $key ) );
+        }
+        return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::select_spy_topic( $key ) );
+    }
+
+    /**
+     * POST /citations/will-ai-quote — the expensive pre-publish simulator
+     * (40 credits, monthly count cap enforced in the proxy).
+     */
+    public function run_will_ai_quote( \WP_REST_Request $request ) {
+        $guard = $this->ai_mentions_guard( 'will_ai_quote' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $question = sanitize_textarea_field( (string) ( $request->get_param( 'question' ) ?? '' ) );
+        $loc      = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
+        $lang     = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::will_ai_quote( $question, $loc, $lang ) );
+    }
+
+    /**
+     * GET /citations/competitors. Returns the saved competitor domain list.
+     * Growth only (same guard as the other AI-mention features); never trusts
+     * the client for the tier.
+     */
+    public function get_competitors() {
+        $guard = $this->ai_mentions_guard( 'competitor_spy' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return rest_ensure_response( array(
+            'success'     => true,
+            'competitors' => \AISEOGodMode\AI_Mentions::get_competitors(),
+        ) );
+    }
+
+    /**
+     * POST /citations/competitors. Replaces the competitor domain list. Growth
+     * only. Body {competitors:[...]} is sanitized to bare domains server-side
+     * and the cleaned list is returned.
+     */
+    public function set_competitors( \WP_REST_Request $request ) {
+        $guard = $this->ai_mentions_guard( 'competitor_spy' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $list = $request->get_param( 'competitors' );
+        if ( ! is_array( $list ) ) {
+            $list = array();
+        }
+        // Light REST-layer scrub; AI_Mentions::set_competitors() does the
+        // authoritative bare-domain sanitize, dedupe and cap.
+        $list  = array_map( 'sanitize_text_field', $list );
+        $clean = \AISEOGodMode\AI_Mentions::set_competitors( $list );
+        return rest_ensure_response( array(
+            'success'     => true,
+            'competitors' => $clean,
+        ) );
     }
 
     // -----------------------------------------------------------------------
@@ -4014,6 +4255,62 @@ HARD RULES
         }
         $ok = \AISEOGodMode\Topical_Map::dismiss( (int) $request['id'] );
         return rest_ensure_response( array( 'success' => (bool) $ok ) );
+    }
+
+    /**
+     * Full-market pull (Growth only). Server-side tier gate: a non-Growth
+     * licence is rejected here regardless of what the client sends, on top of
+     * the same check inside the Pro class and the plan check in the proxy.
+     */
+    public function market_topical_map( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        if ( ! method_exists( '\AISEOGodMode\License', 'is_growth' )
+            || ! \AISEOGodMode\License::is_growth_feature( 'market_map' )
+            || ! \AISEOGodMode\License::is_growth() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Full market keywords are a Growth feature.' ), 403 );
+        }
+        $seed = sanitize_text_field( (string) ( $request->get_param( 'seed' ) ?? '' ) );
+        $loc  = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
+        $lang = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        return $this->topical_map_respond(
+            \AISEOGodMode\Topical_Map::market_keywords( $seed, $loc, $lang )
+        );
+    }
+
+    /* ─── Consensus Score (Growth) ─── */
+
+    public function consensus_score( $request ) {
+        if ( ! class_exists( '\AISEOGodMode\Consensus' ) || ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Consensus Score is a Growth feature.' ), 403 );
+        }
+        $keyword = sanitize_text_field( (string) $request->get_param( 'keyword' ) );
+        $post_id = absint( $request->get_param( 'post_id' ) );
+
+        if ( $post_id ) {
+            $result = \AISEOGodMode\Consensus::score_post( $post_id, $keyword );
+        } else {
+            $title   = sanitize_text_field( (string) $request->get_param( 'title' ) );
+            $content = wp_kses_post( (string) $request->get_param( 'content' ) );
+            $result  = \AISEOGodMode\Consensus::score_content( $title, $content, $keyword );
+        }
+
+        if ( is_wp_error( $result ) ) {
+            $data    = $result->get_error_data();
+            $payload = array( 'success' => false, 'error' => $result->get_error_message() );
+            if ( is_array( $data ) && isset( $data['credits'] ) ) {
+                $payload['credits'] = $data['credits'];
+            }
+            return new \WP_REST_Response( $payload, 400 );
+        }
+
+        return rest_ensure_response( array(
+            'success' => true,
+            'score'   => $result['data'],
+            'credits' => $result['credits'] ?? null,
+        ) );
     }
 
     /* ─── Knowledge Base (Pro) ─── */

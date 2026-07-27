@@ -5,6 +5,22 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.21
+
+- Competitor Citation Spy now saves every topic you check so switching between them is instant and costs nothing
+- See where you rank for a topic and which sites are worth competing with
+- Track how your share of voice changes over time
+- Tag any site as a competitor in one click
+- Citation Tracker is now organised into tabs so results are easier to find
+
+## 1.6.20
+
+- Competitor Citation Spy now lets you type the exact topic you want to check
+- Clearer AI mention reporting for sites that are new to AI answers
+- Your monthly Will AI Quote Me allowance is now shown up front
+- Topical Map now shows the true status of every draft and lets you regenerate one
+- Faster and more relevant market keyword suggestions
+
 ## 1.6.19
 
 - Added light and dark mode so you can pick the look you prefer from the sidebar

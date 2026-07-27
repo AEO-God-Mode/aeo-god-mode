@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.19
+Stable tag: 1.6.21
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,20 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.21 =
+* Competitor Citation Spy now saves every topic you check so switching between them is instant and costs nothing
+* See where you rank for a topic and which sites are worth competing with
+* Track how your share of voice changes over time
+* Tag any site as a competitor in one click
+* Citation Tracker is now organised into tabs so results are easier to find
+
+= 1.6.20 =
+* Competitor Citation Spy now lets you type the exact topic you want to check
+* Clearer AI mention reporting for sites that are new to AI answers
+* Your monthly Will AI Quote Me allowance is now shown up front
+* Topical Map now shows the true status of every draft and lets you regenerate one
+* Faster and more relevant market keyword suggestions
 
 = 1.6.19 =
 * Added light and dark mode so you can pick the look you prefer from the sidebar

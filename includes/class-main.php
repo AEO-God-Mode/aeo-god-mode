@@ -262,7 +262,6 @@ class Main {
     public function render_admin_page() {
         // Since we removed all submenus, the React router depends purely on hash routing.
         $react_route = '/';
-        $this->react_route = $react_route;
 
         $wizard_url = esc_url( admin_url( 'admin.php?page=aeo-god-mode#/wizard' ) );
 
@@ -507,16 +506,6 @@ class Main {
 
         // Render native ASGM meta tags when no SEO plugin handles them.
         MetadataWriter::render_native_meta();
-    }
-
-    /**
-     * Get a loaded module instance.
-     *
-     * @param string $key Module key.
-     * @return object|null
-     */
-    public function get_module( $key ) {
-        return isset( $this->modules[ $key ] ) ? $this->modules[ $key ] : null;
     }
 
     /**

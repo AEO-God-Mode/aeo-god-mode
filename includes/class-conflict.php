@@ -56,8 +56,6 @@ class Conflict {
             }
         }
 
-        update_option( 'asgm_conflict_scan_cache', $conflicts );
-
         return array(
             'conflicts'   => $conflicts,
             'total'       => count( $conflicts ),
@@ -179,13 +177,6 @@ class Conflict {
         return null;
     }
 
-    /**
-     * Check if any conflict has a given severity.
-     *
-     * @param array  $conflicts Array of conflicts.
-     * @param string $severity  Severity to check.
-     * @return bool
-     */
     /**
      * Check if any conflict has a given severity.
      *
