@@ -5,6 +5,10 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.22
+
+- Will AI Quote Me now shows how many checks you have used and how many are left before you run one
+
 ## 1.6.21
 
 - Competitor Citation Spy now saves every topic you check so switching between them is instant and costs nothing
