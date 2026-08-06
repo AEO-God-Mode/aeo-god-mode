@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.22
+Stable tag: 1.6.24
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,17 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.24 =
+* Your llms.txt now works alongside Yoast SEO
+* with one click to hand control back to AEO God Mode
+* Growth features no longer need an API key to open
+* Citation Tracker figures are now clearly labelled so the two percentages cannot be confused
+* You are asked to confirm before a check spends credits on your own API keys
+
+= 1.6.23 =
+* Descriptions you write in the llms.txt Entry panel now appear in your live llms.txt file
+* Your llms.txt updates straight away after you generate a description
 
 = 1.6.22 =
 * Will AI Quote Me now shows how many checks you have used and how many are left before you run one

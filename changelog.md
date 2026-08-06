@@ -5,6 +5,19 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.24
+
+- Your llms.txt now works alongside Yoast SEO
+- with one click to hand control back to AEO God Mode
+- Growth features no longer need an API key to open
+- Citation Tracker figures are now clearly labelled so the two percentages cannot be confused
+- You are asked to confirm before a check spends credits on your own API keys
+
+## 1.6.23
+
+- Descriptions you write in the llms.txt Entry panel now appear in your live llms.txt file
+- Your llms.txt updates straight away after you generate a description
+
 ## 1.6.22
 
 - Will AI Quote Me now shows how many checks you have used and how many are left before you run one

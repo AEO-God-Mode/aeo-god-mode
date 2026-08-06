@@ -782,6 +782,11 @@ class ContentGaps {
                 $desc = sanitize_text_field( $ai_result['description'] ?? '' );
                 if ( ! empty( $desc ) ) {
                     update_post_meta( $post_id, '_asgm_llms_description', $desc );
+                    // The generated file is cached for a day. Without dropping
+                    // that transient the new description sits in the database
+                    // while /llms.txt keeps serving the previous build, which
+                    // reads to the customer as "the button did nothing".
+                    delete_transient( 'asgm_llms_txt' );
                     return array(
                         'success'     => true,
                         'fix_type'    => $fix_type,

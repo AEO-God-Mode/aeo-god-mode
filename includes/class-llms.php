@@ -27,6 +27,22 @@ class LLMS {
         add_filter( 'query_vars', array( $this, 'add_query_vars' ) );
         add_action( 'template_redirect', array( $this, 'serve_llms_txt' ) );
 
+        // Coexist with Yoast SEO's llms.txt feature.
+        //
+        // Yoast writes a REAL file to the site root (get_home_path(), falling
+        // back to DOCUMENT_ROOT). We serve /llms.txt virtually through a
+        // rewrite rule. A physical file is returned by the web server before
+        // WordPress boots, so Yoast's copy silently wins and ours is never
+        // reached. Verified on a live site: with a physical llms.txt present
+        // the response loses its x-powered-by PHP header entirely.
+        //
+        // Yoast documents wpseo_llmstxt_filesystem_path for relocating their
+        // file. Using their own public filter keeps this a supported
+        // integration rather than us deleting or editing another plugin's
+        // output. Their file keeps being generated and stays on disk, it just
+        // no longer occupies the /llms.txt slot.
+        add_filter( 'wpseo_llmstxt_filesystem_path', array( $this, 'relocate_yoast_llms_txt' ) );
+
         // Prevent WordPress from adding a trailing slash redirect on /llms.txt.
         add_filter( 'redirect_canonical', function( $redirect_url, $requested_url ) {
             if ( get_query_var( 'asgm_llms' ) ) {
@@ -34,6 +50,26 @@ class LLMS {
             }
             return $redirect_url;
         }, 10, 2 );
+    }
+
+    /**
+     * Point Yoast SEO's llms.txt at a different filename so ours can serve.
+     *
+     * Only moves it when the incoming path is the root llms.txt we would
+     * otherwise be shadowed by. Anything already customised by the site owner
+     * or another filter is left alone.
+     *
+     * @param string $path Absolute path Yoast intends to write to.
+     * @return string
+     */
+    public function relocate_yoast_llms_txt( $path ) {
+        if ( ! is_string( $path ) || '' === $path ) {
+            return $path;
+        }
+        if ( 'llms.txt' !== strtolower( basename( $path ) ) ) {
+            return $path;
+        }
+        return dirname( $path ) . '/llms-yoast.txt';
     }
 
     /**
@@ -321,7 +357,12 @@ class LLMS {
             ) );
 
             foreach ( $children as $child ) {
-                $excerpt = wp_strip_all_tags( $child->post_excerpt );
+                // Same precedence as the posts loop: a description set on the
+                // page's own llms.txt Entry panel beats the excerpt.
+                $custom  = get_post_meta( $child->ID, '_asgm_llms_description', true );
+                $excerpt = is_string( $custom ) && '' !== trim( $custom )
+                    ? wp_strip_all_tags( $custom )
+                    : wp_strip_all_tags( $child->post_excerpt );
                 $pages[] = array(
                     'title' => get_the_title( $child ),
                     'url'   => get_permalink( $child ),
@@ -354,7 +395,17 @@ class LLMS {
             while ( $query->have_posts() ) {
                 $query->the_post();
                 $post = get_post();
-                $excerpt = wp_strip_all_tags( get_the_excerpt( $post ) );
+
+                // A description written by the per-post "llms.txt Entry" panel
+                // wins over the excerpt. Without this the Generate Description
+                // button saved to _asgm_llms_description and nothing ever read
+                // it, so the author's chosen wording never reached the file and
+                // there was no way to override what llms.txt said about a page.
+                $custom  = get_post_meta( $post->ID, '_asgm_llms_description', true );
+                $excerpt = is_string( $custom ) && '' !== trim( $custom )
+                    ? wp_strip_all_tags( $custom )
+                    : wp_strip_all_tags( get_the_excerpt( $post ) );
+
                 // Truncate to ~120 chars for description.
                 if ( strlen( $excerpt ) > 120 ) {
                     $excerpt = substr( $excerpt, 0, 117 ) . '...';

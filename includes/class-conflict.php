@@ -29,6 +29,7 @@ class Conflict {
         'sitemap',
         'canonical',
         'og_tags',
+        'llms_txt_file',
     );
 
     /**
@@ -77,14 +78,129 @@ class Conflict {
             return array( 'success' => false, 'message' => __( 'Invalid resolution type.', 'aeo-god-mode' ) );
         }
 
+        // The llms.txt clash is the one conflict with a physical cause, so
+        // recording a preference is not enough: the file has to actually move
+        // or nothing changes for the visitor. Renaming rather than deleting
+        // keeps the other plugin's content, and sends it to the very filename
+        // our wpseo_llmstxt_filesystem_path filter already points future
+        // writes at, so the two stay consistent.
+        $extra = array();
+        if ( 'llms_txt_file' === $id && 'override' === $resolution ) {
+            $moved = $this->move_stray_llms_txt();
+            if ( ! $moved['success'] ) {
+                return $moved;
+            }
+            delete_transient( 'asgm_llms_txt' );
+            // Carry the outcome back so the UI can confirm what actually
+            // happened rather than just going quiet.
+            $extra = array(
+                'message'  => $moved['message'] ?? '',
+                'moved_to' => $moved['moved_to'] ?? '',
+            );
+        }
+
         $resolutions = get_option( 'asgm_conflict_resolutions', array() );
         $resolutions[ $id ] = $resolution;
         update_option( 'asgm_conflict_resolutions', $resolutions );
 
-        return array(
+        return array_merge( array(
             'success'    => true,
             'id'         => $id,
             'resolution' => $resolution,
+        ), $extra );
+    }
+
+    /**
+     * Look for a physical llms.txt sitting in the web root.
+     *
+     * Ours is virtual, so any real file here shadows it. Reads the first part
+     * of the file to name the owner, because "some file exists" is far less
+     * useful to the customer than "Yoast wrote this".
+     *
+     * @return array|null array{path:string,owner:string} or null when clear.
+     */
+    private function find_stray_llms_txt() {
+        $roots = array();
+        if ( function_exists( 'get_home_path' ) ) {
+            $roots[] = get_home_path();
+        }
+        $roots[] = ABSPATH;
+        if ( ! empty( $_SERVER['DOCUMENT_ROOT'] ) ) {
+            $roots[] = trailingslashit( sanitize_text_field( wp_unslash( $_SERVER['DOCUMENT_ROOT'] ) ) );
+        }
+
+        foreach ( array_unique( array_filter( $roots ) ) as $root ) {
+            $file = trailingslashit( $root ) . 'llms.txt';
+            if ( ! @file_exists( $file ) || ! @is_readable( $file ) ) {
+                continue;
+            }
+
+            $head  = (string) @file_get_contents( $file, false, null, 0, 2048 );
+            $owner = __( 'another plugin', 'aeo-god-mode' );
+            if ( false !== stripos( $head, 'Yoast' ) ) {
+                $owner = 'Yoast SEO';
+            } elseif ( false !== stripos( $head, 'Rank Math' ) ) {
+                $owner = 'Rank Math';
+            } elseif ( false !== stripos( $head, 'AEO God Mode' ) ) {
+                // Ours, written out deliberately by the site owner. Not a clash.
+                continue;
+            }
+
+            return array( 'path' => $file, 'owner' => $owner );
+        }
+        return null;
+    }
+
+    /**
+     * Move a shadowing llms.txt aside so ours can serve.
+     *
+     * Renames rather than deletes. The destination matches where our Yoast
+     * filter sends future writes, so the other plugin keeps its content at a
+     * stable path and nothing is thrown away. Refuses to touch a file we
+     * wrote ourselves, and refuses if a rename would clobber something.
+     *
+     * @return array
+     */
+    private function move_stray_llms_txt() {
+        $stray = $this->find_stray_llms_txt();
+        if ( ! $stray ) {
+            return array( 'success' => true, 'message' => __( 'Nothing to move. Your llms.txt is already being served by AEO God Mode.', 'aeo-god-mode' ) );
+        }
+
+        $from = $stray['path'];
+        $dir  = dirname( $from );
+        if ( ! is_writable( $dir ) ) {
+            return array(
+                'success' => false,
+                'message' => sprintf(
+                    /* translators: %s: directory path */
+                    __( 'We cannot move the file because %s is not writable. Ask your host to allow writing there, or delete llms.txt yourself over FTP.', 'aeo-god-mode' ),
+                    $dir
+                ),
+            );
+        }
+
+        $to = $dir . '/llms-yoast.txt';
+        if ( file_exists( $to ) ) {
+            $to = $dir . '/llms-' . gmdate( 'Ymd-His' ) . '.txt';
+        }
+
+        if ( ! @rename( $from, $to ) ) {
+            return array(
+                'success' => false,
+                'message' => __( 'The file could not be moved. Your host may be blocking writes to the site root.', 'aeo-god-mode' ),
+            );
+        }
+
+        return array(
+            'success' => true,
+            'moved_to' => $to,
+            'message'  => sprintf(
+                /* translators: 1: owning plugin, 2: new filename */
+                __( 'Done. %1$s content is now at %2$s and your llms.txt is live. Give any page cache a purge if you still see the old version.', 'aeo-god-mode' ),
+                $stray['owner'],
+                basename( $to )
+            ),
         );
     }
 
@@ -121,6 +237,36 @@ class Conflict {
                         ),
                         'affected_plugin' => $other,
                         'resolution'      => 'defer',
+                    );
+                }
+                break;
+
+            case 'llms_txt_file':
+                // A REAL llms.txt on disk is served by the web server before
+                // WordPress boots, so our virtual /llms.txt never runs and the
+                // customer sees stale content with no explanation. Yoast writes
+                // one by design. Detect it and say so plainly.
+                $stray = $this->find_stray_llms_txt();
+                if ( $stray ) {
+                    return array(
+                        'id'              => 'llms_txt_file',
+                        'type'            => 'llms_txt_file',
+                        'severity'        => 'error',
+                        'title'           => sprintf(
+                            /* translators: %s: owning plugin name */
+                            __( '%s is currently serving your llms.txt', 'aeo-god-mode' ),
+                            $stray['owner']
+                        ),
+                        'description'     => sprintf(
+                            /* translators: %s: owning plugin name */
+                            __( '%1$s saved an llms.txt file straight onto your server, and your server hands that file out before WordPress even starts. We have already told %1$s to write future updates to llms-yoast.txt instead, so this will not happen again. One click moves the existing file across and your llms.txt takes over. Nothing is deleted.', 'aeo-god-mode' ),
+                            $stray['owner']
+                        ),
+                        'affected_plugin' => $stray['owner'],
+                        'file_path'       => $stray['path'],
+                        'fix_label'       => __( 'Move it aside and use mine', 'aeo-god-mode' ),
+                        'can_auto_fix'    => is_writable( dirname( $stray['path'] ) ),
+                        'resolution'      => 'override',
                     );
                 }
                 break;
