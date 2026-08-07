@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.24
+Stable tag: 1.6.25
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,14 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.25 =
+* Citation Tracker shows the questions behind your AI mentions and which of your pages each answer linked
+* Answer a missed question straight from Page Reports as a section or an FAQ entry
+* Page Reports now shows each page's citability score next to its results
+* Topical Map pulls across your whole niche instead of one corner of it
+* Topical Map flags ideas your site already covers
+* Clearer wording throughout the Citation Tracker
 
 = 1.6.24 =
 * Your llms.txt now works alongside Yoast SEO

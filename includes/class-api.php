@@ -2818,14 +2818,20 @@ HARD RULES
             return rest_ensure_response( array( 'success' => false, 'error' => 'No permission to edit this page.' ) );
         }
 
+        // The caller chooses the level. Anything other than h3 is treated as h2,
+        // so a malformed or absent value can never emit an unexpected tag.
+        $level = strtolower( trim( (string) $request->get_param( 'level' ) ) );
+        $level = ( 'h3' === $level ) ? 'h3' : 'h2';
+
         $heading = trim( rtrim( $heading, '?.!:;' ) );
         $intro   = trim( $intro );
 
-        // Idempotence — check existing H2s on the page for token overlap.
+        // Idempotence. Check BOTH levels: a duplicate H3 competes with an
+        // existing H2 on the same topic just as badly as a duplicate H2 would.
         if ( class_exists( '\AISEOGodMode\Query_Gap' ) ) {
             $h_tokens = \AISEOGodMode\Query_Gap::tokens( $heading );
-            if ( ! empty( $h_tokens ) && preg_match_all( '#<h2[^>]*>(.*?)</h2>#is', $post->post_content, $hm ) ) {
-                foreach ( $hm[1] as $existing_h ) {
+            if ( ! empty( $h_tokens ) && preg_match_all( '#<h([23])[^>]*>(.*?)</h\1>#is', $post->post_content, $hm ) ) {
+                foreach ( $hm[2] as $existing_h ) {
                     $e_tokens = \AISEOGodMode\Query_Gap::tokens( wp_strip_all_tags( $existing_h ) );
                     if ( empty( $e_tokens ) ) continue;
                     $inter = array_intersect( $h_tokens, $e_tokens );
@@ -2841,9 +2847,21 @@ HARD RULES
         }
 
         // Build the section HTML. Two clean elements only — wpautop handles the rest.
-        $section = "\n\n<h2>" . esc_html( $heading ) . "</h2>\n<p>" . wp_kses_post( $intro ) . "</p>";
+        $section = "\n\n<{$level}>" . esc_html( $heading ) . "</{$level}>\n<p>" . wp_kses_post( $intro ) . "</p>";
 
+        // An H2 is a new top-level section, so it belongs at the end. An H3 is a
+        // sub-point of an existing section, and appending it to the end of the
+        // post would file it under whichever H2 happens to be last. Place it at
+        // the end of the section it actually belongs to instead.
         $new_content = $post->post_content . $section;
+        if ( 'h3' === $level ) {
+            $anchor = self::find_parent_section_end( $post->post_content, $heading );
+            if ( null !== $anchor ) {
+                $new_content = substr( $post->post_content, 0, $anchor )
+                    . $section . "\n\n"
+                    . substr( $post->post_content, $anchor );
+            }
+        }
         $upd = wp_update_post( array(
             'ID'           => $post_id,
             'post_content' => wp_slash( $new_content ),
@@ -2855,21 +2873,103 @@ HARD RULES
             ) );
         }
 
-        // Audit log entry with mode='h2_section'.
         if ( class_exists( '\AISEOGodMode\Query_Gap' ) ) {
             \AISEOGodMode\Query_Gap::record_applied(
                 $query,
                 $post_id,
                 $heading . "\n\n" . $intro,
-                'h2_section'
+                $level . '_section'
             );
         }
 
         return rest_ensure_response( array(
             'success'  => true,
-            'mode'     => 'h2_section',
+            'mode'     => $level . '_section',
+            'level'    => $level,
             'edit_url' => get_edit_post_link( $post_id, 'raw' ),
         ) );
+    }
+
+    /**
+     * Where an H3 should go: the end of the H2 section it belongs to.
+     *
+     * Picks the existing H2 whose wording overlaps the new heading most, then
+     * returns the offset just before the next H2 (or the end of the post if the
+     * matched section is the last one). Returns null when nothing matches well
+     * enough, in which case the caller appends and the H3 trails the final
+     * section, which is the same behaviour as before this existed.
+     *
+     * @param string $content Post content.
+     * @param string $heading The new heading text.
+     * @return int|null Byte offset to insert at, or null for no good parent.
+     */
+    private static function find_parent_section_end( $content, $heading ) {
+        if ( ! class_exists( '\AISEOGodMode\Query_Gap' ) ) {
+            return null;
+        }
+        $tokens = \AISEOGodMode\Query_Gap::tokens( $heading );
+        if ( empty( $tokens ) ) {
+            return null;
+        }
+        if ( ! preg_match_all( '#<h2[^>]*>(.*?)</h2>#is', $content, $m, PREG_OFFSET_CAPTURE ) ) {
+            return null;
+        }
+
+        // Query_Gap::tokens does not stem, so "grind" and "grinding" look like
+        // different words to a plain intersection and a question about grind
+        // size would never find the Grinding section. Count a pair as matching
+        // when one token is a prefix of the other, which covers the plural and
+        // participle endings that separate a question from a heading.
+        $matches = function ( $a, $b ) {
+            foreach ( $a as $x ) {
+                foreach ( $b as $y ) {
+                    if ( $x === $y ) {
+                        return true;
+                    }
+                    $short = strlen( $x ) < strlen( $y ) ? $x : $y;
+                    $long  = strlen( $x ) < strlen( $y ) ? $y : $x;
+                    if ( strlen( $short ) >= 4 && 0 === strpos( $long, $short ) ) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+
+        $best       = null;
+        $best_score = 0.0;
+        foreach ( $m[1] as $i => $cap ) {
+            $h_tokens = \AISEOGodMode\Query_Gap::tokens( wp_strip_all_tags( $cap[0] ) );
+            if ( empty( $h_tokens ) ) {
+                continue;
+            }
+            $hits = 0;
+            foreach ( $h_tokens as $ht ) {
+                if ( $matches( array( $ht ), $tokens ) ) {
+                    $hits++;
+                }
+            }
+            $score = $hits / count( $h_tokens );
+            if ( $score > $best_score ) {
+                $best_score = $score;
+                $best       = $i;
+            }
+        }
+
+        // Needs a real topical relationship. Below this the H3 would be filed
+        // under a section it has nothing to do with, which is worse than
+        // appending it at the end. One matching word out of a three word
+        // heading clears this; zero does not.
+        if ( null === $best || $best_score < 0.3 ) {
+            return null;
+        }
+
+        // End of the matched section = start of the next H2, or end of content.
+        $next = $best + 1;
+        if ( isset( $m[0][ $next ] ) ) {
+            return (int) $m[0][ $next ][1];
+        }
+        return strlen( $content );
     }
 
     /**

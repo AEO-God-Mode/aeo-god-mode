@@ -5,6 +5,15 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.25
+
+- Citation Tracker shows the questions behind your AI mentions and which of your pages each answer linked
+- Answer a missed question straight from Page Reports as a section or an FAQ entry
+- Page Reports now shows each page's citability score next to its results
+- Topical Map pulls across your whole niche instead of one corner of it
+- Topical Map flags ideas your site already covers
+- Clearer wording throughout the Citation Tracker
+
 ## 1.6.24
 
 - Your llms.txt now works alongside Yoast SEO
