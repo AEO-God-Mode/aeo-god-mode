@@ -98,6 +98,15 @@ class LLMS {
             return;
         }
 
+        // A hand-written file is served exactly as the owner left it. No cache,
+        // no merge, no regeneration: if they took control of the wording, the
+        // plugin must not quietly edit it back.
+        $manual = $this->manual_content();
+        if ( '' !== $manual ) {
+            $this->output_text( $manual );
+            return;
+        }
+
         $cached = get_transient( 'asgm_llms_txt' );
         if ( $cached ) {
             $this->output_text( $cached );
@@ -121,13 +130,138 @@ class LLMS {
         $cached         = get_transient( 'asgm_llms_txt' );
         $custom         = get_option( 'asgm_llms_custom_content', '' );
 
+        $manual = $this->manual_content();
+
         return array(
             'last_generated' => $last_generated,
             'has_cache'      => ! empty( $cached ),
+            // What the generator would produce. Still shown while a manual file
+            // is live, so the owner can compare and see what they are missing.
             'content'        => $cached ? $cached : $this->build_content(),
             'custom_content' => $custom,
+            'manual_enabled' => ( '' !== $manual ),
+            'manual_content' => $manual,
             'url'            => get_site_url() . '/llms.txt',
         );
+    }
+
+    /**
+     * Drop llms.txt from whatever page cache the site runs.
+     *
+     * The file is served through a rewrite, so a caching plugin treats it like
+     * any other URL and will happily hold it for days. Without this, an owner
+     * edits their file, sees the change in the preview, and the public URL keeps
+     * serving the old text until the cache happens to expire. Found on
+     * aeogodmode.io where llms.txt was cached for a week.
+     *
+     * @return void
+     */
+    private function purge_public_file() {
+        $url = home_url( '/llms.txt' );
+
+        // LiteSpeed, W3 Total Cache, WP Rocket, Cache Enabler, Nginx Helper.
+        do_action( 'litespeed_purge_url', $url );
+        if ( function_exists( 'w3tc_flush_url' ) ) {
+            w3tc_flush_url( $url );
+        }
+        if ( function_exists( 'rocket_clean_files' ) ) {
+            rocket_clean_files( array( $url ) );
+        }
+        do_action( 'cache_enabler_clear_page_cache_by_url', $url );
+        do_action( 'rt_nginx_helper_purge_url', $url );
+    }
+
+    /**
+     * Where the hand-written file lives.
+     *
+     * One option, deliberately. The first version used two non-autoloaded
+     * options and the flag read back stale on the request that follows the
+     * save: the owner pressed the button, the plugin said yes, and the file
+     * carried on being generated. A single autoloaded row travels in the
+     * alloptions entry that update_option always refreshes, so every request
+     * agrees. update_option cannot change an existing row's autoload, hence
+     * the delete-then-add in save_manual().
+     */
+    const MANUAL_OPT = 'asgm_llms_manual';
+
+    /**
+     * The hand-written file, or an empty string when the generator is in charge.
+     *
+     * @return string
+     */
+    public function manual_content() {
+        $stored = get_option( self::MANUAL_OPT, array() );
+        if ( ! is_array( $stored ) || empty( $stored['enabled'] ) ) {
+            return '';
+        }
+        return trim( (string) ( $stored['content'] ?? '' ) );
+    }
+
+    /**
+     * Take manual control of llms.txt.
+     *
+     * The owner edits the text and from then on it is served verbatim. It stops
+     * tracking the site, which is the trade they are making knowingly: new pages
+     * will not appear until they add them or switch back to automatic.
+     *
+     * Stored without HTML stripping on purpose. llms.txt is plain text served as
+     * text/plain, never rendered as markup, so removing angle brackets would
+     * corrupt legitimate content such as a code sample.
+     *
+     * @param string $content Full file contents.
+     * @return array
+     */
+    public function save_manual( $content ) {
+        $content = trim( (string) $content );
+        if ( '' === $content ) {
+            return $this->disable_manual();
+        }
+        $this->write_manual( array( 'enabled' => true, 'content' => $content ) );
+        delete_transient( 'asgm_llms_txt' );
+        $this->purge_public_file();
+
+        return array(
+            'success'        => true,
+            'manual_enabled' => true,
+            'manual_content' => $content,
+        );
+    }
+
+    /**
+     * Hand llms.txt back to the generator, keeping the edited text so switching
+     * back and forth never loses the owner's work.
+     *
+     * @return array
+     */
+    public function disable_manual() {
+        $stored = get_option( self::MANUAL_OPT, array() );
+        $kept   = is_array( $stored ) ? (string) ( $stored['content'] ?? '' ) : '';
+        $this->write_manual( array( 'enabled' => false, 'content' => $kept ) );
+        delete_transient( 'asgm_llms_txt' );
+        $this->purge_public_file();
+
+        return array(
+            'success'        => true,
+            'manual_enabled' => false,
+            'manual_content' => $kept,
+        );
+    }
+
+    /**
+     * Persist the manual state, guaranteeing the row is autoloaded.
+     *
+     * @param array $value Manual state.
+     * @return void
+     */
+    private function write_manual( $value ) {
+        // add_option is the only way to set autoload on a row that already
+        // exists with it off, so the old row goes first.
+        delete_option( self::MANUAL_OPT );
+        add_option( self::MANUAL_OPT, $value, '', 'yes' );
+
+        // Retire the two options the first version used.
+        delete_option( 'asgm_llms_manual_enabled' );
+        delete_option( 'asgm_llms_manual_content' );
     }
 
     /**
@@ -137,6 +271,7 @@ class LLMS {
      */
     public function regenerate() {
         delete_transient( 'asgm_llms_txt' );
+        $this->purge_public_file();
 
         $content = $this->build_content();
         set_transient( 'asgm_llms_txt', $content, DAY_IN_SECONDS );

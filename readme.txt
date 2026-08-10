@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.25
+Stable tag: 1.6.26
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,12 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.26 =
+* New FAQ and TL;DR shortcodes that render an accordion on any theme, with FAQPage schema handled for you
+* Draft Citation Tracker questions using your plan credits with no API key needed
+* Write your own llms.txt by hand and we serve it exactly as you wrote it
+* Changes to llms.txt now reach your live file straight away
 
 = 1.6.25 =
 * Citation Tracker shows the questions behind your AI mentions and which of your pages each answer linked

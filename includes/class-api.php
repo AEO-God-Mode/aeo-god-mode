@@ -175,6 +175,18 @@ class API {
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
 
+        register_rest_route( self::NAMESPACE, '/llms/manual', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'save_llms_manual' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/llms/manual/revert', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'revert_llms_manual' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
         register_rest_route( self::NAMESPACE, '/llms/custom', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'save_llms_custom' ),
@@ -735,6 +747,12 @@ class API {
         register_rest_route( self::NAMESPACE, '/license', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'get_license_status' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/license/refresh', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'refresh_license_status' ),
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
 
@@ -1971,6 +1989,28 @@ class API {
         $llms    = new LLMS();
         $result  = $llms->save_custom_content( $content ?? '' );
         return rest_ensure_response( $result );
+    }
+
+    /**
+     * Take manual control of llms.txt: serve exactly what the owner wrote.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_llms_manual( $request ) {
+        $llms = new LLMS();
+        return rest_ensure_response( $llms->save_manual( (string) $request->get_param( 'content' ) ) );
+    }
+
+    /**
+     * Hand llms.txt back to the generator. The edited text is kept.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function revert_llms_manual( $request ) {
+        $llms = new LLMS();
+        return rest_ensure_response( $llms->disable_manual() );
     }
 
     // -----------------------------------------------------------------------
@@ -3814,6 +3854,25 @@ HARD RULES
     }
 
     /**
+     * Force a fresh license check, bypassing the cached result. Without this,
+     * a plan change made on the store (Pro upgraded to Growth, renewal, seat
+     * bump) can take up to 24 hours to reflect on the customer's site, which
+     * reads as "I paid and nothing changed". Deleting the transient makes the
+     * next status read hit the licensing server live.
+     */
+    public function refresh_license_status() {
+        delete_transient( 'agm_license_data' );
+        // get_status() is a passive reader; with the cache gone it would just
+        // report "inactive". is_pro() performs the live licensing-server check
+        // and repopulates the cache, so the status read below is truly fresh.
+        \AISEOGodMode\License::is_pro();
+        $license = new License();
+        $status  = $license->get_status();
+        $this->log_activity( 'license_refreshed', __( 'License status refreshed from the licensing server.', 'aeo-god-mode' ) );
+        return rest_ensure_response( $status );
+    }
+
+    /**
      * Activate a license key.
      *
      * @param \WP_REST_Request $request Request.
@@ -4353,7 +4412,8 @@ HARD RULES
         if ( true !== $guard ) {
             return $guard;
         }
-        $ok = \AISEOGodMode\Topical_Map::dismiss( (int) $request['id'] );
+        $reason = sanitize_key( (string) ( $request->get_param( 'reason' ) ?? 'dismissed' ) );
+        $ok = \AISEOGodMode\Topical_Map::dismiss( (int) $request['id'], $reason );
         return rest_ensure_response( array( 'success' => (bool) $ok ) );
     }
 

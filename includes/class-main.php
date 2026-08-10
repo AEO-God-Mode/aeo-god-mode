@@ -84,6 +84,7 @@ class Main {
         require_once $includes . 'class-bulk-meta.php';
         require_once $includes . 'class-okf.php';
         require_once $includes . 'class-affiliate-badge.php';
+        require_once $includes . 'class-faq-blocks.php';
 
         // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
         // themselves on plugins_loaded priority 5/10. Free does not require any
@@ -463,6 +464,7 @@ class Main {
     $this->modules['bulk_meta']    = new BulkMeta();
     $this->modules['okf']          = new OKF();
         $this->modules['affiliate_badge'] = new AffiliateBadge();
+        $this->modules['faq_blocks']      = new FaqBlocks();
 
         // Pro modules — only boot with an active license AND class exists.
         // class_exists() guards protect against Free builds where pro/ is stripped

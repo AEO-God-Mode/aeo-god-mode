@@ -5,6 +5,13 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.26
+
+- New FAQ and TL;DR shortcodes that render an accordion on any theme, with FAQPage schema handled for you
+- Draft Citation Tracker questions using your plan credits with no API key needed
+- Write your own llms.txt by hand and we serve it exactly as you wrote it
+- Changes to llms.txt now reach your live file straight away
+
 ## 1.6.25
 
 - Citation Tracker shows the questions behind your AI mentions and which of your pages each answer linked

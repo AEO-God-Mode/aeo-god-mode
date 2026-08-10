@@ -634,6 +634,38 @@ class Schema {
 
         $content = $post->post_content;
 
+        // Detect AEO God Mode's own [aeogm_faq q="Q"]A[/aeogm_faq] accordion
+        // shortcodes (class-faq-blocks.php renders the accordion; schema is
+        // emitted here, once, so the two never disagree or double up).
+        if ( false !== stripos( $content, '[aeogm_faq' ) ) {
+            $pattern = '/\[aeogm_faq\s+[^\]]*?(?:q|title)\s*=\s*(?:"([^"]+)"|\'([^\']+)\')[^\]]*\](.+?)\[\/aeogm_faq\]/si';
+            if ( preg_match_all( $pattern, $content, $matches, PREG_SET_ORDER ) ) {
+                $faqs = array();
+                foreach ( $matches as $match ) {
+                    $question = trim( $match[1] !== '' ? $match[1] : $match[2] );
+                    $answer   = trim( wp_strip_all_tags( strip_shortcodes( $match[3] ) ) );
+                    $answer   = preg_replace( '/\s+/', ' ', $answer );
+                    if ( $question !== '' && $answer !== '' ) {
+                        $faqs[] = array(
+                            '@type'          => 'Question',
+                            'name'           => $question,
+                            'acceptedAnswer' => array(
+                                '@type' => 'Answer',
+                                'text'  => $answer,
+                            ),
+                        );
+                    }
+                }
+                if ( count( $faqs ) >= 2 ) {
+                    return array(
+                        '@context'   => 'https://schema.org',
+                        '@type'      => 'FAQPage',
+                        'mainEntity' => $faqs,
+                    );
+                }
+            }
+        }
+
         // Detect [faq title="Q"]A[/faq] shortcode pairs (common third-party FAQ
         // plugin format: Easy FAQ, Quick and Easy FAQs, accordion FAQ themes,
         // and AEO God Mode's own Query Gap Detector writeback). Handles single
@@ -697,6 +729,41 @@ class Schema {
         if ( has_block( 'yoast/faq-block', $post ) || has_block( 'rank-math/faq-block', $post ) ) {
             // These plugins handle their own FAQ schema, so defer.
             return null;
+        }
+
+        // Detect a plain FAQ section: an "FAQ" style H2/H3, followed by
+        // question-shaped subheadings each answered by a paragraph. This is
+        // the structure our own draft generator produces and the most common
+        // hand-written FAQ format. Scoped to content AFTER the FAQ heading so
+        // an article that is entirely question-headings (answer-first style)
+        // is not mislabeled as an FAQPage.
+        if ( preg_match( '/<h([23])\b[^>]*>\s*(?:faqs?|frequently asked questions|common questions)\s*:?\s*<\/h\1>/i', $content, $fh, PREG_OFFSET_CAPTURE ) ) {
+            $section = substr( $content, $fh[0][1] + strlen( $fh[0][0] ) );
+            if ( preg_match_all( '/<h([34])\b[^>]*>(.*?\?)\s*<\/h\1>.*?<p\b[^>]*>(.*?)<\/p>/si', $section, $qm, PREG_SET_ORDER ) ) {
+                $faqs = array();
+                foreach ( $qm as $match ) {
+                    $question = trim( wp_strip_all_tags( $match[2] ) );
+                    $answer   = trim( wp_strip_all_tags( $match[3] ) );
+                    $answer   = preg_replace( '/\s+/', ' ', $answer );
+                    if ( '' !== $question && '' !== $answer ) {
+                        $faqs[] = array(
+                            '@type'          => 'Question',
+                            'name'           => $question,
+                            'acceptedAnswer' => array(
+                                '@type' => 'Answer',
+                                'text'  => $answer,
+                            ),
+                        );
+                    }
+                }
+                if ( count( $faqs ) >= 2 ) {
+                    return array(
+                        '@context'   => 'https://schema.org',
+                        '@type'      => 'FAQPage',
+                        'mainEntity' => $faqs,
+                    );
+                }
+            }
         }
 
         return null;
