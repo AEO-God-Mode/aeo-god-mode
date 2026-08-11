@@ -257,6 +257,20 @@ class API {
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
 
+        // ---- Setup checklist (Dashboard activation card) ----
+        register_rest_route( self::NAMESPACE, '/setup-checklist', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_setup_checklist' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_setup_checklist_flags' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
         // ---- Open Knowledge Format ----
         register_rest_route( self::NAMESPACE, '/okf', array(
             'methods'             => 'GET',
@@ -2139,7 +2153,131 @@ class API {
         $post_id  = absint( $request->get_param( 'post_id' ) );
         $fix_type = sanitize_text_field( $request->get_param( 'fix_type' ) );
         $gaps     = new ContentGaps();
-        return rest_ensure_response( $gaps->apply_fix( $post_id, $fix_type, $request->get_params() ) );
+        $result   = $gaps->apply_fix( $post_id, $fix_type, $request->get_params() );
+        if ( is_array( $result ) && ! empty( $result['success'] ) ) {
+            update_option( 'asgm_content_gap_fixes_applied', (int) get_option( 'asgm_content_gap_fixes_applied', 0 ) + 1, false );
+            $this->log_activity( 'content_gap_fix', __( 'Content gap fix applied.', 'aeo-god-mode' ) );
+        }
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Setup checklist state for the Dashboard activation card.
+     *
+     * Every step's done-state is derived from feature state that already
+     * exists; nothing here is stored except the two UI flags (dismissed,
+     * celebrated). Result numbers are read from the same state used for
+     * detection so the card never shows canned copy.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_setup_checklist( $request ) {
+        global $wpdb;
+
+        $flags = get_option( 'asgm_setup_checklist', array() );
+        $plan  = \AISEOGodMode\License::is_pro() ? 'pro' : 'free';
+
+        // 1. Content Gaps scan.
+        $gap_results = get_option( 'asgm_content_gap_results', array() );
+        $gaps_done   = '' !== (string) get_option( 'asgm_content_gap_last_scan', '' );
+
+        // Free variant step 2: at least one auto-fix applied.
+        $fixes_applied = (int) get_option( 'asgm_content_gap_fixes_applied', 0 );
+
+        // 2. Search Console connected.
+        $gsc_connected = false;
+        $gsc_queries   = 0;
+        if ( class_exists( '\AISEOGodMode\GSC' ) ) {
+            $gsc_status    = ( new \AISEOGodMode\GSC() )->get_status();
+            $gsc_connected = ! empty( $gsc_status['connected'] );
+            $gsc_queries   = count( (array) get_option( 'asgm_gsc_query_data', array() ) );
+        }
+
+        // 3. Topical Map rows. Direct table query so the check works even
+        // when the Pro class is not loaded (expired license, Free build).
+        $map_topics = 0;
+        $map_table  = $wpdb->prefix . 'asgm_topical_map';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $map_table ) ) === $map_table ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $map_topics = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$map_table}` WHERE status NOT IN ('dismissed')" );
+        }
+
+        // 4. First draft generated from the map.
+        $draft_ids = get_posts( array(
+            'post_type'      => 'any',
+            'post_status'    => 'any',
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_key'       => '_asgm_topic_draft', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+            'no_found_rows'  => true,
+        ) );
+        $draft_id  = $draft_ids ? (int) $draft_ids[0] : 0;
+
+        // 5. Citation check has run; count engines currently citing the site.
+        $cite_results = (array) get_option( 'asgm_citation_results', array() );
+        $cite_done    = ! empty( $cite_results ) || '' !== (string) get_option( 'asgm_citation_last_check', '' );
+        $cite_engines = array();
+        foreach ( $cite_results as $row ) {
+            if ( ! empty( $row['cited'] ) && ! empty( $row['engine'] ) ) {
+                $cite_engines[ strtolower( (string) $row['engine'] ) ] = true;
+            }
+        }
+
+        return rest_ensure_response( array(
+            'plan'       => $plan,
+            'dismissed'  => ! empty( $flags['dismissed'] ),
+            'celebrated' => ! empty( $flags['celebrated'] ),
+            'steps'      => array(
+                'gaps'  => array(
+                    'done'  => $gaps_done,
+                    'count' => is_array( $gap_results ) ? count( $gap_results ) : 0,
+                ),
+                'fix'   => array(
+                    'done'  => $fixes_applied > 0,
+                    'count' => $fixes_applied,
+                ),
+                'gsc'   => array(
+                    'done'    => $gsc_connected,
+                    'queries' => $gsc_queries,
+                ),
+                'map'   => array(
+                    'done'   => $map_topics > 0,
+                    'topics' => $map_topics,
+                ),
+                'draft' => array(
+                    'done'     => $draft_id > 0,
+                    'edit_url' => $draft_id ? admin_url( 'post.php?post=' . $draft_id . '&action=edit' ) : '',
+                ),
+                'cite'  => array(
+                    'done'    => $cite_done,
+                    'engines' => count( $cite_engines ),
+                ),
+            ),
+        ) );
+    }
+
+    /**
+     * Persist the two setup-checklist UI flags. Done-states are never stored.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_setup_checklist_flags( $request ) {
+        $flags = get_option( 'asgm_setup_checklist', array() );
+        if ( null !== $request->get_param( 'dismissed' ) ) {
+            $flags['dismissed'] = rest_sanitize_boolean( $request->get_param( 'dismissed' ) );
+        }
+        if ( null !== $request->get_param( 'celebrated' ) ) {
+            $flags['celebrated'] = rest_sanitize_boolean( $request->get_param( 'celebrated' ) );
+        }
+        update_option( 'asgm_setup_checklist', $flags, false );
+        return rest_ensure_response( array(
+            'success'    => true,
+            'dismissed'  => ! empty( $flags['dismissed'] ),
+            'celebrated' => ! empty( $flags['celebrated'] ),
+        ) );
     }
 
     /**

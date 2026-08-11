@@ -98,22 +98,15 @@ class LLMS {
             return;
         }
 
-        // A hand-written file is served exactly as the owner left it. No cache,
-        // no merge, no regeneration: if they took control of the wording, the
-        // plugin must not quietly edit it back.
-        $manual = $this->manual_content();
-        if ( '' !== $manual ) {
-            $this->output_text( $manual );
-            return;
-        }
-
         $cached = get_transient( 'asgm_llms_txt' );
         if ( $cached ) {
             $this->output_text( $cached );
             return;
         }
 
-        $content = $this->build_content();
+        // Generated fresh every time, with the owner's edits laid back over the
+        // top. Editing one line must never stop a new page appearing.
+        $content = $this->merged_content();
         set_transient( 'asgm_llms_txt', $content, DAY_IN_SECONDS );
         update_option( 'asgm_llms_last_generated', current_time( 'mysql' ) );
 
@@ -130,17 +123,19 @@ class LLMS {
         $cached         = get_transient( 'asgm_llms_txt' );
         $custom         = get_option( 'asgm_llms_custom_content', '' );
 
-        $manual = $this->manual_content();
+        $overrides = $this->manual_overrides();
 
         return array(
             'last_generated' => $last_generated,
             'has_cache'      => ! empty( $cached ),
-            // What the generator would produce. Still shown while a manual file
-            // is live, so the owner can compare and see what they are missing.
-            'content'        => $cached ? $cached : $this->build_content(),
+            // The file as actually served: generated, with any edits applied.
+            'content'        => $this->merged_content(),
             'custom_content' => $custom,
-            'manual_enabled' => ( '' !== $manual ),
-            'manual_content' => $manual,
+            'manual_enabled' => $this->has_manual_edits(),
+            'manual_content' => $this->merged_content(),
+            'edited_sections'=> array_values( array_map( function ( $k ) {
+                return '__head__' === $k ? 'Summary' : $k;
+            }, array_keys( $overrides['sections'] ) ) ),
             'url'            => get_site_url() . '/llms.txt',
         );
     }
@@ -172,43 +167,135 @@ class LLMS {
     }
 
     /**
-     * Where the hand-written file lives.
+     * EDITING WITHOUT FREEZING
+     * ------------------------
+     * The first version of manual editing served the owner's text verbatim and
+     * stopped generating. That is the wrong trade: fixing one wrong word cost
+     * them every future page.
      *
-     * One option, deliberately. The first version used two non-autoloaded
-     * options and the flag read back stale on the request that follows the
-     * save: the owner pressed the button, the plugin said yes, and the file
-     * carried on being generated. A single autoloaded row travels in the
-     * alloptions entry that update_option always refreshes, so every request
-     * agrees. update_option cannot change an existing row's autoload, hence
-     * the delete-then-add in save_manual().
+     * So edits are stored per section instead of as one blob. On save the text
+     * is split on its "## " headings, compared against what the generator would
+     * have produced, and only the parts that actually differ are kept. On every
+     * request the file is generated fresh and those parts are dropped back in.
+     *
+     * The result is that correcting the summary line leaves Core Pages and
+     * Guides updating themselves, and a page published tomorrow still appears.
+     *
+     * Stored shape:
+     *   [ 'sections' => [ '__head__' => "...", 'Guides' => "...", ... ],
+     *     'removed'  => [ 'Optional', ... ] ]
+     *
+     * One autoloaded row. Two non-autoloaded options were tried first and the
+     * flag read back stale on the request after the save, so the plugin
+     * reported success while still serving the generated file.
      */
     const MANUAL_OPT = 'asgm_llms_manual';
 
     /**
-     * The hand-written file, or an empty string when the generator is in charge.
+     * Split a file into its head and its "## " sections.
      *
-     * @return string
+     * @param string $text File contents.
+     * @return array<string,string> Keyed by heading, head under __head__.
      */
-    public function manual_content() {
-        $stored = get_option( self::MANUAL_OPT, array() );
-        if ( ! is_array( $stored ) || empty( $stored['enabled'] ) ) {
-            return '';
+    private function split_sections( $text ) {
+        $out     = array();
+        $current = '__head__';
+        $buf     = array();
+
+        foreach ( preg_split( '/\r\n|\n|\r/', (string) $text ) as $line ) {
+            if ( preg_match( '/^##\s+(.+?)\s*$/', $line, $m ) ) {
+                $out[ $current ] = trim( implode( "\n", $buf ) );
+                $current         = $m[1];
+                $buf             = array();
+                continue;
+            }
+            $buf[] = $line;
         }
-        return trim( (string) ( $stored['content'] ?? '' ) );
+        $out[ $current ] = trim( implode( "\n", $buf ) );
+
+        return $out;
     }
 
     /**
-     * Take manual control of llms.txt.
+     * Reassemble a file from its parts, keeping the generator's ordering.
      *
-     * The owner edits the text and from then on it is served verbatim. It stops
-     * tracking the site, which is the trade they are making knowingly: new pages
-     * will not appear until they add them or switch back to automatic.
+     * @param array<string,string> $sections Section bodies keyed by heading.
+     * @param string[]             $order    Heading order.
+     * @return string
+     */
+    private function join_sections( $sections, $order ) {
+        $parts = array();
+        if ( ! empty( $sections['__head__'] ) ) {
+            $parts[] = $sections['__head__'];
+        }
+        foreach ( $order as $heading ) {
+            if ( '__head__' === $heading || ! isset( $sections[ $heading ] ) ) {
+                continue;
+            }
+            $body    = trim( (string) $sections[ $heading ] );
+            $parts[] = '## ' . $heading . ( '' !== $body ? "\n\n" . $body : '' );
+        }
+        return implode( "\n\n", $parts ) . "\n";
+    }
+
+    /**
+     * The stored edits, or an empty structure.
      *
-     * Stored without HTML stripping on purpose. llms.txt is plain text served as
-     * text/plain, never rendered as markup, so removing angle brackets would
+     * @return array{sections:array<string,string>,removed:string[]}
+     */
+    private function manual_overrides() {
+        $stored = get_option( self::MANUAL_OPT, array() );
+        return array(
+            'sections' => ( is_array( $stored ) && is_array( $stored['sections'] ?? null ) ) ? $stored['sections'] : array(),
+            'removed'  => ( is_array( $stored ) && is_array( $stored['removed'] ?? null ) ) ? $stored['removed'] : array(),
+        );
+    }
+
+    /** Does the owner have any edits saved? @return bool */
+    public function has_manual_edits() {
+        $o = $this->manual_overrides();
+        return ! empty( $o['sections'] ) || ! empty( $o['removed'] );
+    }
+
+    /**
+     * The file as served: generated fresh, with the owner's edits laid back on.
+     *
+     * @return string
+     */
+    public function merged_content() {
+        $generated = $this->build_content();
+        $overrides = $this->manual_overrides();
+
+        if ( empty( $overrides['sections'] ) && empty( $overrides['removed'] ) ) {
+            return $generated;
+        }
+
+        $auto  = $this->split_sections( $generated );
+        $order = array_keys( $auto );
+
+        foreach ( $overrides['sections'] as $heading => $body ) {
+            $auto[ $heading ] = $body;
+            // An edited section the generator no longer produces still belongs
+            // in the file: the owner put it there deliberately.
+            if ( ! in_array( $heading, $order, true ) ) {
+                $order[] = $heading;
+            }
+        }
+        foreach ( $overrides['removed'] as $heading ) {
+            unset( $auto[ $heading ] );
+        }
+
+        return $this->join_sections( $auto, $order );
+    }
+
+    /**
+     * Save an edited file, keeping only what differs from the generated one.
+     *
+     * Stored without HTML stripping on purpose: llms.txt is plain text served
+     * as text/plain, never rendered as markup, so removing angle brackets would
      * corrupt legitimate content such as a code sample.
      *
-     * @param string $content Full file contents.
+     * @param string $content Full file contents as edited.
      * @return array
      */
     public function save_manual( $content ) {
@@ -216,41 +303,55 @@ class LLMS {
         if ( '' === $content ) {
             return $this->disable_manual();
         }
-        $this->write_manual( array( 'enabled' => true, 'content' => $content ) );
+
+        $auto   = $this->split_sections( $this->build_content() );
+        $theirs = $this->split_sections( $content );
+
+        $sections = array();
+        foreach ( $theirs as $heading => $body ) {
+            $body = trim( $body );
+            if ( ! isset( $auto[ $heading ] ) || trim( $auto[ $heading ] ) !== $body ) {
+                $sections[ $heading ] = $body;
+            }
+        }
+        $removed = array_values( array_diff( array_keys( $auto ), array_keys( $theirs ), array( '__head__' ) ) );
+
+        $this->write_manual( array( 'sections' => $sections, 'removed' => $removed ) );
         delete_transient( 'asgm_llms_txt' );
         $this->purge_public_file();
 
         return array(
             'success'        => true,
-            'manual_enabled' => true,
-            'manual_content' => $content,
+            'manual_enabled' => ! empty( $sections ) || ! empty( $removed ),
+            'edited_sections'=> array_values( array_map( function ( $k ) {
+                return '__head__' === $k ? 'Summary' : $k;
+            }, array_keys( $sections ) ) ),
+            'manual_content' => $this->merged_content(),
         );
     }
 
     /**
-     * Hand llms.txt back to the generator, keeping the edited text so switching
-     * back and forth never loses the owner's work.
+     * Discard the edits and go back to a purely generated file.
      *
      * @return array
      */
     public function disable_manual() {
-        $stored = get_option( self::MANUAL_OPT, array() );
-        $kept   = is_array( $stored ) ? (string) ( $stored['content'] ?? '' ) : '';
-        $this->write_manual( array( 'enabled' => false, 'content' => $kept ) );
+        $this->write_manual( array( 'sections' => array(), 'removed' => array() ) );
         delete_transient( 'asgm_llms_txt' );
         $this->purge_public_file();
 
         return array(
-            'success'        => true,
-            'manual_enabled' => false,
-            'manual_content' => $kept,
+            'success'         => true,
+            'manual_enabled'  => false,
+            'edited_sections' => array(),
+            'manual_content'  => $this->merged_content(),
         );
     }
 
     /**
-     * Persist the manual state, guaranteeing the row is autoloaded.
+     * Persist the edits, guaranteeing the row is autoloaded.
      *
-     * @param array $value Manual state.
+     * @param array $value Override structure.
      * @return void
      */
     private function write_manual( $value ) {
@@ -259,7 +360,7 @@ class LLMS {
         delete_option( self::MANUAL_OPT );
         add_option( self::MANUAL_OPT, $value, '', 'yes' );
 
-        // Retire the two options the first version used.
+        // Retire the options the first two attempts used.
         delete_option( 'asgm_llms_manual_enabled' );
         delete_option( 'asgm_llms_manual_content' );
     }
@@ -273,7 +374,7 @@ class LLMS {
         delete_transient( 'asgm_llms_txt' );
         $this->purge_public_file();
 
-        $content = $this->build_content();
+        $content = $this->merged_content();
         set_transient( 'asgm_llms_txt', $content, DAY_IN_SECONDS );
         update_option( 'asgm_llms_last_generated', current_time( 'mysql' ) );
 

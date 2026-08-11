@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.26
+Stable tag: 1.6.27
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,11 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.27 =
+* New Get Set Up guide on the dashboard walks you from install to your first AI citation
+* Topical Map rebuilt with coverage rings and a visual cluster view
+* llms.txt lines can now be edited individually
 
 = 1.6.26 =
 * New FAQ and TL;DR shortcodes that render an accordion on any theme, with FAQPage schema handled for you

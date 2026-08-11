@@ -5,6 +5,12 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.27
+
+- New Get Set Up guide on the dashboard walks you from install to your first AI citation
+- Topical Map rebuilt with coverage rings and a visual cluster view
+- llms.txt lines can now be edited individually
+
 ## 1.6.26
 
 - New FAQ and TL;DR shortcodes that render an accordion on any theme, with FAQPage schema handled for you
