@@ -5,6 +5,14 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.28
+
+- Smart Internal Linking finds links again: a scoring bug was quietly rejecting good suggestions before you ever saw them
+- Internal link suggestions now read naturally, and awkward ones are retried or honestly skipped
+- Rebuild index now tells you what it did, with a force option to rebuild everything from scratch
+- AI question suggestions in the Citation Tracker now use your plan credits instead of your own AI account
+- Tidier signal labels in the AI Query Explorer
+
 ## 1.6.27
 
 - New Get Set Up guide on the dashboard walks you from install to your first AI citation

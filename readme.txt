@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.27
+Stable tag: 1.6.28
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,13 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.28 =
+* Smart Internal Linking finds links again: a scoring bug was quietly rejecting good suggestions before you ever saw them
+* Internal link suggestions now read naturally, and awkward ones are retried or honestly skipped
+* Rebuild index now tells you what it did, with a force option to rebuild everything from scratch
+* AI question suggestions in the Citation Tracker now use your plan credits instead of your own AI account
+* Tidier signal labels in the AI Query Explorer
 
 = 1.6.27 =
 * New Get Set Up guide on the dashboard walks you from install to your first AI citation

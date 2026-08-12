@@ -343,6 +343,18 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/design', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'design_topical_map' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/seeds', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_topical_seeds' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             // ---- Consensus Score (Growth) ----
             register_rest_route( self::NAMESPACE, '/consensus-score', array(
                 'methods'             => 'POST',
@@ -550,6 +562,14 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            // Which ChatGPT account citation checks run on: the customer's
+            // own key, or the plan's account at a credit cost per question.
+            register_rest_route( self::NAMESPACE, '/citations/engine-source', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_citation_engine_source' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             register_rest_route( self::NAMESPACE, '/citations/page-reports', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_citation_page_reports' ),
@@ -628,6 +648,12 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            register_rest_route( self::NAMESPACE, '/citations/competitor-spy/classify', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'run_competitor_classify' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             register_rest_route( self::NAMESPACE, '/citations/will-ai-quote', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'run_will_ai_quote' ),
@@ -658,6 +684,16 @@ class API {
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_ai_referral_entries' ),
                 'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // Public on purpose: anonymous visitors fire this from the
+            // front-end beacon (cached pages cannot carry a fresh nonce).
+            // The handler re-identifies the engine server-side and rate
+            // limits per IP, so a forged body cannot invent a source.
+            register_rest_route( self::NAMESPACE, '/ai-referrals/beacon', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'log_ai_referral_beacon' ),
+                'permission_callback' => '__return_true',
             ) );
 
             // ---- Citability Score ----
@@ -3213,13 +3249,44 @@ HARD RULES
      * @return \WP_REST_Response
      */
     public function gsc_build_section_index( $request ) {
+        // Indexing is incremental: unchanged sections are skipped by content
+        // hash, so a healthy rebuild legitimately reports zero added. That
+        // looked like a dead button, so a force rebuild is now possible and
+        // the response always says what actually happened.
+        $force = $request instanceof \WP_REST_Request ? (bool) $request->get_param( 'force' ) : false;
+        if ( $force && method_exists( '\AISEOGodMode\Section_Index', 'clear_all' ) ) {
+            Section_Index::clear_all();
+        }
+
         $index_result = Section_Index::index_all();
         $embed_result = Section_Index::embed_all();
+        $stats        = Section_Index::get_stats();
+
+        $added    = (int) ( $index_result['sections_added'] ?? 0 );
+        $embedded = (int) ( $embed_result['posts_embedded'] ?? 0 );
+        if ( $added > 0 || $embedded > 0 ) {
+            $message = sprintf(
+                'Reindexed %d section%s across %d post%s.',
+                $added,
+                1 === $added ? '' : 's',
+                $embedded,
+                1 === $embedded ? '' : 's'
+            );
+        } else {
+            $message = sprintf(
+                'Index already up to date: %s sections from %s posts, all searchable.',
+                number_format_i18n( (int) ( $stats['total_sections'] ?? 0 ) ),
+                number_format_i18n( (int) ( $stats['total_posts'] ?? 0 ) )
+            );
+        }
 
         return rest_ensure_response( array(
             'success' => true,
+            'forced'  => $force,
+            'message' => $message,
             'index'   => $index_result,
             'embed'   => $embed_result,
+            'stats'   => $stats,
         ) );
     }
 
@@ -3397,6 +3464,20 @@ HARD RULES
         return rest_ensure_response( $tracker->save_api_key( $engine, $api_key ) );
     }
 
+    /**
+     * Choose whether ChatGPT citation checks run on the customer's own key
+     * or on the plan's account. Saving a preference never deletes a stored
+     * key, so switching back and forth costs nothing.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_citation_engine_source( $request ) {
+        $source = 'plan' === $request->get_param( 'source' ) ? 'plan' : 'key';
+        update_option( 'asgm_citation_openai_source', $source, false );
+        return rest_ensure_response( array( 'success' => true, 'source' => $source ) );
+    }
+
     // -----------------------------------------------------------------------
     // AI Mentions & Citation Tracking (Growth, no keys — DataForSEO)
     // -----------------------------------------------------------------------
@@ -3494,6 +3575,24 @@ HARD RULES
     }
 
     /**
+     * POST /citations/competitor-spy/classify — AI-sort the current topic's
+     * not-yet-categorised domains into rivals versus non-rivals (1 credit;
+     * a repeat of the same list is served from the proxy cache free). The
+     * verdicts are advisory: the named competitor list only changes when the
+     * customer confirms their picks through POST /citations/competitors.
+     */
+    public function run_competitor_classify() {
+        $guard = $this->ai_mentions_guard( 'competitor_spy' );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        if ( ! method_exists( '\AISEOGodMode\AI_Mentions', 'classify_competitors' ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Update AEO God Mode Pro to use competitor sorting.' ), 400 );
+        }
+        return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::classify_competitors() );
+    }
+
+    /**
      * POST /citations/will-ai-quote — the expensive pre-publish simulator
      * (40 credits, monthly count cap enforced in the proxy).
      */
@@ -3555,11 +3654,30 @@ HARD RULES
     /**
      * Get AI referral stats.
      *
+     * @param \WP_REST_Request $request Request.
      * @return \WP_REST_Response
      */
-    public function get_ai_referrals() {
+    public function get_ai_referrals( $request ) {
+        $days      = absint( $request->get_param( 'days' ) ) ?: 30;
         $referrals = new AIReferrals();
-        return rest_ensure_response( $referrals->get_stats() );
+        return rest_ensure_response( $referrals->get_stats( $days ) );
+    }
+
+    /**
+     * Record a front-end AI referral beacon hit.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function log_ai_referral_beacon( $request ) {
+        $referrer = (string) $request->get_param( 'referrer' );
+        $url      = (string) $request->get_param( 'url' );
+        if ( strlen( $referrer ) > 2083 || strlen( $url ) > 2083 ) {
+            return rest_ensure_response( array( 'recorded' => false ) );
+        }
+        $referrals = new AIReferrals();
+        $recorded  = $referrals->log_from_beacon( $referrer, $url );
+        return rest_ensure_response( array( 'recorded' => (bool) $recorded ) );
     }
 
     /**
@@ -4576,6 +4694,43 @@ HARD RULES
         return $this->topical_map_respond(
             \AISEOGodMode\Topical_Map::market_keywords( $seed, $loc, $lang )
         );
+    }
+
+    /**
+     * Territory Designer (Growth): one strong-model pass that designs the
+     * site's whole topic taxonomy from every data source at once. 5 credits.
+     */
+    public function design_topical_map( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        if ( ! method_exists( '\AISEOGodMode\License', 'is_growth' )
+            || ! \AISEOGodMode\License::is_growth_feature( 'market_map' )
+            || ! \AISEOGodMode\License::is_growth() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'The Territory Designer is a Growth feature.' ), 403 );
+        }
+        $guidance = sanitize_textarea_field( (string) ( $request->get_param( 'guidance' ) ?? '' ) );
+        return $this->topical_map_respond(
+            \AISEOGodMode\Topical_Map::design_taxonomy( $guidance )
+        );
+    }
+
+    /**
+     * Save the owner's seed keywords for the topical map. Free to save
+     * (spending happens on the market pull and design that use them).
+     */
+    public function save_topical_seeds( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $list = $request->get_param( 'keywords' );
+        if ( ! is_array( $list ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Send keywords as a list.' ), 400 );
+        }
+        $stored = \AISEOGodMode\Topical_Map::save_seeds( $list );
+        return new \WP_REST_Response( array( 'success' => true, 'seed_keywords' => $stored ), 200 );
     }
 
     /* ─── Consensus Score (Growth) ─── */

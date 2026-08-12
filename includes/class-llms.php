@@ -612,47 +612,106 @@ class LLMS {
     }
 
     /**
-     * Get top blog posts by comment count (proxy for authority).
+     * The Guides section: the site's best content, posts and pages both.
+     *
+     * Selection order, strongest evidence of value first:
+     *
+     *   1. Anything whose owner wrote an llms.txt entry in the per-page
+     *      panel (_asgm_llms_description). Writing that entry is the owner
+     *      saying "I want this in the file", so it always appears. Before
+     *      this rule the panel saved a description that only surfaced if
+     *      the post also happened to rank in the fallback below, which
+     *      made the panel look like it did nothing.
+     *   2. The highest citability scores (_asgm_citability_score).
+     *   3. The most Search Console impressions (asgm_gsc_page_data).
+     *   4. Freshest published content, so a new site with no scores and
+     *      no Search Console history still gets a sensible list.
+     *
+     * The old heuristic was top posts by comment count. Comments measure
+     * how chatty a post's readers are, not how good the content is, and
+     * most business sites have comments off entirely, which silently
+     * froze the list to an arbitrary ten.
      *
      * @return array
      */
     private function get_top_posts() {
-        $query = new \WP_Query( array(
-            'post_type'      => 'post',
-            'post_status'    => 'publish',
-            'posts_per_page' => 10,
-            'orderby'        => 'comment_count',
-            'order'          => 'DESC',
-            'no_found_rows'  => true,
+        // Utility pages never belong in Guides: real, necessary pages
+        // that answer no search query. Same boundary the topical map
+        // draws. Applied to pages only, a post about affiliate marketing
+        // is content, an Affiliate Terms page is plumbing.
+        $utility_slug = '#(^|-)(privacy|terms|conditions|cookie|cookies|legal|disclaimer|refund|returns|checkout|cart|basket|account|login|register|signup|thank|thanks|confirmation|receipt|order|orders|transaction|affiliate|affiliates|contact|sitemap|success|failed|password|unsubscribe)(-|$)#i';
+
+        // Search Console impressions, keyed by permalink.
+        $gsc = array();
+        foreach ( (array) get_option( 'asgm_gsc_page_data', array() ) as $row ) {
+            if ( is_array( $row ) && ! empty( $row['url'] ) ) {
+                $gsc[ untrailingslashit( (string) $row['url'] ) ] = (int) ( $row['impressions'] ?? 0 );
+            }
+        }
+
+        $candidates = get_posts( array(
+            'post_type'        => array( 'post', 'page' ),
+            'post_status'      => 'publish',
+            'posts_per_page'   => 200,
+            'orderby'          => 'date',
+            'order'            => 'DESC',
+            'suppress_filters' => true,
         ) );
 
-        $posts = array();
-        if ( $query->have_posts() ) {
-            while ( $query->have_posts() ) {
-                $query->the_post();
-                $post = get_post();
-
-                // A description written by the per-post "llms.txt Entry" panel
-                // wins over the excerpt. Without this the Generate Description
-                // button saved to _asgm_llms_description and nothing ever read
-                // it, so the author's chosen wording never reached the file and
-                // there was no way to override what llms.txt said about a page.
-                $custom  = get_post_meta( $post->ID, '_asgm_llms_description', true );
-                $excerpt = is_string( $custom ) && '' !== trim( $custom )
-                    ? wp_strip_all_tags( $custom )
-                    : wp_strip_all_tags( get_the_excerpt( $post ) );
-
-                // Truncate to ~120 chars for description.
-                if ( strlen( $excerpt ) > 120 ) {
-                    $excerpt = substr( $excerpt, 0, 117 ) . '...';
-                }
-                $posts[] = array(
-                    'title' => get_the_title( $post ),
-                    'url'   => get_permalink( $post ),
-                    'desc'  => $excerpt ?: '',
-                );
+        $authored = array();
+        $scored   = array();
+        foreach ( $candidates as $post ) {
+            if ( 'page' === $post->post_type && preg_match( $utility_slug, (string) $post->post_name ) ) {
+                continue;
             }
-            wp_reset_postdata();
+            $custom = get_post_meta( $post->ID, '_asgm_llms_description', true );
+            if ( is_string( $custom ) && '' !== trim( $custom ) ) {
+                $authored[] = $post;
+                continue;
+            }
+            $cit  = get_post_meta( $post->ID, '_asgm_citability_score', true );
+            $cit  = ( '' !== $cit && null !== $cit ) ? (int) $cit : -1;
+            $imps = $gsc[ untrailingslashit( (string) get_permalink( $post ) ) ] ?? 0;
+            $scored[] = array( 'post' => $post, 'cit' => $cit, 'imps' => $imps );
+        }
+
+        // Citability first, impressions break ties, recency breaks those
+        // (candidates arrive newest first and the sort is stable).
+        usort( $scored, static function ( $a, $b ) {
+            if ( $a['cit'] !== $b['cit'] ) {
+                return $b['cit'] <=> $a['cit'];
+            }
+            return $b['imps'] <=> $a['imps'];
+        } );
+
+        // Every authored entry is included (the owner curated those by
+        // hand, capped only to keep the file sane), then the best of the
+        // rest fill the list to twelve.
+        $picked = array_slice( $authored, 0, 30 );
+        foreach ( $scored as $row ) {
+            if ( count( $picked ) >= 12 ) {
+                break;
+            }
+            $picked[] = $row['post'];
+        }
+
+        $posts = array();
+        foreach ( $picked as $post ) {
+            // The author's own llms.txt entry wins over the excerpt.
+            $custom  = get_post_meta( $post->ID, '_asgm_llms_description', true );
+            $excerpt = is_string( $custom ) && '' !== trim( $custom )
+                ? wp_strip_all_tags( $custom )
+                : wp_strip_all_tags( get_the_excerpt( $post ) );
+
+            // Truncate to ~120 chars for description.
+            if ( strlen( $excerpt ) > 120 ) {
+                $excerpt = substr( $excerpt, 0, 117 ) . '...';
+            }
+            $posts[] = array(
+                'title' => get_the_title( $post ),
+                'url'   => get_permalink( $post ),
+                'desc'  => $excerpt ?: '',
+            );
         }
 
         return $posts;
