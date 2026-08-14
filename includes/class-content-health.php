@@ -761,6 +761,7 @@ class Content_Health {
                     'title'    => self::display_text( $p['title'] ),
                     'type'     => (string) $p['type'],
                     'edit_url' => get_edit_post_link( (int) $p['post_id'], 'raw' ),
+                    'view_url' => get_permalink( (int) $p['post_id'] ),
                     'detail'   => self::detail_line( $flag, $value, $p ),
                 );
             }
@@ -800,7 +801,7 @@ class Content_Health {
             'Nothing stored for the description an engine quotes underneath your result. Without one it writes its own from whatever text it finds first.'
                 . ( $template ? ' ' . $template . ' has a site-wide description template set, so some of these may still output something. Open one and check before working through the list.' : '' ),
             array(
-                'text' => 'Pro writes these for you: Posts screen, bulk action "Write AEO Meta Only", 1 credit per post.',
+                'text' => 'Write these in bulk from the Posts screen with "Write AEO Meta Only", 1 credit per post.',
                 'href' => 'edit.php',
             )
         );
@@ -811,7 +812,7 @@ class Content_Health {
             'Very short meta description',
             'These pages do store a description, so something renders under the result, but a few characters is not a snippet. It is usually a placeholder somebody typed to stop an SEO plugin complaining. The stored text and its length are next to each page.',
             array(
-                'text' => 'Pro rewrites these: Posts screen, bulk action "Write AEO Meta Only", 1 credit per post.',
+                'text' => 'Rewrite these in bulk from the Posts screen with "Write AEO Meta Only", 1 credit per post.',
                 'href' => 'edit.php',
             )
         );
@@ -822,7 +823,7 @@ class Content_Health {
             'Title longer than ' . self::TITLE_MAX . ' characters',
             'Long enough that search engines are likely to cut it off. Both Google and Bing truncate by pixel width rather than character count, so ' . self::TITLE_MAX . ' is a working rule of thumb, not a hard limit. Front-load the words that matter and it stops mattering. Lengths are counted as a reader sees them, with HTML entities decoded.',
             array(
-                'text' => 'Pro rewrites titles in bulk: Posts screen, bulk action "Write AEO Titles Only", 1 credit per post.',
+                'text' => 'Rewrite titles in bulk from the Posts screen with "Write AEO Titles Only", 1 credit per post.',
                 'href' => 'edit.php',
             )
         );
@@ -877,7 +878,7 @@ class Content_Health {
                 'cluster_total'  => count( $dupes ),
                 'cluster_shown'  => count( $shown ),
                 'pro'            => array(
-                    'text' => 'Pro writes a distinct description per page: Posts screen, bulk action "Write AEO Meta Only", 1 credit per post.',
+                    'text' => 'Write a distinct description per page from the Posts screen with "Write AEO Meta Only", 1 credit per post.',
                     'href' => 'edit.php',
                 ),
             );
@@ -961,6 +962,131 @@ class Content_Health {
         );
     }
 
+    /**
+     * Paginated rows for one issue in the dedicated Content Health workspace.
+     *
+     * The summary response stays deliberately small so the Dashboard remains
+     * quick on a 500-page site. This endpoint is what makes "View all" honest:
+     * ordinary findings paginate every affected page, while duplicate
+     * descriptions paginate their sets and then the pages inside one set.
+     */
+    public static function group_detail( $key, $page = 1, $per_page = 20, $cluster_index = null, $search = '' ) {
+        $state      = self::get_state();
+        $key        = sanitize_key( (string) $key );
+        $page       = max( 1, (int) $page );
+        $per_page   = min( 50, max( 1, (int) $per_page ) );
+        $search     = self::trim_text( (string) $search );
+        $valid_keys = array_merge( array_keys( self::SEVERITY ), array( 'desc_duplicate' ) );
+
+        if ( ! in_array( $key, $valid_keys, true ) ) {
+            return new \WP_Error( 'asgm_content_health_group', 'Unknown Content Health issue.', array( 'status' => 400 ) );
+        }
+
+        if ( 'desc_duplicate' === $key ) {
+            $clusters = self::duplicate_groups( $state['desc_index'] );
+
+            if ( '' !== $search ) {
+                $needle   = function_exists( 'mb_strtolower' ) ? mb_strtolower( $search ) : strtolower( $search );
+                $clusters = array_values( array_filter( $clusters, static function ( $cluster ) use ( $needle ) {
+                    $haystacks = array( (string) ( $cluster['text'] ?? '' ) );
+                    foreach ( (array) ( $cluster['pages'] ?? array() ) as $row ) {
+                        $haystacks[] = (string) ( $row['title'] ?? '' );
+                    }
+                    foreach ( $haystacks as $haystack ) {
+                        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $haystack ) : strtolower( $haystack );
+                        if ( false !== strpos( $lower, $needle ) ) {
+                            return true;
+                        }
+                    }
+                    return false;
+                } ) );
+            }
+
+            if ( null !== $cluster_index && '' !== (string) $cluster_index ) {
+                $cluster_index = (int) $cluster_index;
+                if ( ! isset( $clusters[ $cluster_index ] ) ) {
+                    return new \WP_Error( 'asgm_content_health_cluster', 'That duplicate-description set no longer exists. Re-open the issue list.', array( 'status' => 404 ) );
+                }
+
+                $cluster = $clusters[ $cluster_index ];
+                $rows    = array_values( (array) ( $cluster['pages'] ?? array() ) );
+
+                return self::paginated_detail_response(
+                    'cluster_pages',
+                    $key,
+                    $rows,
+                    $page,
+                    $per_page,
+                    array(
+                        'cluster_index' => $cluster_index,
+                        'cluster'       => array(
+                            'text'  => (string) ( $cluster['text'] ?? '' ),
+                            'count' => (int) ( $cluster['count'] ?? count( $rows ) ),
+                        ),
+                    )
+                );
+            }
+
+            $summaries = array();
+            foreach ( $clusters as $index => $cluster ) {
+                $summaries[] = array(
+                    'cluster_index' => (int) $index,
+                    'text'          => (string) ( $cluster['text'] ?? '' ),
+                    'count'         => (int) ( $cluster['count'] ?? count( (array) ( $cluster['pages'] ?? array() ) ) ),
+                    'preview'       => array_slice( (array) ( $cluster['pages'] ?? array() ), 0, 3 ),
+                );
+            }
+
+            return self::paginated_detail_response( 'clusters', $key, $summaries, $page, $per_page );
+        }
+
+        $rows = array();
+        foreach ( (array) $state['pages'] as $stored_page ) {
+            if ( ! array_key_exists( $key, (array) ( $stored_page['flags'] ?? array() ) ) ) {
+                continue;
+            }
+            $post_id = (int) ( $stored_page['post_id'] ?? 0 );
+            $row     = array(
+                'post_id'  => $post_id,
+                'title'    => self::display_text( $stored_page['title'] ?? '' ),
+                'type'     => (string) ( $stored_page['type'] ?? '' ),
+                'edit_url' => get_edit_post_link( $post_id, 'raw' ),
+                'view_url' => get_permalink( $post_id ),
+                'detail'   => self::detail_line( $key, $stored_page['flags'][ $key ], $stored_page ),
+            );
+            if ( '' !== $search ) {
+                $haystack = $row['title'] . ' ' . $row['detail'];
+                $needle   = function_exists( 'mb_strtolower' ) ? mb_strtolower( $search ) : strtolower( $search );
+                $lower    = function_exists( 'mb_strtolower' ) ? mb_strtolower( $haystack ) : strtolower( $haystack );
+                if ( false === strpos( $lower, $needle ) ) {
+                    continue;
+                }
+            }
+            $rows[] = $row;
+        }
+
+        return self::paginated_detail_response( 'pages', $key, $rows, $page, $per_page );
+    }
+
+    /** Shape one paginated detail response without ever changing its total. */
+    private static function paginated_detail_response( $mode, $key, $items, $page, $per_page, $extra = array() ) {
+        $total       = count( $items );
+        $total_pages = max( 1, (int) ceil( $total / $per_page ) );
+        $page        = min( $page, $total_pages );
+        $offset      = ( $page - 1 ) * $per_page;
+
+        return array_merge( array(
+            'success'     => true,
+            'mode'        => (string) $mode,
+            'key'         => (string) $key,
+            'page'        => $page,
+            'per_page'    => $per_page,
+            'total'       => $total,
+            'total_pages' => $total_pages,
+            'items'       => array_slice( array_values( $items ), $offset, $per_page ),
+        ), $extra );
+    }
+
     /** Per-page wording for a finding, so the client renders text not codes. */
     private static function detail_line( $flag, $value, $page ) {
         $total = (int) ( $page['images'] ?? 0 );
@@ -1015,6 +1141,7 @@ class Content_Health {
                     'post_id'  => $id,
                     'title'    => self::display_text( get_the_title( $id ) ),
                     'edit_url' => get_edit_post_link( $id, 'raw' ),
+                    'view_url' => get_permalink( $id ),
                 );
             }
             $text  = self::display_text( $entry['text'] ?? '' );

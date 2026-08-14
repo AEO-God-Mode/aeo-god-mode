@@ -29,6 +29,7 @@ class Answer_Density {
 	const BATCH_SIZE      = 50; // posts refreshed per nightly rotation. NOT a cap on total coverage.
 	const ANSWER_WINDOW_W = 50; // words after a heading we look at for an answer
 	const CACHE_GROUP     = 'asgm_answer_density';
+	const ROWS_CACHE_KEY  = 'asgm_density_rows_v2'; // v2 filters out drafts, trash and non post/page scans.
 
 	/**
 	 * Containment overlap of A inside B at the trigram level.
@@ -708,7 +709,7 @@ class Answer_Density {
 		update_post_meta( $post_id, self::SCAN_TS_KEY, time() );
 		// Invalidate the cached postmeta scan so the dashboard picks up the
 		// new value on its next refresh_summary() call.
-		wp_cache_delete( 'asgm_density_rows', self::CACHE_GROUP );
+		wp_cache_delete( self::ROWS_CACHE_KEY, self::CACHE_GROUP );
 		return $result;
 	}
 
@@ -733,8 +734,20 @@ class Answer_Density {
 	 * @return array Site summary reflecting the synchronous portion of the pass.
 	 */
 	public static function scan_all_posts() {
-		self::run_scan_pass( self::all_published_ids(), self::time_budget() );
-		return self::get_summary();
+		$ids   = self::all_published_ids();
+		$total = count( $ids );
+		self::run_scan_pass( $ids, self::time_budget() );
+
+		$pending = get_option( self::QUEUE_OPT, array() );
+		$pending = is_array( $pending ) ? count( $pending ) : 0;
+		$summary = self::get_summary();
+		$summary['scan_progress'] = array(
+			'complete'  => 0 === $pending,
+			'checked'   => max( 0, $total - $pending ),
+			'total'     => $total,
+			'remaining' => $pending,
+		);
+		return $summary;
 	}
 
 	/**
@@ -893,13 +906,21 @@ class Answer_Density {
 		// Cache the postmeta scan for 5 minutes. The dashboard hits this
 		// repeatedly on render; the underlying data only changes when a post
 		// is scanned. flush_summary_cache() invalidates it after each scan.
-		$cache_key = 'asgm_density_rows';
+		$cache_key = self::ROWS_CACHE_KEY;
 		$rows      = wp_cache_get( $cache_key, self::CACHE_GROUP );
 		if ( false === $rows ) {
 			$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 				$wpdb->prepare(
-					"SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s",
-					self::POSTMETA_KEY
+					"SELECT pm.post_id, pm.meta_value
+					FROM {$wpdb->postmeta} pm
+					INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+					WHERE pm.meta_key = %s
+						AND p.post_status = %s
+						AND p.post_type IN ( %s, %s )",
+					self::POSTMETA_KEY,
+					'publish',
+					'post',
+					'page'
 				)
 			);
 			wp_cache_set( $cache_key, $rows, self::CACHE_GROUP, 5 * MINUTE_IN_SECONDS );
@@ -917,6 +938,14 @@ class Answer_Density {
 			$data = maybe_unserialize( $r->meta_value );
 			if ( ! is_array( $data ) ) { continue; }
 			$total_scanned++;
+
+			// A completed pass must update the dashboard time even when the most
+			// recently scanned page has no question-style heading and is therefore
+			// not scored. Previously those rows were skipped before their timestamp
+			// was considered, making a successful Re-scan appear to do nothing.
+			if ( ! empty( $data['scanned_at'] ) && $data['scanned_at'] > $last_scan ) {
+				$last_scan = $data['scanned_at'];
+			}
 
 			$Q = isset( $data['question_headings'] ) ? (int) $data['question_headings'] : 0;
 			$score = isset( $data['answer_density_score'] ) ? (int) $data['answer_density_score'] : 0;
@@ -968,9 +997,6 @@ class Answer_Density {
 				'first_issue'       => $first_issue,
 			);
 
-			if ( ! empty( $data['scanned_at'] ) && $data['scanned_at'] > $last_scan ) {
-				$last_scan = $data['scanned_at'];
-			}
 		}
 
 		usort( $weakest, function ( $a, $b ) { return $a['score'] - $b['score']; } );

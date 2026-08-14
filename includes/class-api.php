@@ -816,6 +816,11 @@ class API {
             'callback'            => array( $this, 'run_content_health_scan' ),
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
+        register_rest_route( self::NAMESPACE, '/content-health/details', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_content_health_details' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
 
         // ---- AI Plugin Manifest ----
         register_rest_route( self::NAMESPACE, '/ai-plugin', array(
@@ -975,16 +980,24 @@ class API {
             $ecommerce[] = 'edd';
         }
 
-        // Growth is a Pro superset. The Free License stub has no is_growth(),
-        // so guard the call with method_exists() to stay fatal-free on Free.
+        // Growth is a Pro superset. Agency includes Growth capabilities but
+        // remains its own plan for UI, entitlement and console reporting.
         $is_growth = method_exists( '\AISEOGodMode\License', 'is_growth' ) && \AISEOGodMode\License::is_growth();
+        $plan       = 'free';
+        if ( License::is_pro() ) {
+            $license = new License();
+            $plan    = method_exists( $license, 'get_plan' ) ? $license->get_plan() : 'pro';
+            if ( ! in_array( $plan, array( 'pro', 'growth', 'agency' ), true ) ) {
+                $plan = 'pro';
+            }
+        }
 
         return rest_ensure_response( array(
             'version'              => ASGM_VERSION,
             'is_pro'               => License::is_pro(),
             'is_growth'            => $is_growth,
             'is_pro_build'         => License::is_pro_build(),
-            'plan'                 => $is_growth ? 'growth' : ( License::is_pro() ? 'pro' : 'free' ),
+            'plan'                 => $plan,
             'safe_mode'            => ! empty( $settings['safe_mode'] ),
             'wizard_completed'     => ! empty( $settings['wizard_completed'] ),
             'health_score'         => $health['score'],
@@ -1031,30 +1044,12 @@ class API {
         $settings = get_option( 'asgm_settings', array() );
         $modules  = isset( $settings['modules'] ) ? $settings['modules'] : array();
 
-        // 1. AI crawlers blocked in robots.txt.
-        $robots_rules = get_option( 'asgm_robots_rules', array() );
-        $key_bots     = array( 'GPTBot', 'OAI-SearchBot', 'ChatGPT-User', 'ClaudeBot', 'PerplexityBot', 'Google-Extended' );
-        $blocked_bots = array();
-        foreach ( $key_bots as $bot ) {
-            if ( isset( $robots_rules[ $bot ] ) && 'disallow' === $robots_rules[ $bot ] ) {
-                $blocked_bots[] = $bot;
-            }
-        }
-        if ( ! empty( $blocked_bots ) ) {
-            $issues[] = array(
-                'type'     => 'ai_bots_blocked',
-                'severity' => 'warning',
-                'message'  => sprintf(
-                    /* translators: 1: number of blocked crawlers, 2: comma-separated list of bot names */
-                    __( '%1$d AI crawlers are blocked in robots.txt: %2$s. These bots cannot index your content for AI search results.', 'aeo-god-mode' ),
-                    count( $blocked_bots ),
-                    implode( ', ', $blocked_bots )
-                ),
-                'fix_url'  => admin_url( 'admin.php?page=aeo-god-mode#/crawlers' ),
-            );
-        }
+        // Crawler allow/block rules are an owner policy choice, not a setup
+        // defect. The dedicated Crawler Access card reports their exact impact
+        // and separates search access from training and data-use controls. Do
+        // not duplicate those choices here as a warning or health-score penalty.
 
-        // 2. llms.txt not yet served to an AI crawler.
+        // 1. llms.txt not yet served to an AI crawler.
         // Prefer the cached transient; fall back to the "last generated" option
         // which is set whenever the file is built (activation, regenerate, or first front-end hit).
         $llms_ready = get_transient( 'asgm_llms_txt' ) || get_option( 'asgm_llms_last_generated', '' );
@@ -1067,7 +1062,7 @@ class API {
             );
         }
 
-        // 3. Zero AI crawler activity (if module is on but nothing logged).
+        // 2. Zero AI crawler activity (if module is on but nothing logged).
         if ( ! empty( $modules['ai_crawlers'] ) ) {
             $table = $wpdb->prefix . 'asgm_crawler_log';
             if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -1084,7 +1079,7 @@ class API {
             }
         }
 
-        // 4. No Organization schema configured.
+        // 3. No Organization schema configured.
         // Settings.tsx persists business info under asgm_settings.business — the
         // legacy asgm_business option is never written, so reading it gave a false
         // negative on configured sites. Mirror class-schema.php's source of truth.
@@ -1100,7 +1095,7 @@ class API {
             );
         }
 
-        // 5. "Discourage search engines" is enabled.
+        // 4. "Discourage search engines" is enabled.
         $blog_public = get_option( 'blog_public' );
         if ( '0' === $blog_public || 0 === $blog_public ) {
             $issues[] = array(
@@ -1111,7 +1106,7 @@ class API {
             );
         }
 
-        // 6. Key AEO modules disabled.
+        // 5. Key AEO modules disabled.
         $key_modules = array(
             'schema'       => 'Schema Engine',
             'ai_crawlers'  => 'AI Crawler Manager',
@@ -1168,14 +1163,15 @@ class API {
     private function calculate_health_score( $settings ) {
         $modules = isset( $settings['modules'] ) ? $settings['modules'] : array();
 
-        $crawlers_url = admin_url( 'admin.php?page=aeo-god-mode#/crawlers' );
         $schema_url   = admin_url( 'admin.php?page=aeo-god-mode#/settings' );
         $llms_url     = admin_url( 'admin.php?page=aeo-god-mode#/llms' );
         $gaps_url     = admin_url( 'admin.php?page=aeo-god-mode#/content-gaps' );
         $settings_url = admin_url( 'admin.php?page=aeo-god-mode#/settings' );
 
-        // ── AI Crawler Access (0-100) ──
-        // Checks actual robots.txt rules + real crawl activity.
+        // ── AI Crawler Monitoring (0-100) ──
+        // Allow, Disallow and No rule are all valid owner policy choices. The
+        // access matrix explains their consequences; this score measures only
+        // whether monitoring is enabled and whether crawls have been observed.
         $crawler_score   = 0;
         $crawler_reasons = array();
 
@@ -1186,63 +1182,10 @@ class API {
                 'cost'    => 100,
             );
         } else {
-            $rules    = get_option( 'asgm_robots_rules', array() );
-            $ai_bots  = array(
-                'GPTBot', 'ChatGPT-User', 'PerplexityBot', 'ClaudeBot',
-                'Anthropic-AI', 'Google-Extended', 'CCBot', 'FacebookBot',
-                'Applebot-Extended', 'Amazonbot', 'Bytespider', 'Cohere-AI',
-            );
-
-            $allowed         = 0;
-            $explicit_count  = 0; // Bots with an explicit Allow or Disallow.
-            $blocked_names   = array();
-            foreach ( $ai_bots as $bot ) {
-                $status = isset( $rules[ $bot ] ) ? $rules[ $bot ] : 'not_set';
-                if ( 'disallow' === $status ) {
-                    $blocked_names[] = $bot;
-                } else {
-                    ++$allowed; // 'allow' OR 'not_set' both mean the bot can crawl.
-                }
-                if ( 'allow' === $status || 'disallow' === $status ) {
-                    ++$explicit_count;
-                }
-            }
-
-            $crawler_score += (int) round( ( $allowed / count( $ai_bots ) ) * 60 );
-
-            // If the user hasn't written any explicit Allow/Disallow rules,
-            // the plugin isn't doing what it advertises (managing crawler
-            // access) yet. Knock 25 points and surface a clear next step so
-            // the panel doesn't claim "all checks passing" for an unconfigured
-            // installation.
-            if ( 0 === $explicit_count ) {
-                $crawler_score = max( 0, $crawler_score - 25 );
-                $crawler_reasons[] = array(
-                    'message' => __( 'No AI crawler rules set yet. Pick Allow or Disallow for each engine in AI Crawlers to take control of who can crawl your content.', 'aeo-god-mode' ),
-                    'fix_url' => $crawlers_url,
-                    'cost'    => 25,
-                );
-            }
-
-            if ( ! empty( $blocked_names ) ) {
-                $cost = 60 - (int) round( ( $allowed / count( $ai_bots ) ) * 60 );
-                $crawler_reasons[] = array(
-                    'message' => sprintf(
-                        /* translators: 1: blocked bot count, 2: total bot count, 3: comma-separated blocked bot names */
-                        _n(
-                            '%1$d of %2$d tracked AI bots is blocked in robots.txt: %3$s.',
-                            '%1$d of %2$d tracked AI bots are blocked in robots.txt: %3$s.',
-                            count( $blocked_names ),
-                            'aeo-god-mode'
-                        ),
-                        count( $blocked_names ),
-                        count( $ai_bots ),
-                        implode( ', ', $blocked_names )
-                    ),
-                    'fix_url' => $crawlers_url,
-                    'cost'    => $cost,
-                );
-            }
+            // The manager being enabled is the configuration portion. Do not
+            // inspect the selected policy here: blocking training is a valid
+            // licensing choice, and blocking search can be deliberate too.
+            $crawler_score += 60;
 
             global $wpdb;
             $table = $wpdb->prefix . 'asgm_crawler_log';
@@ -1781,6 +1724,14 @@ class API {
 
         $summary['stale'] = $stale;
 
+        // A full manual pass can continue in the background on a large site.
+        // Expose the remaining count on the normal summary response so the
+        // dashboard can keep reporting real progress instead of declaring the
+        // scan finished after only the synchronous first chunk.
+        $queue = get_option( Answer_Density::QUEUE_OPT, array() );
+        $summary['scan_remaining']   = is_array( $queue ) ? count( $queue ) : 0;
+        $summary['scan_in_progress'] = $summary['scan_remaining'] > 0;
+
         // Hydrate the weakest list with title + permalink so the dashboard
         // doesn't have to do N round-trips.
         if ( ! empty( $summary['weakest'] ) && is_array( $summary['weakest'] ) ) {
@@ -1837,8 +1788,13 @@ class API {
      * Fix links right after a re-scan.
      */
     public function scan_all_answer_density() {
-        Answer_Density::scan_all_posts();
-        return $this->get_answer_density_summary();
+        $scan     = Answer_Density::scan_all_posts();
+        $response = $this->get_answer_density_summary();
+        $data     = $response->get_data();
+        if ( isset( $scan['scan_progress'] ) ) {
+            $data['scan_progress'] = $scan['scan_progress'];
+        }
+        return rest_ensure_response( $data );
     }
 
     /**
@@ -3814,6 +3770,22 @@ HARD RULES
         $mode  = sanitize_key( (string) ( $request->get_param( 'mode' ) ?? 'batch' ) );
         $state = ( 'start' === $mode ) ? Content_Health::start_scan() : Content_Health::run_batch();
         return rest_ensure_response( array_merge( array( 'success' => true ), $state ) );
+    }
+
+    /** GET /content-health/details, one paginated issue or duplicate set. */
+    public function get_content_health_details( \WP_REST_Request $request ) {
+        $cluster = $request->get_param( 'cluster' );
+        $result  = Content_Health::group_detail(
+            sanitize_key( (string) $request->get_param( 'group' ) ),
+            max( 1, absint( $request->get_param( 'page' ) ) ),
+            min( 50, max( 1, absint( $request->get_param( 'per_page' ) ) ) ),
+            null === $cluster ? null : (int) $cluster,
+            sanitize_text_field( (string) $request->get_param( 'search' ) )
+        );
+        if ( is_wp_error( $result ) ) {
+            return $result;
+        }
+        return rest_ensure_response( $result );
     }
 
     // -----------------------------------------------------------------------

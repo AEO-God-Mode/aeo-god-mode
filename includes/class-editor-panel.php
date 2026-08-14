@@ -79,7 +79,10 @@ class EditorPanel {
         // Check cache first.
         if ( ! $force ) {
             $cached = get_post_meta( $post_id, '_asgm_editor_panel_gaps', true );
-            if ( ! empty( $cached ) && is_array( $cached ) ) {
+            if ( ! empty( $cached )
+                && is_array( $cached )
+                && isset( $cached['score_version'] )
+                && ContentGaps::SCORE_VERSION === (int) $cached['score_version'] ) {
                 $cached['cached'] = true;
                 return rest_ensure_response( $cached );
             }

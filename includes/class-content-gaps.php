@@ -16,6 +16,9 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class ContentGaps {
 
+    /** Version of the scoring contract stored in editor-panel caches. */
+    const SCORE_VERSION = 2;
+
     /**
      * Get cached scan results.
      *
@@ -335,24 +338,35 @@ class ContentGaps {
             }
         }
 
-        // Calculate gap score with weighted issue types.
+        // Calculate the page-health score from confirmed problems only. Product
+        // opportunities (for example, generating an AEO title or running an AI
+        // analysis) remain useful actions, but must never lower a page's score or
+        // masquerade as a failed check.
         $weights = array(
             'thin_content'           => 25,
             'no_schema'              => 20,
             'schema_errors'          => 15,
             'no_meta_description'    => 15,
             'aeo_weak'               => 12,
-            'faq_opportunity'        => 8,
-            'howto_opportunity'      => 8,
-            'content_improvements'   => 5,
             'schema_warnings'        => 3,
-            'no_speakable'           => 2,
-            'no_llms_desc'           => 2,
         );
-        $gap_score = 0;
-        foreach ( $issues as $issue ) {
-            $gap_score += isset( $weights[ $issue['type'] ] ) ? $weights[ $issue['type'] ] : 10;
+
+        $gap_score         = 0;
+        $issue_count       = 0;
+        $opportunity_count = 0;
+        foreach ( $issues as &$issue ) {
+            $impact                   = isset( $weights[ $issue['type'] ] ) ? $weights[ $issue['type'] ] : 0;
+            $issue['score_impact']    = $impact;
+            $issue['counts_as_issue'] = $impact > 0;
+            $gap_score               += $impact;
+
+            if ( $impact > 0 ) {
+                $issue_count++;
+            } else {
+                $opportunity_count++;
+            }
         }
+        unset( $issue );
 
         $gap_score = min( 100, $gap_score );
 
@@ -458,8 +472,11 @@ class ContentGaps {
             'url'               => get_permalink( $post ),
             'post_type'         => $post->post_type,
             'word_count'        => $wc,
+            'score_version'     => self::SCORE_VERSION,
             'gap_score'         => $gap_score,
             'gap_count'         => count( $issues ),
+            'issue_count'       => $issue_count,
+            'opportunity_count' => $opportunity_count,
             'issues'            => $issues,
             'applicable_checks' => $applicable,
             'details'           => $details,
@@ -1268,6 +1285,32 @@ class ContentGaps {
      * @return bool
      */
     private function has_definitive_answer_structure( $content ) {
-        return (bool) preg_match( '/<h[23][^>]*>.*?<\/h[23]>\s*<p>/si', $content );
+        // Use the same detector that powers Answer Density when a question-shaped
+        // heading exists. This prevents one panel from saying "direct" while the
+        // other says "no answer structure" for the exact same opener.
+        if ( class_exists( '\\AISEOGodMode\\Answer_Density' ) ) {
+            $headings = Answer_Density::find_question_headings( $content );
+            foreach ( $headings as $heading ) {
+                $body = Answer_Density::extract_after_heading(
+                    $content,
+                    $heading['end'],
+                    $heading['level']
+                );
+                $classification = Answer_Density::classify_answer( $body );
+                if ( in_array( $classification['classification'], array( 'direct', 'buried' ), true ) ) {
+                    return true;
+                }
+            }
+        }
+
+        // Gutenberg stores block delimiters between the closing heading and the
+        // opening paragraph. The former `\s*<p>` check treated those comments as
+        // content and falsely failed valid answer-first posts after a block edit.
+        $without_block_comments = preg_replace( '/<!--\s*\/?wp:[\s\S]*?-->/', '', (string) $content );
+
+        return (bool) preg_match(
+            '/<h[23]\b[^>]*>.*?<\/h[23]>\s*<p\b[^>]*>/si',
+            $without_block_comments
+        );
     }
 }

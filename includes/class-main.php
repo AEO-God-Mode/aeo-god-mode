@@ -101,6 +101,10 @@ class Main {
      */
     private function init_hooks() {
         add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
+        // Reassert the public product identity after third-party/older add-ons
+        // have registered their menu filters. This protects mixed-version
+        // updates without knowing anything about a paid tier.
+        add_action( 'admin_menu', array( $this, 'enforce_admin_product_identity' ), PHP_INT_MAX );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
         add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
 
@@ -172,11 +176,6 @@ class Main {
             add_action( 'edit_user_profile_update', array( 'AISEOGodMode\EEAT', 'save_user_fields' ) );
         }
 
-        // Bulk Actions (Pro only)
-        if ( License::is_pro() && class_exists( 'AISEOGodMode\BulkActions' ) ) {
-            \AISEOGodMode\BulkActions::init();
-        }
-
         // Plugin action links
         add_filter( 'plugin_action_links_' . ASGM_PLUGIN_BASENAME, array( $this, 'add_plugin_action_links' ) );
     }
@@ -189,8 +188,11 @@ class Main {
      */
     public function add_plugin_action_links( $links ) {
         $setup_link = '<a href="' . esc_url( admin_url( 'admin.php?page=aeo-god-mode#/wizard' ) ) . '">' . __( 'Setup Wizard', 'aeo-god-mode' ) . '</a>';
-        $docs_link  = '<a href="https://aeogodmode.io/docs/" target="_blank">' . __( 'Documentation', 'aeo-god-mode' ) . '</a>';
-        array_unshift( $links, $setup_link, $docs_link );
+        $docs_url   = apply_filters( 'asgm_documentation_url', 'https://aeogodmode.io/docs/' );
+        $support_url = apply_filters( 'asgm_support_url', 'https://aeogodmode.io/support/' );
+        $docs_link  = '<a href="' . esc_url( $docs_url ) . '" target="_blank" rel="noopener noreferrer">' . __( 'Documentation', 'aeo-god-mode' ) . '</a>';
+        $support_link = '<a href="' . esc_url( $support_url ) . '" target="_blank" rel="noopener noreferrer">' . __( 'Support', 'aeo-god-mode' ) . '</a>';
+        array_unshift( $links, $setup_link, $docs_link, $support_link );
         return $links;
     }
 
@@ -268,6 +270,30 @@ class Main {
         
         // We do not add submenu pages here. The React App controls all sub-navigation via its own 
         // custom dark-mode sidebar UI. This prevents redundant, confusing sidebars in the WordPress admin.
+    }
+
+    /**
+     * Keep the AEO God Mode product name stable during mixed-version updates.
+     *
+     * Older Agency add-ons renamed this menu after Free registered it. The
+     * shared plugin owns the menu, so it also owns its final identity.
+     *
+     * @return void
+     */
+    public function enforce_admin_product_identity() {
+        if ( empty( $GLOBALS['menu'] ) || ! is_array( $GLOBALS['menu'] ) ) {
+            return;
+        }
+
+        foreach ( $GLOBALS['menu'] as $index => $item ) {
+            if ( isset( $item[2] ) && 'aeo-god-mode' === $item[2] ) {
+                $GLOBALS['menu'][ $index ][0] = __( 'AEO', 'aeo-god-mode' );
+                if ( isset( $GLOBALS['menu'][ $index ][3] ) ) {
+                    $GLOBALS['menu'][ $index ][3] = __( 'AEO God Mode', 'aeo-god-mode' );
+                }
+                break;
+            }
+        }
     }
 
     /**

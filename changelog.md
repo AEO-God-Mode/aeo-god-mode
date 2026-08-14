@@ -5,6 +5,29 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.37
+
+- Humanize provider errors and fix Agency price calculator
+
+## 1.6.36
+
+- Fix editor scoring and add reusable Agency seats
+
+## 1.6.35
+
+- Secure Agency account access and co-branding
+- Keep AEO God Mode identity across client sites and updates
+
+## 1.6.34
+
+- Make every Link Health URL openable for manual checks
+- Treat crawler access rules as owner choices rather than setup failures
+- Turn Content Health into a ranked action dashboard with a paginated full-report workspace
+- Give every tier clear Content Health buttons for bulk title and description fixes
+- Remove the retired duplicate metadata actions from Posts, Pages, Products and Downloads
+- Make Answer Density re-scans report progress, completion and errors, and explain pages that are not scored
+- Show the full target heading and its H2/H3 level before an answer-first rewrite
+
 ## 1.6.33
 
 - Link Health now follows redirects and separates broken links from sites that block automated checks
