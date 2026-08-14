@@ -23,6 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class AffiliateBadge {
 
 	const VENDOR_BASE   = 'https://aeogodmode.io/ref/';
+	const VENDOR_HOME   = 'https://aeogodmode.io/';
 	const DEFAULT_LABEL = 'AI Search Optimized by AEO God Mode';
 
 	/** @var bool Badge already output this request (prevents double render). */
@@ -83,7 +84,11 @@ class AffiliateBadge {
 			return;
 		}
 		$c = $this->get_config();
-		if ( ! $c['enabled'] || '' === $c['id'] || 'footer' !== $c['placement'] ) {
+		// Deliberately NOT gated on having an affiliate ID. Someone who wants to
+		// credit us should be able to, whether or not they have signed up to the
+		// affiliate programme yet. Without an ID it is simply a plain link with
+		// no referral attribution, which costs them nothing and still helps us.
+		if ( ! $c['enabled'] || 'footer' !== $c['placement'] ) {
 			return;
 		}
 		// build_html() escapes every dynamic part.
@@ -101,7 +106,7 @@ class AffiliateBadge {
 			return '';
 		}
 		$c = $this->get_config();
-		if ( ! $c['enabled'] || '' === $c['id'] || 'off' === $c['placement'] ) {
+		if ( ! $c['enabled'] || 'off' === $c['placement'] ) {
 			return '';
 		}
 		$atts = shortcode_atts( array( 'style' => $c['style'] ), $atts, 'aeo_badge' );
@@ -120,13 +125,20 @@ class AffiliateBadge {
 	private function build_html( $c ) {
 		self::$rendered = true;
 
+		// With an ID the link goes through the referral path so the click can be
+		// attributed. Without one it points at the plain homepage: still a real
+		// link, just no commission, rather than no badge at all.
+		$base = ( '' !== $c['id'] )
+			? self::VENDOR_BASE . rawurlencode( $c['id'] ) . '/'
+			: self::VENDOR_HOME;
+
 		$url = add_query_arg(
 			array(
 				'campaign'   => 'badge',
 				'utm_source' => 'badge',
 				'utm_medium' => 'plugin',
 			),
-			self::VENDOR_BASE . rawurlencode( $c['id'] ) . '/'
+			$base
 		);
 
 		$bolt = '<svg class="aeo-godmode-badge__mark" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>';

@@ -673,6 +673,18 @@ class API {
                 ),
             ) );
 
+            // ---- Consensus (Pro: corroboration view + content kits) ----
+            register_rest_route( self::NAMESPACE, '/citations/consensus', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_citation_consensus' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+            register_rest_route( self::NAMESPACE, '/citations/consensus-kit', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'build_consensus_kit' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             // ---- AI Referrals ----
             register_rest_route( self::NAMESPACE, '/referrals', array(
                 'methods'             => 'GET',
@@ -758,6 +770,52 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
         }
+
+        // =====================================================================
+        // Free diagnosis routes. Everything below is outside the
+        // is_pro_build() block above on purpose: these routes back dashboard
+        // cards that render for every install, and their handlers only ever
+        // touch classes that ship inside this plugin. A Free-only site gets
+        // is_pro_build() === false from the License stub, so anything a Free
+        // feature needs that sits inside that block is a guaranteed 404 for
+        // every Free user. Gate Pro DATA inside a response, never the route.
+        // =====================================================================
+
+        // ---- AI crawler accessibility matrix ----
+        register_rest_route( self::NAMESPACE, '/crawler-access', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_crawler_access' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Link Health (broken links + one-click fixes) ----
+        register_rest_route( self::NAMESPACE, '/link-health', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_link_health' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+        register_rest_route( self::NAMESPACE, '/link-health/scan', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'run_link_health_scan' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+        register_rest_route( self::NAMESPACE, '/link-health/fix', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'fix_link_health' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        // ---- Content Health (H1s, descriptions, titles, alt text) ----
+        register_rest_route( self::NAMESPACE, '/content-health', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_content_health' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+        register_rest_route( self::NAMESPACE, '/content-health/scan', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'run_content_health_scan' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
 
         // ---- AI Plugin Manifest ----
         register_rest_route( self::NAMESPACE, '/ai-plugin', array(
@@ -1857,9 +1915,9 @@ class API {
     }
 
     /**
-     * Apply an AI rewrite to the post content. Replaces the FIRST paragraph
-     * after the named heading. Saves as a draft revision so the writer
-     * reviews before publishing — never directly overwrites a published post.
+     * Apply an AI rewrite to the saved post content. Replaces the FIRST
+     * paragraph after the named heading, persists through WordPress so its
+     * normal revision hooks run, then re-scores the saved result immediately.
      */
     public function apply_rewrite( $request ) {
         if ( ! \AISEOGodMode\License::is_pro() ) {
@@ -1877,6 +1935,9 @@ class API {
         $post = get_post( $post_id );
         if ( ! $post ) {
             return new \WP_Error( 'no_post', 'Post not found.', array( 'status' => 404 ) );
+        }
+        if ( ! current_user_can( 'edit_post', $post_id ) ) {
+            return new \WP_Error( 'forbidden', 'You cannot edit this post.', array( 'status' => 403 ) );
         }
 
         $content = (string) $post->post_content;
@@ -1960,14 +2021,27 @@ class API {
 
         $new_content = substr( $content, 0, $cursor ) . $new_p . substr( $content, $cursor + $p_full_length );
 
-        // Return the rewritten content for the editor to load in-memory. We do
-        // NOT save server-side: the block editor owns the content and the author
-        // saves after reviewing. Saving here would leave the editor showing the
-        // old opener, and the next editor save would overwrite our change.
+        // This action lives on the Dashboard, not inside the block editor.
+        // Returning content without saving made the button report success while
+        // changing nothing. Persist through core so revisions, caches and normal
+        // save hooks behave exactly like any other WordPress content update.
+        $updated = wp_update_post( wp_slash( array(
+            'ID'           => $post_id,
+            'post_content' => $new_content,
+        ) ), true );
+        if ( is_wp_error( $updated ) ) {
+            return new \WP_Error( 'save_failed', $updated->get_error_message(), array( 'status' => 500 ) );
+        }
+
+        $scan    = Answer_Density::scan_post( $post_id );
+        $summary = Answer_Density::refresh_summary();
+
         return rest_ensure_response( array(
             'success' => true,
             'post_id' => $post_id,
-            'content' => $new_content,
+            'saved'   => true,
+            'scan'    => $scan,
+            'summary' => $summary,
         ) );
     }
 
@@ -3645,6 +3719,101 @@ HARD RULES
             'success'     => true,
             'competitors' => $clean,
         ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Consensus (Pro)
+    // -----------------------------------------------------------------------
+
+    /** Pro gate for the consensus features (Citation Tracker is a Pro module). */
+    private function consensus_guard() {
+        if ( ! class_exists( '\AISEOGodMode\CitationTracker' ) || ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Consensus tools are part of the Pro Citation Tracker.' ), 403 );
+        }
+        return true;
+    }
+
+    /** GET /citations/consensus — per-query corroboration view, no charge. */
+    public function get_citation_consensus() {
+        $guard = $this->consensus_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $tracker = new CitationTracker();
+        return rest_ensure_response( array_merge( array( 'success' => true ), $tracker->consensus_overview() ) );
+    }
+
+    /** POST /citations/consensus-kit — {query}. 2 credits via the proxy. */
+    public function build_consensus_kit( \WP_REST_Request $request ) {
+        $guard = $this->consensus_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $tracker = new CitationTracker();
+        $result  = $tracker->consensus_kit( sanitize_text_field( (string) $request->get_param( 'query' ) ) );
+        if ( is_wp_error( $result ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => $result->get_error_message() ), 400 );
+        }
+        return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
+    }
+
+    /** GET /crawler-access — which AI crawlers can reach this site. */
+    public function get_crawler_access() {
+        return rest_ensure_response( array_merge( array( 'success' => true ), Crawler_Access::matrix() ) );
+    }
+
+    // -----------------------------------------------------------------------
+    // Link Health
+    // -----------------------------------------------------------------------
+
+    /** GET /link-health — stored scan state, no side effects. */
+    public function get_link_health() {
+        return rest_ensure_response( array_merge( array( 'success' => true ), Link_Health::public_state() ) );
+    }
+
+    /**
+     * POST /link-health/scan — body {mode:"start"} harvests the queue,
+     * {mode:"batch"} checks the next batch. The client loops batches until
+     * status is done, so shared hosting never sees a long request.
+     */
+    public function run_link_health_scan( \WP_REST_Request $request ) {
+        $mode  = sanitize_key( (string) ( $request->get_param( 'mode' ) ?? 'batch' ) );
+        $state = ( 'start' === $mode ) ? Link_Health::start_scan() : Link_Health::run_batch();
+        return rest_ensure_response( array_merge( array( 'success' => true ), $state ) );
+    }
+
+    /** POST /link-health/fix — {url, post_id, action: unlink|redirect|ignore, new_url?}. */
+    public function fix_link_health( \WP_REST_Request $request ) {
+        $result = Link_Health::apply_fix(
+            esc_url_raw( (string) $request->get_param( 'url' ) ),
+            (int) $request->get_param( 'post_id' ),
+            sanitize_key( (string) $request->get_param( 'action' ) ),
+            (string) ( $request->get_param( 'new_url' ) ?? '' )
+        );
+        if ( is_wp_error( $result ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => $result->get_error_message() ), 400 );
+        }
+        return rest_ensure_response( $result );
+    }
+
+    // -----------------------------------------------------------------------
+    // Content Health
+    // -----------------------------------------------------------------------
+
+    /** GET /content-health, stored scan state, no side effects. */
+    public function get_content_health() {
+        return rest_ensure_response( array_merge( array( 'success' => true ), Content_Health::public_state() ) );
+    }
+
+    /**
+     * POST /content-health/scan. Body {mode:"start"} queues published posts
+     * and pages, {mode:"batch"} parses the next batch. Same client-driven loop
+     * as link health, so no single request ever runs long.
+     */
+    public function run_content_health_scan( \WP_REST_Request $request ) {
+        $mode  = sanitize_key( (string) ( $request->get_param( 'mode' ) ?? 'batch' ) );
+        $state = ( 'start' === $mode ) ? Content_Health::start_scan() : Content_Health::run_batch();
+        return rest_ensure_response( array_merge( array( 'success' => true ), $state ) );
     }
 
     // -----------------------------------------------------------------------

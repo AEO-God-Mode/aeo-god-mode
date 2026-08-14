@@ -4,7 +4,7 @@ Tags: answer engine optimization, aeo, ai seo, llms.txt, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.28
+Stable tag: 1.6.33
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -306,6 +306,31 @@ Terms of service: <https://aeogodmode.io/terms>
 
 
 == Changelog ==
+
+= 1.6.33 =
+* Link Health now follows redirects and separates broken links from sites that block automated checks
+* Hidden Link Health results stay hidden and can be opened manually
+* Crawler access screens now share the full crawler catalogue and report No rule honestly
+* Answer-first rewrites now save reliably
+* Content Health now reads synced patterns and ignores non-rendered fallback markup
+
+= 1.6.32 =
+* Show bot-blocked links as not tested
+* Keep Link Health headlines evidence-based
+
+= 1.6.31 =
+* Move off-site citation actions below tracked results
+* Simplify the next-step panel and require transparent community drafts
+
+= 1.6.30 =
+* Make Link Health non-destructive for unverified URLs
+* clarify AI crawler robots status
+
+= 1.6.29 =
+* Content Health and Link Health checks
+* IndexNow ownership verification
+* crawler access improvements
+* affiliate badge fixes
 
 = 1.6.28 =
 * Smart Internal Linking finds links again: a scoring bug was quietly rejecting good suggestions before you ever saw them

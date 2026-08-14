@@ -5,6 +5,36 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.33
+
+- Link Health now follows redirects and separates broken links from sites that block automated checks
+- Hidden Link Health results stay hidden and can be opened manually
+- Crawler access screens now share the full crawler catalogue and report No rule honestly
+- Answer-first rewrites now save reliably
+- Content Health now reads synced patterns and ignores non-rendered fallback markup
+
+## 1.6.32
+
+- Show bot-blocked links as not tested
+- Keep Link Health headlines evidence-based
+
+## 1.6.31
+
+- Move off-site citation actions below tracked results
+- Simplify the next-step panel and require transparent community drafts
+
+## 1.6.30
+
+- Make Link Health non-destructive for unverified URLs
+- clarify AI crawler robots status
+
+## 1.6.29
+
+- Content Health and Link Health checks
+- IndexNow ownership verification
+- crawler access improvements
+- affiliate badge fixes
+
 ## 1.6.28
 
 - Smart Internal Linking finds links again: a scoring bug was quietly rejecting good suggestions before you ever saw them

@@ -50,6 +50,18 @@ class LLMS {
             }
             return $redirect_url;
         }, 10, 2 );
+
+        // The served file is cached in a day-long transient, so the per-post
+        // "llms.txt entry" toggle in the editor must bust it or the change
+        // sits invisible for up to 24 hours and the toggle reads as broken.
+        $bust_on_flag = function ( $meta_id, $post_id, $meta_key ) {
+            if ( '_asgm_disable_llms' === $meta_key || '_asgm_llms_description' === $meta_key ) {
+                delete_transient( 'asgm_llms_txt' );
+            }
+        };
+        add_action( 'updated_post_meta', $bust_on_flag, 10, 3 );
+        add_action( 'added_post_meta', $bust_on_flag, 10, 3 );
+        add_action( 'deleted_post_meta', $bust_on_flag, 10, 3 );
     }
 
     /**
@@ -662,6 +674,10 @@ class LLMS {
         $scored   = array();
         foreach ( $candidates as $post ) {
             if ( 'page' === $post->post_type && preg_match( $utility_slug, (string) $post->post_name ) ) {
+                continue;
+            }
+            // Per-post opt-out from llms.txt (editor sidebar toggle).
+            if ( get_post_meta( $post->ID, '_asgm_disable_llms', true ) ) {
                 continue;
             }
             $custom = get_post_meta( $post->ID, '_asgm_llms_description', true );

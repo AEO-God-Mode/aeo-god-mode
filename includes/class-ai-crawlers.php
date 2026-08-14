@@ -48,7 +48,17 @@ class AICrawlers {
         'FacebookBot'        => 'facebookexternalhit', // Link previews (not strictly AI).
 
         // Other.
-        'Amazonbot'          => 'Amazonbot',         // Amazon Alexa / AI services.
+        'Amzn-SearchBot'     => 'Amzn-SearchBot',    // Alexa / Rufus search experiences (not training).
+        'Amzn-User'          => 'Amzn-User',         // Amazon user-requested fetch.
+        'DuckAssistBot'      => 'DuckAssistBot',     // DuckDuckGo AI answers, real time.
+        'MistralAI-Index'    => 'MistralAI-Index',   // Mistral / Vibe search index.
+        'MistralAI-User'     => 'MistralAI-User',    // Mistral user-requested fetch.
+        'MistralAI-Training' => 'MistralAI-Training',// Mistral generative training.
+        'Meta-ExternalFetcher' => 'meta-externalfetcher', // Meta user-requested fetch.
+        'Googlebot'          => 'Googlebot',         // Google Search incl. AI Overviews.
+        'Bingbot'            => 'bingbot',           // Bing index, also used by Copilot.
+        'Applebot'           => 'Applebot',          // Siri, Spotlight and Safari search.
+        'Amazonbot'          => 'Amazonbot',         // General Amazon crawler; may train Amazon AI models.
         'Bytespider'         => 'Bytespider',        // ByteDance / TikTok AI training.
         'CCBot'              => 'CCBot',             // Common Crawl open dataset.
         'Cohere-AI'          => 'cohere-ai',         // Cohere enterprise AI training.

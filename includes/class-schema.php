@@ -40,6 +40,14 @@ class Schema {
             return;
         }
 
+        // Per-post opt-out (editor sidebar toggle). Some pages must never
+        // carry generated markup: a landing page a designer owns, a legal
+        // page, a page another plugin marks up. The kill switch is scoped to
+        // this post only and beats every automatic emitter below.
+        if ( is_singular() && get_post_meta( get_the_ID(), '_asgm_disable_schema', true ) ) {
+            return;
+        }
+
         $schemas = $this->generate_schemas( $settings );
 
         foreach ( $schemas as $schema ) {
@@ -121,8 +129,9 @@ class Schema {
             }
         }
 
-        // FAQ auto-detection (skip if Yoast or Rank Math handles it).
-        if ( is_singular() && ! $this->third_party_handles( 'FAQPage' ) ) {
+        // FAQ auto-detection (skip if Yoast or Rank Math handles it, or if the
+        // per-post FAQ toggle is off in the editor sidebar).
+        if ( is_singular() && ! $this->third_party_handles( 'FAQPage' ) && ! get_post_meta( get_the_ID(), '_asgm_disable_faq', true ) ) {
             $faq = $this->detect_faq_schema();
             if ( $faq ) {
                 $schemas[] = $faq;
@@ -536,23 +545,23 @@ class Schema {
      * @return array Person schema array.
      */
     private function build_author_schema( $author_id ) {
-        // When the Pro E-E-A-T module is emitting a standalone Person at wp_head
-        // priority 5, reference it by @id instead of inlining a duplicate Person
-        // here. Validators and AI engines treat the linked entities as one.
+        // Reference the Person node that was actually published for this
+        // author, whether the E-E-A-T module emitted it or merged our fields
+        // into Yoast's or Rank Math's. A reference to an @id that never reached
+        // the page is worse than no reference at all: it points an engine at
+        // an entity that does not exist. So we ask what got emitted rather than
+        // re-deriving the answer from plugin constants and settings, which is
+        // how this reference came to dangle in the first place.
         if ( class_exists( '\\AISEOGodMode\\EEAT' ) ) {
-            $eeat_will_emit = true;
-            if ( defined( 'WPSEO_VERSION' ) || defined( 'RANK_MATH_VERSION' ) || class_exists( '\\RankMath\\Paper\\Paper' ) ) {
-                $resolutions = get_option( 'asgm_schema_resolutions', array() );
-                $person_res  = isset( $resolutions['Person'] ) ? $resolutions['Person'] : 'ours';
-                if ( 'theirs' === $person_res ) {
-                    $eeat_will_emit = false;
-                }
+            $emitted_id = \AISEOGodMode\EEAT::author_person_id( $author_id );
+            if ( '' !== $emitted_id ) {
+                return array( '@id' => $emitted_id );
             }
 
+            // Nothing published a node, which includes every off-page caller
+            // (REST previews, the validator, author archives). Inline the full
+            // Person so the author is still described, self-contained.
             $person = \AISEOGodMode\EEAT::build_person_schema( $author_id );
-            if ( $eeat_will_emit && ! empty( $person ) && ! empty( $person['@id'] ) ) {
-                return array( '@id' => $person['@id'] );
-            }
             if ( ! empty( $person ) && ! empty( $person['name'] ) ) {
                 unset( $person['@context'] );
                 return $person;

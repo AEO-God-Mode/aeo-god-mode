@@ -148,6 +148,29 @@ class Detector {
             $imported[] = 'instagram';
         }
 
+        // Parity with the Yoast importer: logo, site name and the wider profile
+        // list all feed the same schema, so a Rank Math user should not end up
+        // with a thinner entity than a Yoast user.
+        if ( ! empty( $titles['knowledgegraph_logo'] ) ) {
+            $settings['business']['logo'] = esc_url_raw( $titles['knowledgegraph_logo'] );
+            $imported[] = 'logo';
+        }
+        if ( ! empty( $titles['website_name'] ) ) {
+            $settings['business']['site_name'] = sanitize_text_field( $titles['website_name'] );
+            $imported[] = 'site_name';
+        }
+        $rm_extra = array(
+            'social_url_youtube'   => 'youtube',
+            'social_url_pinterest' => 'pinterest',
+            'social_url_wikipedia' => 'wikipedia',
+        );
+        foreach ( $rm_extra as $rm_key => $ours ) {
+            if ( ! empty( $titles[ $rm_key ] ) ) {
+                $settings['business']['social'][ $ours ] = esc_url_raw( $titles[ $rm_key ] );
+                $imported[] = $ours;
+            }
+        }
+
         if ( ! empty( $titles['knowledgegraph_type'] ) ) {
             $type_map = array(
                 'company' => 'Organization',
@@ -201,6 +224,68 @@ class Detector {
         if ( ! empty( $yoast_social['linkedin_url'] ) ) {
             $settings['business']['social']['linkedin'] = esc_url_raw( $yoast_social['linkedin_url'] );
             $imported[] = 'linkedin';
+        }
+
+        // Site representation: is this site an Organization or a Person? It is
+        // the single most consequential thing Yoast asks in its setup, because
+        // it decides which entity the whole site resolves to. We already import
+        // the Rank Math equivalent, so omitting Yoast's meant a Yoast user
+        // re-answered a question they had already answered.
+        if ( ! empty( $yoast_titles['company_or_person'] ) ) {
+            $type_map = array(
+                'company' => 'Organization',
+                'person'  => 'Person',
+            );
+            $rep = $yoast_titles['company_or_person'];
+            if ( isset( $type_map[ $rep ] ) ) {
+                $settings['business']['type'] = $type_map[ $rep ];
+                $imported[] = 'business_type';
+            }
+        }
+
+        // Site name for WebSite schema. Yoast keeps this separate from the
+        // organization name and the two are often deliberately different.
+        if ( ! empty( $yoast_titles['website_name'] ) ) {
+            $settings['business']['site_name'] = sanitize_text_field( $yoast_titles['website_name'] );
+            $imported[] = 'site_name';
+        }
+
+        // Organization logo, used by Organization schema.
+        if ( ! empty( $yoast_titles['company_logo'] ) ) {
+            $settings['business']['logo'] = esc_url_raw( $yoast_titles['company_logo'] );
+            $imported[] = 'logo';
+        }
+
+        // The rest of Yoast's profile list. These become sameAs, which is how a
+        // machine confirms this entity is the same one it has seen elsewhere.
+        // Wikipedia especially: a corroborating third-party source carries far
+        // more weight than anything the site says about itself.
+        $extra_social = array(
+            'youtube_url'   => 'youtube',
+            'pinterest_url' => 'pinterest',
+            'wikipedia_url' => 'wikipedia',
+            'mastodon_url'  => 'mastodon',
+        );
+        foreach ( $extra_social as $yoast_key => $ours ) {
+            if ( ! empty( $yoast_social[ $yoast_key ] ) ) {
+                $settings['business']['social'][ $ours ] = esc_url_raw( $yoast_social[ $yoast_key ] );
+                $imported[] = $ours;
+            }
+        }
+
+        // Yoast 20+ keeps any additional profiles in a free-form list.
+        if ( ! empty( $yoast_social['other_social_urls'] ) && is_array( $yoast_social['other_social_urls'] ) ) {
+            $others = array();
+            foreach ( $yoast_social['other_social_urls'] as $u ) {
+                $u = esc_url_raw( (string) $u );
+                if ( '' !== $u ) {
+                    $others[] = $u;
+                }
+            }
+            if ( ! empty( $others ) ) {
+                $settings['business']['social']['other'] = $others;
+                $imported[] = 'other_profiles';
+            }
         }
 
         update_option( 'asgm_settings', $settings );

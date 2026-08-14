@@ -81,6 +81,9 @@ class Main {
         require_once $includes . 'class-metadata-writer.php';
         require_once $includes . 'class-metadata-generator.php';
         require_once $includes . 'class-answer-density.php';
+        require_once $includes . 'class-link-health.php';
+        require_once $includes . 'class-content-health.php';
+        require_once $includes . 'class-crawler-access.php';
         require_once $includes . 'class-bulk-meta.php';
         require_once $includes . 'class-okf.php';
         require_once $includes . 'class-affiliate-badge.php';
@@ -112,8 +115,18 @@ class Main {
         add_action( 'admin_notices', array( $this, 'maybe_show_pro_migration_notice' ) );
 
         // Front-end hooks — schema, meta, crawler logging.
-        add_action( 'wp_head', array( $this, 'render_frontend_output' ), 1 );
+        //
+        // Meta stays at priority 1 because it installs a pre_get_document_title
+        // filter, which is only useful before core renders the title tag.
+        //
+        // Schema waits until 9 so Yoast and Rank Math, both at priority 1, have
+        // already published their graph. Our author reference then points at
+        // the Person node that exists on the page instead of one we predicted
+        // from a plugin constant. See EEAT::author_person_id().
+        add_action( 'wp_head', array( $this, 'render_native_meta' ), 1 );
+        add_action( 'wp_head', array( $this, 'render_frontend_output' ), 9 );
         add_action( 'init', array( $this, 'boot_modules' ) );
+        add_action( 'init', array( $this, 'register_post_meta_fields' ) );
 
         // Daily site-score refresh. Keeps the cached AEO score fresh for the
         // agency console even when nobody opens the dashboard.
@@ -419,6 +432,29 @@ class Main {
     }
 
     /**
+     * Register the per-post output kill switches so the block editor can
+     * read and write them over REST. Each one turns OFF a single automatic
+     * front-end emitter for that post only: generated schema, the FAQPage
+     * block within it, or the post's llms.txt entry. Booleans, off by
+     * default, editable by anyone who can edit the post.
+     */
+    public function register_post_meta_fields() {
+        foreach ( array( '_asgm_disable_schema', '_asgm_disable_faq', '_asgm_disable_llms' ) as $key ) {
+            foreach ( array( 'post', 'page' ) as $type ) {
+                register_post_meta( $type, $key, array(
+                    'type'          => 'boolean',
+                    'single'        => true,
+                    'default'       => false,
+                    'show_in_rest'  => true,
+                    'auth_callback' => function ( $allowed, $meta_key, $post_id ) {
+                        return current_user_can( 'edit_post', $post_id );
+                    },
+                ) );
+            }
+        }
+    }
+
+    /**
      * Schedule the daily site-score refresh once.
      */
     public function schedule_site_score_refresh() {
@@ -505,8 +541,18 @@ class Main {
         if ( isset( $this->modules['aeo'] ) ) {
             $this->modules['aeo']->render();
         }
+    }
 
-        // Render native ASGM meta tags when no SEO plugin handles them.
+    /**
+     * Render native ASGM meta tags when no SEO plugin handles them.
+     */
+    public function render_native_meta() {
+        $settings = get_option( 'asgm_settings', array() );
+
+        if ( ! empty( $settings['safe_mode'] ) ) {
+            return;
+        }
+
         MetadataWriter::render_native_meta();
     }
 

@@ -155,7 +155,7 @@ class MetadataWriter {
     /**
      * Render native ASGM meta tags in wp_head when no SEO plugin is active.
      *
-     * Called from the Main class render_frontend_output method.
+     * Called from the Main class render_native_meta method.
      */
     public static function render_native_meta() {
         if ( self::detect_seo_plugin() !== self::SEO_NATIVE ) {

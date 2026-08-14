@@ -17,43 +17,26 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Robots {
 
     /**
-     * AI crawlers managed by this plugin.
+     * Use the same capability catalogue as the dashboard access matrix.
+     * Keeping a second hand-written bot list is how the management page fell
+     * behind the dashboard and omitted Googlebot, Bingbot and Applebot.
      *
-     * @var array
+     * @return array<string,array>
      */
-    private $ai_bots = array(
-        // OpenAI (3).
-        'GPTBot'             => array( 'name' => 'GPTBot (Training)',              'default' => 'allow' ),
-        'OAI-SearchBot'      => array( 'name' => 'OAI-SearchBot (ChatGPT Search)', 'default' => 'allow' ),
-        'ChatGPT-User'       => array( 'name' => 'ChatGPT-User (Browsing)',        'default' => 'allow' ),
-
-        // Perplexity (2).
-        'PerplexityBot'      => array( 'name' => 'PerplexityBot (Indexing)',       'default' => 'allow' ),
-        'Perplexity-User'    => array( 'name' => 'Perplexity-User (Browsing)',     'default' => 'allow' ),
-
-        // Anthropic (3 + 1 deprecated).
-        'ClaudeBot'          => array( 'name' => 'ClaudeBot (Training)',           'default' => 'allow' ),
-        'Claude-SearchBot'   => array( 'name' => 'Claude-SearchBot (Search)',      'default' => 'allow' ),
-        'Claude-User'        => array( 'name' => 'Claude-User (Browsing)',         'default' => 'allow' ),
-        'Anthropic-AI'       => array( 'name' => 'Anthropic-AI (Deprecated)',      'default' => 'allow' ),
-
-        // Google.
-        'Google-Extended'    => array( 'name' => 'Google-Extended (AI Training)',   'default' => 'allow' ),
-
-        // Apple.
-        'Applebot-Extended'  => array( 'name' => 'Applebot-Extended (AI Training)','default' => 'allow' ),
-
-        // Meta.
-        'Meta-ExternalAgent' => array( 'name' => 'Meta-ExternalAgent (LLaMA)',     'default' => 'allow' ),
-        'FacebookBot'        => array( 'name' => 'FacebookBot (Link Previews)',    'default' => 'allow' ),
-
-        // Other.
-        'Amazonbot'          => array( 'name' => 'Amazonbot (Alexa/AI)',           'default' => 'allow' ),
-        'Bytespider'         => array( 'name' => 'Bytespider (TikTok/ByteDance)', 'default' => 'allow' ),
-        'CCBot'              => array( 'name' => 'CCBot (Common Crawl)',           'default' => 'allow' ),
-        'Cohere-AI'          => array( 'name' => 'Cohere-AI (Enterprise AI)',      'default' => 'allow' ),
-        'DeepSeekBot'        => array( 'name' => 'DeepSeekBot (DeepSeek AI)',      'default' => 'allow' ),
-    );
+    private function ai_bots() {
+        $bots = array();
+        foreach ( Crawler_Access::definitions() as $ua => $def ) {
+            $bots[ $ua ] = array(
+                'name'       => $def['label'],
+                'note'       => $def['note'],
+                'group'      => $def['group'],
+                'protected'  => ! empty( $def['protected'] ),
+                'deprecated' => ! empty( $def['flags']['deprecated'] ),
+                'default'    => 'allow',
+            );
+        }
+        return $bots;
+    }
 
     /**
      * Constructor — hooks into WordPress robots.txt filter.
@@ -71,9 +54,10 @@ class Robots {
         $saved_rules  = get_option( 'asgm_robots_rules', array() );
         $current_txt  = $this->get_current_robots_txt();
         $other_plugin = $this->detect_other_robots_manager();
+        $ai_bots      = $this->ai_bots();
 
         $bots = array();
-        foreach ( $this->ai_bots as $ua => $info ) {
+        foreach ( $ai_bots as $ua => $info ) {
             $status = 'not_set';
             if ( isset( $saved_rules[ $ua ] ) ) {
                 $status = $saved_rules[ $ua ];
@@ -83,11 +67,16 @@ class Robots {
                 'name'    => $info['name'],
                 'status'  => $status,
                 'default' => $info['default'],
+                'note'       => $info['note'],
+                'group'      => $info['group'],
+                'protected'  => $info['protected'],
+                'deprecated' => $info['deprecated'],
             );
         }
 
         return array(
             'bots'                  => $bots,
+            'groups'                => Crawler_Access::groups(),
             'current_robots_txt'    => $current_txt,
             'other_plugin_managing' => $other_plugin,
         );
@@ -100,13 +89,28 @@ class Robots {
      * @return array
      */
     public function save_config( $data ) {
-        $rules = array();
+        $rules   = array();
+        $ai_bots = $this->ai_bots();
 
         if ( isset( $data['bots'] ) && is_array( $data['bots'] ) ) {
             foreach ( $data['bots'] as $ua => $status ) {
-                if ( isset( $this->ai_bots[ $ua ] ) ) {
-                    $rules[ sanitize_text_field( $ua ) ] = sanitize_text_field( $status );
+                if ( ! isset( $ai_bots[ $ua ] ) || ! empty( $ai_bots[ $ua ]['protected'] ) ) {
+                    continue;
                 }
+                // Only the three real states are storable. An unrecognised
+                // value used to be saved verbatim, where the robots.txt writer
+                // ignored it (writing no directive) while other readers treated
+                // it as a decision. Silent disagreement between two parts of
+                // the plugin about whether a crawler is blocked is exactly the
+                // bug class worth refusing at the door.
+                $status = sanitize_text_field( $status );
+                if ( ! in_array( $status, array( 'allow', 'disallow', 'not_set' ), true ) ) {
+                    continue;
+                }
+                if ( 'not_set' === $status ) {
+                    continue; // absent means not set; do not store noise
+                }
+                $rules[ sanitize_text_field( $ua ) ] = $status;
             }
         }
 
@@ -136,8 +140,12 @@ class Robots {
 
         $rules = get_option( 'asgm_robots_rules', array() );
         $bot_lines = array();
+        $ai_bots = $this->ai_bots();
 
-        foreach ( $this->ai_bots as $ua => $info ) {
+        foreach ( $ai_bots as $ua => $info ) {
+            if ( ! empty( $info['protected'] ) ) {
+                continue;
+            }
             // Use the saved rule if it exists, otherwise treat as not_set.
             $status = isset( $rules[ $ua ] ) ? $rules[ $ua ] : 'not_set';
 
@@ -151,6 +159,24 @@ class Robots {
                 $bot_lines[] = "";
             }
             // 'not_set' — write nothing, bot follows wildcard rules.
+        }
+
+        // Legacy passthrough. The catalogue of bots we RECOMMEND and the rules a
+        // customer has deliberately SAVED are two different things. A bot
+        // leaving the catalogue means "no longer offered for new
+        // configuration", never "delete the directive they chose". The same
+        // applies to a renamed agent: a rename is only a migration when the new
+        // token has genuinely equivalent semantics, and until that is
+        // established the original directive stays exactly as written.
+        foreach ( $rules as $ua => $status ) {
+            if ( isset( $ai_bots[ $ua ] ) ) {
+                continue;
+            }
+            if ( 'disallow' === $status ) {
+                $bot_lines[] = "User-agent: {$ua}";
+                $bot_lines[] = "Disallow: /";
+                $bot_lines[] = "";
+            }
         }
 
         $lines = array();
