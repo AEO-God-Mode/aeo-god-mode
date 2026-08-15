@@ -469,8 +469,11 @@ class Main {
      * default, editable by anyone who can edit the post.
      */
     public function register_post_meta_fields() {
+        $post_types = array_keys( get_post_types( array( 'public' => true ), 'objects' ) );
+        $post_types = array_values( array_diff( $post_types, array( 'attachment' ) ) );
+
         foreach ( array( '_asgm_disable_schema', '_asgm_disable_faq', '_asgm_disable_howto', '_asgm_disable_llms' ) as $key ) {
-            foreach ( array( 'post', 'page' ) as $type ) {
+            foreach ( $post_types as $type ) {
                 register_post_meta( $type, $key, array(
                     'type'          => 'boolean',
                     'single'        => true,
@@ -481,6 +484,19 @@ class Main {
                     },
                 ) );
             }
+        }
+
+        foreach ( $post_types as $type ) {
+            register_post_meta( $type, '_asgm_llms_description', array(
+                'type'              => 'string',
+                'single'            => true,
+                'default'           => '',
+                'show_in_rest'      => true,
+                'sanitize_callback' => 'sanitize_text_field',
+                'auth_callback'     => function ( $allowed, $meta_key, $post_id ) {
+                    return current_user_can( 'edit_post', $post_id );
+                },
+            ) );
         }
     }
 

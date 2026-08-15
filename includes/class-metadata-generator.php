@@ -63,6 +63,9 @@ class MetadataGenerator {
         'high_cta'        => 'High-CTA Human Question',
         'bold_statement'  => 'Bold Statement + Proof',
         'problem_agitate' => 'Problem-Agitate',
+        'factual_summary' => 'Plain Factual Summary',
+        'benefit_led'     => 'Benefit-Led',
+        'search_snippet'  => 'Search Snippet',
         'smart_mix'       => 'Smart Mix (auto-selects the best format per content)',
     );
 
@@ -164,7 +167,7 @@ class MetadataGenerator {
 
         $clean_content = trim( wp_strip_all_tags( $context['content'] ) );
         if ( empty( $clean_content ) || str_word_count( $clean_content ) < 15 ) {
-            return array( 'success' => false, 'error' => 'Skipped: Not enough content (minimum ~15 words required).' );
+            return array( 'success' => false, 'error' => 'Skipped before AI: this page has fewer than 15 words of body content, so a description would require invented details. No credit was used.' );
         }
 
         // Truncate content to first 500 words for speed
@@ -243,7 +246,8 @@ class MetadataGenerator {
     /**
      * Generate 5 AEO-optimized titles for a post.
      *
-     * @param int $post_id Post ID.
+     * @param int    $post_id Post ID.
+     * @param string $style   Description style.
      * @return array Generated titles or error.
      */
     public static function generate_titles( $post_id ) {
@@ -254,7 +258,7 @@ class MetadataGenerator {
 
         $clean_content = trim( wp_strip_all_tags( $context['content'] ) );
         if ( empty( $clean_content ) || str_word_count( $clean_content ) < 15 ) {
-            return array( 'success' => false, 'error' => 'Skipped: Not enough content (minimum ~15 words required).' );
+            return array( 'success' => false, 'error' => 'Skipped before AI: this page has fewer than 15 words of body content, so a description would require invented details. No credit was used.' );
         }
 
         // Truncate content for speed
@@ -332,7 +336,7 @@ class MetadataGenerator {
      * @param int $post_id Post ID.
      * @return array { success, post_id, result: { meta_description }, ... }
      */
-    public static function generate_meta_only( $post_id ) {
+    public static function generate_meta_only( $post_id, $style = 'smart_mix' ) {
         $context = MetadataWriter::get_post_context( $post_id );
         if ( empty( $context ) ) {
             return array( 'success' => false, 'error' => 'Post not found.' );
@@ -350,7 +354,7 @@ class MetadataGenerator {
         }
 
         $key    = License::is_pro_build() ? License::get_key() : '';
-        $prompt = self::build_meta_only_prompt( $context, $clean_content );
+        $prompt = self::build_meta_only_prompt( $context, $clean_content, $style );
 
         $request_id = self::new_request_id();
         $payload = array(
@@ -407,18 +411,21 @@ class MetadataGenerator {
      * Build the prompt for meta-description-only generation. Same AEO rules
      * as the combined prompt minus the title and product_description sections.
      */
-    private static function build_meta_only_prompt( $context, $clean_content ) {
+    private static function build_meta_only_prompt( $context, $clean_content, $style = 'smart_mix' ) {
         $is_product = in_array( $context['post_type'], array( 'product', 'download' ), true );
         $categories = self::format_list( $context['categories'] );
         $tags       = self::format_list( $context['tags'] );
 
-        $prompt  = 'You are an AEO (Answer Engine Optimization) copywriter. Write a meta description that works for two audiences simultaneously: standard search display limits AND AI engines that extract it as a standalone answer chunk.' . "\n\n";
+        $style_instructions = self::get_style_instructions( $style, $context );
+        $prompt  = 'Write an accurate, useful meta description for this specific page. It may be shown as a search snippet or used as a concise page summary. Do not claim that metadata guarantees rankings, rich results, or AI citations.' . "\n\n";
 
         $prompt .= "## YOUR TASK\n";
         $prompt .= 'Generate ONLY the meta_description (145-158 characters) for this ' . $context['post_type'] . ". The existing title is kept as-is — do not rewrite it.\n\n";
 
+        $prompt .= "## WRITING STYLE\n" . $style_instructions . "\n\n";
+
         $prompt .= "## AEO META DESCRIPTION RULES (MANDATORY)\n";
-        $prompt .= "Current year context: " . gmdate( 'Y' ) . ". Avoid outdated year references.\n";
+        $prompt .= "YEAR RULE: Do not add a year merely to make the description look current. Use a year only when it already appears in the source and is essential to a genuinely date-sensitive page such as an annual report, event, tax rule, dated comparison, or current-year guide. Never add a year to receipts, account pages, checkout flows, order history, confirmations, evergreen products, or ordinary service pages.\n";
         $prompt .= "Follow every rule. Breaking any means the output fails:\n\n";
         $prompt .= "1. Lead with the direct answer or outcome — never with the brand name or a question (BLUFF method).\n";
         $prompt .= "2. Include the primary keyword naturally in the first 60 characters.\n";
@@ -426,12 +433,14 @@ class MetadataGenerator {
             $prompt .= "3. Include critical product specs, price (if provided), or who the product is directly for.\n";
             $prompt .= "4. Do NOT use generic sales copy. Treat this like an answer to 'What is [product name]?'\n";
         } else {
-            $prompt .= "3. Include one specific, concrete detail (number, timeframe, result, or differentiator) from the content.\n";
+            $prompt .= "3. Include a useful concrete detail only when the source supports it. Never invent a number, timeframe, result, process, or benefit.\n";
         }
         $prompt .= "5. Standalone sentence that makes complete sense out of context. No 'this article' or 'this page'.\n";
         $prompt .= "6. Tightly 145-158 characters including spaces.\n";
         $prompt .= "7. No clickbait, no ellipsis, no em dashes.\n";
         $prompt .= "8. End with a clear implication of value, not a generic CTA.\n\n";
+        $prompt .= "9. Describe the page's real purpose. For utility pages such as Receipt, Order History, Confirmation, login, checkout, or account screens, state what the user can view or do without pretending the page is an article.\n";
+        $prompt .= "10. Do not use unsupported promises such as 'in under 2 minutes', 'automatically', 'accurately', or 'prevents errors' unless the source explicitly proves them.\n\n";
 
         $prompt .= "## ANTI-AI WRITING EXCLUSIONS\n";
         $prompt .= "NEVER use: delve, comprehensive, unlock, harness, elevate, revolutionize, landscape, embark, journey, transformative, groundbreaking, discover, uncover, explore, dive, crucial, pivotal, robust, seamlessly, leverage, facilitate, intricate, nuanced, multifaceted, paramount.\n\n";
@@ -547,7 +556,7 @@ class MetadataGenerator {
         $prompt .= "\n## STYLE (If applicable): " . $style_instructions . "\n\n";
 
         $prompt .= "## AEO META DESCRIPTION RULES (MANDATORY)\n";
-        $prompt .= "Current year context: " . gmdate('Y') . ". Avoid outdated year references.\n";
+        $prompt .= "YEAR RULE: Do not add a year merely to make metadata look current. Use a year only when it already appears in the source and is essential to a genuinely date-sensitive page such as an annual report, event, tax rule, dated comparison, or current-year guide. Never add a year to receipts, account pages, checkout flows, order history, confirmations, evergreen products, or ordinary service pages.\n";
         $prompt .= "Follow every single rule. Breaking any rule means the output fails:\n\n";
         $prompt .= "1. Lead with the direct answer or outcome — never with the brand name or a question. (BLUFF method)\n";
         $prompt .= "2. Include the primary keyword naturally in the first 60 characters.\n";
@@ -556,13 +565,15 @@ class MetadataGenerator {
             $prompt .= "3. Include critical product specs, price (if provided), or who the product is directly for.\n";
             $prompt .= "4. Do NOT use generic sales copy. Treat this like an answer to 'What is [product name]?'\n";
         } else {
-            $prompt .= "3. Include one specific, concrete detail (number, timeframe, result, or differentiator) from the content — vague descriptions do not get cited by AI.\n";
+            $prompt .= "3. Include a useful concrete detail only when the source supports it. Never invent a number, timeframe, result, process, or benefit.\n";
         }
 
         $prompt .= "5. Write it as a standalone sentence that makes complete sense out of context, with no references to \"this article\" or \"this page\".\n";
         $prompt .= "6. Keep the meta description tightly between 145–158 characters including spaces.\n";
         $prompt .= "7. No clickbait, no ellipsis, no em dashes — factual and direct.\n";
         $prompt .= "8. End with a clear implication of value, not a generic call-to-action.\n\n";
+        $prompt .= "9. Describe the page's real purpose. Utility pages such as Receipt, Order History, Confirmation, login, checkout, or account screens are not articles; state what the visitor can view or do.\n";
+        $prompt .= "10. Do not use unsupported promises such as 'in under 2 minutes', 'automatically', 'accurately', or 'prevents errors' unless the source explicitly proves them.\n\n";
 
         $prompt .= "## ANTI-AI WRITING EXCLUSIONS\n";
         $prompt .= "NEVER use these words: delve, comprehensive, unlock, harness, elevate, revolutionize, landscape, embark, journey, transformative, groundbreaking, discover, uncover, explore, dive, crucial, pivotal, robust, seamlessly, leverage, facilitate, intricate, nuanced, multifaceted, paramount.\n\n";
@@ -628,6 +639,15 @@ class MetadataGenerator {
                 "Name a specific pain point. Make it feel real. Then present the solution. " .
                 "Example: 'AI answer engines skip your content because it lacks structured signals. AEO God Mode adds schema, llms.txt, and crawler detection so you stop being invisible.' " .
                 "Keep the agitation to one clause. Don't overdramatize.",
+
+            'factual_summary' => "PLAIN FACTUAL SUMMARY\n" .
+                "State what this specific page contains or lets the visitor do. Use only facts present in the source. No sales language, urgency, year, or invented benefit. Best for utility, account, legal, receipt, checkout, and system pages.",
+
+            'benefit_led' => "BENEFIT-LED SUMMARY\n" .
+                "Lead with the real outcome for the intended visitor, then name the feature, method, or evidence that delivers it. Use only benefits directly supported by the page. Do not add a year or generic CTA.",
+
+            'search_snippet' => "SEARCH-SNIPPET SUMMARY\n" .
+                "Write a natural, specific summary matching likely search intent. Include the main topic and one supported detail. Do not force a direct-answer pattern when the page is transactional or navigational.",
         );
 
         if ( 'smart_mix' === $style ) {
@@ -641,7 +661,7 @@ class MetadataGenerator {
                 return $styles['direct_answer'];
             } else {
                 // Rotate based on post ID for variety.
-                $rotation = array( 'direct_answer', 'high_cta', 'bold_statement', 'problem_agitate' );
+                $rotation = array( 'direct_answer', 'factual_summary', 'benefit_led', 'search_snippet' );
                 $index = $context['post_id'] % 4;
                 return $styles[ $rotation[ $index ] ];
             }

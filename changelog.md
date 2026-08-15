@@ -5,6 +5,12 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.40
+
+- Content Health bulk fixes and verified rescans
+- safer Yoast llms.txt ownership switching
+- improved llms.txt controls and custom post type support
+
 ## 1.6.39
 
 - Fixed empty and stale HowTo overrides with safe per-post recovery

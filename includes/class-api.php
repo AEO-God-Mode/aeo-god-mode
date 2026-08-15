@@ -836,6 +836,11 @@ class API {
             'callback'            => array( $this, 'get_content_health_details' ),
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
+        register_rest_route( self::NAMESPACE, '/content-health/fix', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'fix_content_health' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
 
         // ---- AI Plugin Manifest ----
         register_rest_route( self::NAMESPACE, '/ai-plugin', array(
@@ -3876,6 +3881,18 @@ HARD RULES
         return rest_ensure_response( $result );
     }
 
+    /** POST /content-health/fix, applies only changes explicitly reviewed in Content Health. */
+    public function fix_content_health( \WP_REST_Request $request ) {
+        $result = Content_Health::apply_fixes(
+            sanitize_key( (string) $request->get_param( 'group' ) ),
+            (array) $request->get_param( 'items' )
+        );
+        if ( is_wp_error( $result ) ) {
+            return $result;
+        }
+        return rest_ensure_response( $result );
+    }
+
     // -----------------------------------------------------------------------
     // AI Referrals
     // -----------------------------------------------------------------------
@@ -4726,7 +4743,12 @@ HARD RULES
             if ( $is_titles_task ) {
                 $result = MetadataGenerator::generate_titles( $pid );
                 if ( ! empty( $result['success'] ) && ! empty( $result['result'] ) ) {
-                    $parsed      = json_decode( $result['result'], true );
+                    // The proxy already returns decoded JSON on current
+                    // versions. Legacy proxies returned a JSON string. PHP 8
+                    // throws a TypeError when json_decode receives the modern
+                    // array, which previously turned a successful paid title
+                    // request into a visible WordPress critical error.
+                    $parsed      = is_array( $result['result'] ) ? $result['result'] : json_decode( $result['result'], true );
                     $recommended = $parsed['recommended'] ?? '';
                     if ( empty( $recommended ) && ! empty( $parsed['titles'][0]['title'] ) ) {
                         $recommended = $parsed['titles'][0]['title'];
@@ -4746,14 +4768,14 @@ HARD RULES
                     $results[] = array( 'success' => false, 'post_id' => $pid, 'error' => $result['error'] ?? 'Title generation failed' );
                 }
             } elseif ( $is_meta_only_task ) {
-                $result = MetadataGenerator::generate_meta_only( $pid );
+                $result = MetadataGenerator::generate_meta_only( $pid, $style );
                 if ( ! empty( $result['success'] ) && ! empty( $result['result'] ) ) {
                     $parsed = is_array( $result['result'] ) ? $result['result'] : json_decode( $result['result'], true );
                     $desc   = $parsed['meta_description'] ?? '';
                     $results[] = array(
                         'success'  => true,
                         'post_id'  => $pid,
-                        'style'    => 'meta_only',
+                        'style'    => $style,
                         'result'   => array(
                             'meta_title'       => '', // Title left untouched on purpose.
                             'meta_description' => $desc,

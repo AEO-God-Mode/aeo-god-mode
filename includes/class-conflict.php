@@ -16,6 +16,9 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Conflict {
 
+    /** Exact rollback record for the physical llms.txt moved at takeover. */
+    const LLMS_PRESERVED_OPT = 'asgm_llms_preserved_file';
+
     /**
      * Conflict types to check.
      *
@@ -96,6 +99,16 @@ class Conflict {
             $extra = array(
                 'message'  => $moved['message'] ?? '',
                 'moved_to' => $moved['moved_to'] ?? '',
+                'verify_url' => add_query_arg( 'asgm_verify', time(), home_url( '/llms.txt' ) ),
+            );
+        } elseif ( 'llms_txt_file' === $id && 'defer' === $resolution ) {
+            $restored = $this->restore_other_llms_txt();
+            if ( ! $restored['success'] ) {
+                return $restored;
+            }
+            $extra = array(
+                'message'    => $restored['message'] ?? '',
+                'verify_url' => add_query_arg( 'asgm_verify', time(), home_url( '/llms.txt' ) ),
             );
         }
 
@@ -169,6 +182,14 @@ class Conflict {
 
         $from = $stray['path'];
         $dir  = dirname( $from );
+        $existing_record = get_option( self::LLMS_PRESERVED_OPT, array() );
+        $existing_path   = is_array( $existing_record ) ? (string) ( $existing_record['path'] ?? '' ) : '';
+        if ( '' !== $existing_path && file_exists( $existing_path ) ) {
+            return array(
+                'success' => false,
+                'message' => __( 'A preserved llms.txt rollback file already exists. Restore it before taking ownership again so no version is lost.', 'aeo-god-mode' ),
+            );
+        }
         if ( ! is_writable( $dir ) ) {
             return array(
                 'success' => false,
@@ -180,10 +201,11 @@ class Conflict {
             );
         }
 
-        $to = $dir . '/llms-yoast.txt';
-        if ( file_exists( $to ) ) {
-            $to = $dir . '/llms-' . gmdate( 'Ymd-His' ) . '.txt';
-        }
+        // This is a rollback snapshot, not Yoast's future working file. The
+        // wpseo filter writes future updates to llms-yoast.txt; sharing that
+        // filename meant a background update could replace the exact file the
+        // owner expected to get back.
+        $to = $dir . '/llms-yoast-preserved-' . gmdate( 'Ymd-His' ) . '-' . wp_generate_password( 6, false, false ) . '.txt';
 
         if ( ! @rename( $from, $to ) ) {
             return array(
@@ -191,6 +213,21 @@ class Conflict {
                 'message' => __( 'The file could not be moved. Your host may be blocking writes to the site root.', 'aeo-god-mode' ),
             );
         }
+
+        clearstatcache( true, $from );
+        if ( file_exists( $from ) || ! file_exists( $to ) ) {
+            return array(
+                'success' => false,
+                'message' => __( 'The file move could not be verified, so ownership was not changed.', 'aeo-god-mode' ),
+            );
+        }
+
+        update_option( self::LLMS_PRESERVED_OPT, array(
+            'path'     => $to,
+            'sha256'   => (string) hash_file( 'sha256', $to ),
+            'saved_at' => current_time( 'mysql' ),
+            'owner'    => $stray['owner'],
+        ), false );
 
         return array(
             'success' => true,
@@ -202,6 +239,66 @@ class Conflict {
                 basename( $to )
             ),
         );
+    }
+
+    /** Restore the preserved Yoast file when the owner switches back. */
+    private function restore_other_llms_txt() {
+        $root = trailingslashit( function_exists( 'get_home_path' ) ? get_home_path() : ABSPATH );
+        $to   = $root . 'llms.txt';
+        $record = get_option( self::LLMS_PRESERVED_OPT, array() );
+        $from   = is_array( $record ) ? (string) ( $record['path'] ?? '' ) : '';
+
+        // Never trust an option containing an arbitrary filesystem path. The
+        // preserved file must live in this site root and use our exact prefix.
+        $valid_preserved = '' !== $from
+            && dirname( $from ) === untrailingslashit( $root )
+            && 0 === strpos( basename( $from ), 'llms-yoast-preserved-' )
+            && file_exists( $from );
+
+        if ( $valid_preserved ) {
+            $expected = (string) ( $record['sha256'] ?? '' );
+            $actual   = (string) hash_file( 'sha256', $from );
+            if ( '' === $expected || ! hash_equals( $expected, $actual ) ) {
+                return array( 'success' => false, 'message' => __( 'The preserved Yoast file failed its integrity check, so it was not restored.', 'aeo-god-mode' ) );
+            }
+
+            // A physical file may have appeared while AEO owned the route.
+            // Archive it instead of deleting or overwriting it.
+            if ( file_exists( $to ) ) {
+                $archive = $root . 'llms-before-yoast-restore-' . gmdate( 'Ymd-His' ) . '.txt';
+                if ( ! @rename( $to, $archive ) ) {
+                    return array( 'success' => false, 'message' => __( 'The current llms.txt could not be archived safely, so the Yoast file was not restored.', 'aeo-god-mode' ) );
+                }
+            }
+        } else {
+            if ( file_exists( $to ) ) {
+                return array( 'success' => true, 'message' => __( 'Yoast SEO is already serving llms.txt.', 'aeo-god-mode' ) );
+            }
+            // Backward-compatible fallback for sites that took ownership
+            // before exact preservation records existed.
+            $from = $root . 'llms-yoast.txt';
+        }
+        if ( ! file_exists( $from ) ) {
+            return array( 'success' => false, 'message' => __( 'The preserved Yoast llms.txt file could not be found. Ask Yoast to regenerate it, then try again.', 'aeo-god-mode' ) );
+        }
+        if ( ! is_writable( $root ) || ! @rename( $from, $to ) ) {
+            if ( ! empty( $archive ) && file_exists( $archive ) && ! file_exists( $to ) ) {
+                @rename( $archive, $to );
+            }
+            return array( 'success' => false, 'message' => __( 'The Yoast file could not be restored because the site root is not writable.', 'aeo-god-mode' ) );
+        }
+        clearstatcache( true, $to );
+        if ( ! file_exists( $to ) ) {
+            return array( 'success' => false, 'message' => __( 'The restored file could not be verified.', 'aeo-god-mode' ) );
+        }
+        if ( $valid_preserved ) {
+            $restored_hash = (string) hash_file( 'sha256', $to );
+            if ( ! hash_equals( (string) $record['sha256'], $restored_hash ) ) {
+                return array( 'success' => false, 'message' => __( 'The restored Yoast file did not match the preserved original.', 'aeo-god-mode' ) );
+            }
+            delete_option( self::LLMS_PRESERVED_OPT );
+        }
+        return array( 'success' => true, 'message' => __( 'The exact Yoast llms.txt saved at takeover is serving again. You can switch back here at any time.', 'aeo-god-mode' ) );
     }
 
     /**
@@ -246,27 +343,32 @@ class Conflict {
                 // WordPress boots, so our virtual /llms.txt never runs and the
                 // customer sees stale content with no explanation. Yoast writes
                 // one by design. Detect it and say so plainly.
-                $stray = $this->find_stray_llms_txt();
-                if ( $stray ) {
+                $stray       = $this->find_stray_llms_txt();
+                $saved       = get_option( 'asgm_conflict_resolutions', array() );
+                $resolution  = (string) ( $saved['llms_txt_file'] ?? '' );
+                $intentional = ( 'defer' === $resolution && $stray ) || ( 'override' === $resolution && ! $stray );
+                if ( $stray || ( $yoast_active && in_array( $resolution, array( 'defer', 'override' ), true ) ) ) {
+                    $owner = $stray['owner'] ?? 'Yoast SEO';
                     return array(
                         'id'              => 'llms_txt_file',
                         'type'            => 'llms_txt_file',
-                        'severity'        => 'error',
-                        'title'           => sprintf(
-                            /* translators: %s: owning plugin name */
-                            __( '%s is currently serving your llms.txt', 'aeo-god-mode' ),
-                            $stray['owner']
-                        ),
-                        'description'     => sprintf(
-                            /* translators: %s: owning plugin name */
-                            __( '%1$s saved an llms.txt file straight onto your server, and your server hands that file out before WordPress even starts. We have already told %1$s to write future updates to llms-yoast.txt instead, so this will not happen again. One click moves the existing file across and your llms.txt takes over. Nothing is deleted.', 'aeo-god-mode' ),
-                            $stray['owner']
-                        ),
-                        'affected_plugin' => $stray['owner'],
-                        'file_path'       => $stray['path'],
+                        'severity'        => $intentional ? 'resolved' : 'error',
+                        'title'           => ( $intentional && 'override' === $resolution )
+                            ? __( 'AEO God Mode is serving your llms.txt', 'aeo-god-mode' )
+                            : sprintf( __( '%s is currently serving your llms.txt', 'aeo-god-mode' ), $owner ),
+                        'description'     => $intentional
+                            ? __( 'This ownership choice stays visible so you can switch it later. Open the verification link after changing it to bypass an older browser-cached copy.', 'aeo-god-mode' )
+                            : sprintf(
+                                /* translators: %s: owning plugin name */
+                                __( '%1$s saved an llms.txt file straight onto your server, and your server hands that file out before WordPress even starts. We have already told %1$s to write future updates to llms-yoast.txt instead, so this will not happen again. One click moves the existing file across and your llms.txt takes over. Nothing is deleted.', 'aeo-god-mode' ),
+                                $owner
+                            ),
+                        'affected_plugin' => $owner,
+                        'file_path'       => $stray['path'] ?? '',
                         'fix_label'       => __( 'Move it aside and use mine', 'aeo-god-mode' ),
-                        'can_auto_fix'    => is_writable( dirname( $stray['path'] ) ),
-                        'resolution'      => 'override',
+                        'can_auto_fix'    => $stray ? is_writable( dirname( $stray['path'] ) ) : true,
+                        'resolution'      => $resolution ?: 'defer',
+                        'verify_url'      => add_query_arg( 'asgm_verify', time(), home_url( '/llms.txt' ) ),
                     );
                 }
                 break;

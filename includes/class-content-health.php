@@ -305,7 +305,9 @@ class Content_Health {
         if ( $html['img_no_alt'] > 0 ) {
             $flags['alt_missing'] = $html['img_no_alt'];
         }
-        if ( $html['img_empty_alt'] > 0 ) {
+        $empty_alt_fingerprint = self::empty_alt_fingerprint_from_html( $html );
+        $reviewed_empty_alt    = (string) get_post_meta( $post->ID, '_asgm_alt_empty_reviewed', true );
+        if ( $html['img_empty_alt'] > 0 && $reviewed_empty_alt !== $empty_alt_fingerprint ) {
             $flags['alt_empty'] = $html['img_empty_alt'];
         }
         if ( self::featured_image_missing_alt( $post->ID ) ) {
@@ -433,6 +435,7 @@ class Content_Health {
             'img_total'     => 0,
             'img_no_alt'    => 0,
             'img_empty_alt' => 0,
+            'empty_alt_srcs'=> array(),
         );
 
         if ( '' === self::trim_text( $content ) ) {
@@ -528,10 +531,25 @@ class Content_Health {
             }
             if ( true === $alt || '' === self::trim_text( html_entity_decode( (string) $alt, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) ) {
                 $out['img_empty_alt']++;
+                $src = esc_url_raw( (string) $tags->get_attribute( 'src' ) );
+                $out['empty_alt_srcs'][] = $src ?: 'image-' . $out['img_total'];
             }
         }
 
         return $out;
+    }
+
+    /** Fingerprint the exact empty-alt image set that a user reviewed. */
+    private static function empty_alt_fingerprint_from_html( $html ) {
+        $sources = array_map( 'strval', (array) ( $html['empty_alt_srcs'] ?? array() ) );
+        sort( $sources, SORT_STRING );
+        return empty( $sources ) ? '' : md5( wp_json_encode( $sources ) );
+    }
+
+    /** Fingerprint empty-alt images as the scanner sees them, including synced patterns. */
+    private static function empty_alt_fingerprint( $post_id ) {
+        $content = self::expand_reusable_blocks( (string) get_post_field( 'post_content', $post_id ) );
+        return self::empty_alt_fingerprint_from_html( self::parse_html( $content ) );
     }
 
     /**
@@ -775,7 +793,7 @@ class Content_Health {
             'h1_multiple',
             'More than one H1',
             'Two or more H1 headings inside the content itself. An H1 states what the page is about, so a page with several states several things and none of them clearly. Your theme very likely adds another for the title on top of these.',
-            null
+            array( 'text' => 'Review and change in-content H1 blocks to H2 here.', 'href' => '' )
         );
 
         $groups[] = self::group(
@@ -783,7 +801,7 @@ class Content_Health {
             'h1_in_body',
             'H1 inside the content',
             'One H1 written into the content. Most themes already publish the page title as an H1, which would make this the second one on the page. We read your content, not your rendered theme output, so this is worth a look rather than a certainty. View the page and check.',
-            null
+            array( 'text' => 'Review and change the in-content H1 block to H2 here.', 'href' => '' )
         );
 
         $groups[] = self::group(
@@ -833,7 +851,7 @@ class Content_Health {
             'alt_missing',
             'Images with no alt attribute at all',
             'These images in your content carry no alt attribute. There is nothing for a screen reader to announce and nothing for an engine summarising the page to work with, so the image is simply absent for anything reading text.',
-            null
+            array( 'text' => 'Review and add image alt text here.', 'href' => '' )
         );
 
         $groups[] = self::group(
@@ -841,7 +859,7 @@ class Content_Health {
             'alt_empty',
             'Images with an empty alt',
             'These images carry an alt attribute with nothing in it. An empty alt is the correct way to mark a decorative image, and a screen reader will skip it exactly as intended. WordPress also saves a blank alt field the same way, so an image whose alt box was simply left empty in the editor is stored identically. We cannot tell the two apart from here, so some of these are almost certainly images that need alt text. Open the ones that carry meaning and write it.',
-            null
+            array( 'text' => 'Review image purpose and add alt text here when needed.', 'href' => '' )
         );
 
         $groups[] = self::group(
@@ -849,7 +867,7 @@ class Content_Health {
             'alt_featured',
             'Featured images with no alt text',
             'The attachment behind these featured images has no alt text stored. Unlike an image in the content there is no way to mark a featured image as decorative, so this is missing text rather than a deliberate choice. Fix it on the attachment itself, in the Media library, and every page using that image is fixed at once.',
-            null
+            array( 'text' => 'Review and save featured-image alt text here.', 'href' => '' )
         );
 
         $groups = array_values( array_filter( $groups ) );
@@ -1054,6 +1072,7 @@ class Content_Health {
                 'view_url' => get_permalink( $post_id ),
                 'detail'   => self::detail_line( $key, $stored_page['flags'][ $key ], $stored_page ),
             );
+            $row = array_merge( $row, self::repair_context( $key, $post_id ) );
             if ( '' !== $search ) {
                 $haystack = $row['title'] . ' ' . $row['detail'];
                 $needle   = function_exists( 'mb_strtolower' ) ? mb_strtolower( $search ) : strtolower( $search );
@@ -1066,6 +1085,224 @@ class Content_Health {
         }
 
         return self::paginated_detail_response( 'pages', $key, $rows, $page, $per_page );
+    }
+
+    /** Evidence needed to preview a repair without opening the post editor. */
+    private static function repair_context( $key, $post_id ) {
+        if ( in_array( $key, array( 'h1_multiple', 'h1_in_body' ), true ) ) {
+            $content  = (string) get_post_field( 'post_content', $post_id );
+            $blocks   = parse_blocks( $content );
+            $headings = array();
+            self::collect_fixable_h1_blocks( $blocks, $headings );
+            $processor = new \WP_HTML_Tag_Processor( $content );
+            $direct_h1 = 0;
+            while ( $processor->next_tag( 'H1' ) ) {
+                $direct_h1++;
+            }
+            while ( count( $headings ) < $direct_h1 ) {
+                $headings[] = 'H1 in classic or freeform content';
+            }
+            return array(
+                'headings'          => $headings,
+                'fixable_h1_count' => $direct_h1,
+            );
+        }
+
+        if ( 'alt_featured' === $key ) {
+            $attachment_id = (int) get_post_thumbnail_id( $post_id );
+            return array(
+                'attachment_id'    => $attachment_id,
+                'image_url'        => $attachment_id ? (string) wp_get_attachment_image_url( $attachment_id, 'thumbnail' ) : '',
+                'attachment_title' => $attachment_id ? self::display_text( get_the_title( $attachment_id ) ) : '',
+            );
+        }
+
+        if ( in_array( $key, array( 'alt_missing', 'alt_empty' ), true ) ) {
+            $saved_content    = (string) get_post_field( 'post_content', $post_id );
+            $expanded_content = self::expand_reusable_blocks( $saved_content );
+            $direct_sources   = array();
+            $direct_processor = new \WP_HTML_Tag_Processor( $saved_content );
+            while ( $direct_processor->next_tag( 'IMG' ) ) {
+                $direct_sources[ esc_url_raw( (string) $direct_processor->get_attribute( 'src' ) ) ] = true;
+            }
+            $processor = new \WP_HTML_Tag_Processor( $expanded_content );
+            $images    = array();
+            while ( $processor->next_tag( 'IMG' ) ) {
+                $alt = $processor->get_attribute( 'alt' );
+                if ( ( 'alt_missing' === $key && null !== $alt ) || ( 'alt_empty' === $key && ( null === $alt || '' !== self::trim_text( (string) $alt ) ) ) ) {
+                    continue;
+                }
+                $src = esc_url_raw( (string) $processor->get_attribute( 'src' ) );
+                if ( '' === $src ) {
+                    continue;
+                }
+                $images[ $src ] = array( 'src' => $src, 'editable' => isset( $direct_sources[ $src ] ) );
+                if ( count( $images ) >= 20 ) {
+                    break;
+                }
+            }
+            return array( 'images' => array_values( $images ) );
+        }
+
+        return array();
+    }
+
+    /** Collect editable core/heading H1 blocks; shared patterns are deliberately not rewritten. */
+    private static function collect_fixable_h1_blocks( $blocks, &$headings ) {
+        foreach ( (array) $blocks as $block ) {
+            if ( ! is_array( $block ) ) {
+                continue;
+            }
+            if ( 'core/heading' === ( $block['blockName'] ?? '' ) && 1 === (int) ( $block['attrs']['level'] ?? 2 ) ) {
+                $headings[] = self::trim_text( wp_strip_all_tags( (string) ( $block['innerHTML'] ?? '' ) ) );
+            }
+            if ( ! empty( $block['innerBlocks'] ) ) {
+                self::collect_fixable_h1_blocks( $block['innerBlocks'], $headings );
+            }
+        }
+    }
+
+    /** Apply reviewed, deterministic Content Health repairs. */
+    public static function apply_fixes( $key, $items ) {
+        $key     = sanitize_key( (string) $key );
+        $allowed = array( 'h1_multiple', 'h1_in_body', 'alt_missing', 'alt_empty', 'alt_featured' );
+        if ( ! in_array( $key, $allowed, true ) ) {
+            return new \WP_Error( 'asgm_content_health_fix', 'This issue cannot be fixed with this action.', array( 'status' => 400 ) );
+        }
+
+        $written = array();
+        foreach ( array_slice( (array) $items, 0, 50 ) as $item ) {
+            $post_id = absint( $item['post_id'] ?? 0 );
+            if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+                $written[] = array( 'post_id' => $post_id, 'success' => false, 'error' => 'You cannot edit this page.' );
+                continue;
+            }
+
+            if ( in_array( $key, array( 'h1_multiple', 'h1_in_body' ), true ) ) {
+                $blocks  = parse_blocks( (string) get_post_field( 'post_content', $post_id ) );
+                $changed = 0;
+                self::demote_h1_blocks( $blocks, $changed );
+                $content         = serialize_blocks( $blocks );
+                $classic_changed = 0;
+                $content         = self::demote_tagged_h1( $content, $classic_changed );
+                $changed        += $classic_changed;
+                if ( 0 === $changed ) {
+                    $written[] = array( 'post_id' => $post_id, 'success' => false, 'error' => 'No editable H1 block was found. It may come from a shared pattern or classic HTML.' );
+                    continue;
+                }
+                $result = wp_update_post( array( 'ID' => $post_id, 'post_content' => $content ), true );
+                $written[] = is_wp_error( $result )
+                    ? array( 'post_id' => $post_id, 'success' => false, 'error' => $result->get_error_message() )
+                    : array( 'post_id' => $post_id, 'success' => true, 'changed' => $changed );
+                continue;
+            }
+
+            if ( 'alt_featured' === $key ) {
+                $attachment_id = (int) get_post_thumbnail_id( $post_id );
+                $alt           = sanitize_text_field( (string) ( $item['alt_text'] ?? '' ) );
+                if ( ! $attachment_id || '' === self::trim_text( $alt ) ) {
+                    $written[] = array( 'post_id' => $post_id, 'success' => false, 'error' => 'Enter useful alt text before saving.' );
+                    continue;
+                }
+                update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+                $written[] = array( 'post_id' => $post_id, 'success' => true, 'attachment_id' => $attachment_id );
+                continue;
+            }
+
+            $alts = array();
+            $mark_decorative = 'alt_empty' === $key && ! empty( $item['mark_decorative'] );
+            foreach ( (array) ( $item['images'] ?? array() ) as $image ) {
+                $src = esc_url_raw( (string) ( $image['src'] ?? '' ) );
+                $alt = sanitize_text_field( (string) ( $image['alt_text'] ?? '' ) );
+                if ( '' !== $src && '' !== self::trim_text( $alt ) ) {
+                    $alts[ $src ] = $alt;
+                }
+            }
+            if ( empty( $alts ) && ! $mark_decorative ) {
+                $written[] = array( 'post_id' => $post_id, 'success' => false, 'error' => 'Enter alt text for at least one image.' );
+                continue;
+            }
+            $processor = new \WP_HTML_Tag_Processor( (string) get_post_field( 'post_content', $post_id ) );
+            $changed   = 0;
+            while ( $processor->next_tag( 'IMG' ) ) {
+                $src = esc_url_raw( (string) $processor->get_attribute( 'src' ) );
+                if ( isset( $alts[ $src ] ) ) {
+                    $processor->set_attribute( 'alt', $alts[ $src ] );
+                    $changed++;
+                }
+            }
+            if ( $changed ) {
+                $result = wp_update_post( array( 'ID' => $post_id, 'post_content' => $processor->get_updated_html() ), true );
+            } elseif ( $mark_decorative ) {
+                $result = $post_id;
+            } else {
+                $result = new \WP_Error( 'asgm_alt_not_found', 'The selected image is no longer in this page.' );
+            }
+            if ( ! is_wp_error( $result ) ) {
+                if ( $mark_decorative ) {
+                    update_post_meta( $post_id, '_asgm_alt_empty_reviewed', self::empty_alt_fingerprint( $post_id ) );
+                } else {
+                    delete_post_meta( $post_id, '_asgm_alt_empty_reviewed' );
+                }
+            }
+            $written[] = is_wp_error( $result )
+                ? array( 'post_id' => $post_id, 'success' => false, 'error' => $result->get_error_message() )
+                : array( 'post_id' => $post_id, 'success' => true, 'changed' => $changed );
+        }
+
+        return array( 'success' => true, 'written' => $written );
+    }
+
+    /** Change editable core heading blocks from level one to level two. */
+    private static function demote_h1_blocks( &$blocks, &$changed ) {
+        foreach ( $blocks as &$block ) {
+            if ( ! is_array( $block ) ) {
+                continue;
+            }
+            if ( 'core/heading' === ( $block['blockName'] ?? '' ) && 1 === (int) ( $block['attrs']['level'] ?? 2 ) ) {
+                $block['attrs']['level'] = 2;
+                $block['innerHTML']      = preg_replace( '/<(\/?)h1(\s|>)/i', '<$1h2$2', (string) $block['innerHTML'] );
+                foreach ( (array) ( $block['innerContent'] ?? array() ) as $index => $content ) {
+                    if ( is_string( $content ) ) {
+                        $block['innerContent'][ $index ] = preg_replace( '/<(\/?)h1(\s|>)/i', '<$1h2$2', $content );
+                    }
+                }
+                $changed++;
+            }
+            if ( ! empty( $block['innerBlocks'] ) ) {
+                self::demote_h1_blocks( $block['innerBlocks'], $changed );
+            }
+        }
+        unset( $block );
+    }
+
+    /**
+     * Demote direct classic/freeform H1 tags without rewriting unrelated HTML.
+     *
+     * The core tag processor first marks only real H1 elements, so H1-looking
+     * text inside comments, scripts, examples, or attributes is never touched.
+     */
+    private static function demote_tagged_h1( $content, &$changed ) {
+        $processor = new \WP_HTML_Tag_Processor( (string) $content );
+        $marked    = 0;
+        while ( $processor->next_tag( 'H1' ) ) {
+            $processor->set_attribute( 'data-asgm-h1-fix', '1' );
+            $marked++;
+        }
+        if ( 0 === $marked ) {
+            return (string) $content;
+        }
+        $updated = $processor->get_updated_html();
+        $updated = preg_replace_callback(
+            '/<h1\b([^>]*\sdata-asgm-h1-fix="1"[^>]*)>(.*?)<\/h1\s*>/is',
+            static function ( $match ) use ( &$changed ) {
+                $attrs = preg_replace( '/\sdata-asgm-h1-fix="1"/i', '', $match[1] );
+                $changed++;
+                return '<h2' . $attrs . '>' . $match[2] . '</h2>';
+            },
+            $updated
+        );
+        return is_string( $updated ) ? $updated : (string) $content;
     }
 
     /** Shape one paginated detail response without ever changing its total. */

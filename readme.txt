@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.39
+Stable tag: 1.6.40
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -134,7 +134,11 @@ This plugin connects to external services only for the features described below.
 
 **AI generation and analysis**
 
-When an authorised user manually starts an AI task, the relevant title, content text, and task settings are sent to `https://aeogodmode.io/wp-json/asgm/v1/ai-assist` for processing. The service returns generated text or analysis to the WordPress site. Free includes 10 monthly credits; Pro includes 500. No AI task runs merely because a visitor views a page.
+When an authorised user manually starts an AI task, the relevant title, content text, and selected task settings are sent securely to the AEO God Mode service for processing. The service returns the generated text or analysis to the WordPress site. No AI task is triggered simply because someone visits a page.
+
+Service: <https://aeogodmode.io/>
+Privacy policy: <https://aeogodmode.io/privacy/>
+Terms of service: <https://aeogodmode.io/terms/>
 
 **Pro licence validation and updates**
 
@@ -148,11 +152,12 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
-Privacy policy: <https://aeogodmode.io/privacy/>
-Terms: <https://aeogodmode.io/terms/>
-
-
 == Changelog ==
+
+= 1.6.40 =
+* Content Health bulk fixes and verified rescans
+* safer Yoast llms.txt ownership switching
+* improved llms.txt controls and custom post type support
 
 = 1.6.39 =
 * Fixed empty and stale HowTo overrides with safe per-post recovery
