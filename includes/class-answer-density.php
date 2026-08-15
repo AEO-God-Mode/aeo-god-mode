@@ -19,6 +19,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 class Answer_Density {
 
+	/** Version of the detector contract persisted with each scan. */
+	const SCORE_VERSION   = 3;
+
 	const POSTMETA_KEY    = '_asgm_answer_density';
 	const SCAN_TS_KEY     = '_asgm_ad_scanned'; // numeric post meta: unix time of last scan. Drives rotation ordering.
 	const DISMISS_KEY     = '_asgm_ad_dismissed'; // post meta: array of normalized heading strings the user has dismissed.
@@ -425,7 +428,7 @@ class Answer_Density {
 		}
 
 		// Imperative how-to thesis: "Add X", "Use Y", "Set Z to N".
-		if ( preg_match( '/^(Add|Use|Set|Configure|Install|Enable|Disable|Place|Put|Write|Include|Choose|Pick|Run|Block|Allow|Open|Close|Delete|Edit|Update|Replace|Track|Treat|Keep|Avoid|Check|Focus|Aim|Start|Stop|Measure|Monitor|Watch|Test|Make|Ensure|Build|Map|Match|Filter|Score|Compare|Limit|Prioriti[sz]e|Prefer|Send|Read|Scan|Audit|Verify|Review|Count|Tag|Name|Mark|Find|Stick|Treat)\s+[A-Z]?\w/u', $s ) ) {
+		if ( preg_match( '/^(Add|Use|Set|Configure|Install|Enable|Disable|Place|Put|Store|Pour|Grind|Brew|Write|Include|Choose|Pick|Select|Run|Block|Allow|Open|Close|Delete|Remove|Move|Edit|Update|Replace|Track|Treat|Keep|Avoid|Check|Focus|Aim|Start|Stop|Measure|Monitor|Watch|Test|Make|Ensure|Build|Create|Connect|Enter|Upload|Download|Copy|Paste|Schedule|Contact|Ask|Give|Take|Map|Match|Filter|Score|Compare|Limit|Prioriti[sz]e|Prefer|Send|Read|Scan|Audit|Verify|Review|Count|Tag|Name|Mark|Find|Stick)\s+[A-Z]?\w/u', $s ) ) {
 			return true;
 		}
 
@@ -546,58 +549,36 @@ class Answer_Density {
 	}
 
 	/**
-	 * Score a single post and persist to postmeta.
+	 * Analyze rendered HTML without reading or writing WordPress state.
 	 *
-	 * @param int $post_id
-	 * @return array Same JSON shape returned by the REST endpoint.
+	 * The post scanner, generated-draft contract and external page auditor all
+	 * call this method so the direct-answer classifier and score math cannot
+	 * drift. User dismissals are an adapter concern and must be supplied
+	 * explicitly; an external page audit therefore never inherits editor state.
+	 *
+	 * @param string $content Rendered content HTML.
+	 * @param array  $options Optional dismissed heading keys.
+	 * @return array Deterministic answer-density report.
 	 */
-	public static function scan_post( $post_id ) {
-		$post = get_post( $post_id );
-		// Analyze any real, editable post (drafts/pending/private included) so the
-		// editor panel scores work-in-progress. Only skip non-content statuses.
-		if ( ! $post || in_array( $post->post_status, array( 'trash', 'auto-draft', 'inherit' ), true ) ) {
-			$blank = array(
-				'post_id'              => (int) $post_id,
-				'scanned_at'           => gmdate( 'c' ),
-				'word_count'           => 0,
-				'question_headings'    => 0,
-				'direct_answers'       => 0,
-				'answer_density_score' => 0,
-				'issues'               => array(),
-				'above_fold_ratio'     => 0,
-			);
-			return $blank;
-		}
-
-		// "the_content" is a core WordPress filter; we are intentionally invoking
-		// it so shortcodes / blocks render before we count headings.
-		$content    = (string) apply_filters( 'the_content', $post->post_content ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+	public static function scan_html( $content, $options = array() ) {
+		$content    = (string) $content;
 		$word_count = str_word_count( wp_strip_all_tags( $content ) );
-
-		$headings = self::find_question_headings( $content );
+		$headings   = self::find_question_headings( $content );
 
 		$direct          = 0;
 		$first_sentence  = 0;
 		$buried_total    = 0;
+		$unanswered_total = 0;
+		$dismissed_issue_count = 0;
 		$words_before    = array();
 		$issues          = array();
-
-		$dismissed = self::get_dismissed( $post_id );
+		$dismissed       = array_values( array_unique( array_map( array( __CLASS__, 'normalize_heading' ), (array) ( $options['dismissed'] ?? array() ) ) ) );
 
 		foreach ( $headings as $h ) {
-			// User-asserted dismissal: count this heading as direct full-credit
-			// and skip surfacing it as an issue. The score lifts accordingly,
-			// the heading stays off the to-do list, and a fresh scan after a
-			// content edit picks the heading up again only if the heading text
-			// itself materially changes (normalize_heading uses whitespace and
-			// case-insensitive matching, so trivial edits stay dismissed).
-			if ( ! empty( $dismissed ) && in_array( self::normalize_heading( $h['text'] ), $dismissed, true ) ) {
-				$direct++;
-				$first_sentence++;
-				$words_before[] = 0;
-				continue;
-			}
-
+			// Dismissal is display state only. It may hide a to-do the editor has
+			// consciously reviewed, but it must never manufacture a better raw
+			// score or make the shared publishing gate disagree with the page.
+			$is_dismissed = ! empty( $dismissed ) && in_array( self::normalize_heading( $h['text'] ), $dismissed, true );
 			$body  = self::extract_after_heading( $content, $h['end'], $h['level'] );
 			$class = self::classify_answer( $body );
 
@@ -628,7 +609,7 @@ class Answer_Density {
 				// answer that just didn't lead with the thesis. Calling it
 				// "Setup" was misleading — the sentence may not be a setup
 				// at all, just an indirect angle.
-				$issues[] = array(
+				$issue = array(
 					'heading'              => $h['text'],
 					'heading_level'        => $h['level'],
 					'issue'                => 'buried_answer',
@@ -637,11 +618,17 @@ class Answer_Density {
 					'first_sentence'       => $class['first_sentence'],
 					'first_paragraph'      => $first_paragraph,
 				);
+				if ( $is_dismissed ) {
+					$dismissed_issue_count++;
+				} else {
+					$issues[] = $issue;
+				}
 			} else {
 				// No direct answer found at all in the first 50 words.
 				// Still surface the opener_kind if filler patterns matched,
 				// otherwise label as no_answer (truly missing).
-				$issues[] = array(
+				$unanswered_total++;
+				$issue = array(
 					'heading'              => $h['text'],
 					'heading_level'        => $h['level'],
 					'issue'                => 'no_direct_answer',
@@ -650,6 +637,11 @@ class Answer_Density {
 					'first_sentence'       => $class['first_sentence'],
 					'first_paragraph'      => $first_paragraph,
 				);
+				if ( $is_dismissed ) {
+					$dismissed_issue_count++;
+				} else {
+					$issues[] = $issue;
+				}
 			}
 		}
 
@@ -690,16 +682,69 @@ class Answer_Density {
 
 		$score = max( 0, min( 100, (int) round( $score ) ) );
 
-		$result = array(
-			'post_id'              => (int) $post_id,
-			'scanned_at'           => gmdate( 'c' ),
+		return array(
+			'score_version'         => self::SCORE_VERSION,
 			'word_count'           => (int) $word_count,
 			'question_headings'    => $Q,
 			'direct_answers'       => $A,
 			'buried_answers'       => $buried_total,
+			'unanswered_answers'   => $unanswered_total,
+			'dismissed_issues'     => $dismissed_issue_count,
 			'answer_density_score' => $score,
+			'applicable'           => $Q > 0,
 			'issues'               => $issues,
 			'above_fold_ratio'     => round( $above_fold_ratio, 2 ),
+		);
+	}
+
+	/**
+	 * Score a single post and persist to postmeta.
+	 *
+	 * @param int         $post_id Post ID.
+	 * @param string|null $content Optional already-rendered content. Supplying
+	 *                             it avoids running the_content twice when a
+	 *                             caller also needs the rendered-page report.
+	 * @return array Same JSON shape returned by the REST endpoint.
+	 */
+	public static function scan_post( $post_id, $content = null ) {
+		$post = get_post( $post_id );
+		// Analyze any real, editable post (drafts/pending/private included) so the
+		// editor panel scores work-in-progress. Only skip non-content statuses.
+		if ( ! $post || in_array( $post->post_status, array( 'trash', 'auto-draft', 'inherit' ), true ) ) {
+			return array(
+				'post_id'              => (int) $post_id,
+				'score_version'         => self::SCORE_VERSION,
+				'scanned_at'           => gmdate( 'c' ),
+				'word_count'           => 0,
+				'question_headings'    => 0,
+				'direct_answers'       => 0,
+				'buried_answers'       => 0,
+				'unanswered_answers'   => 0,
+				'dismissed_issues'     => 0,
+				'answer_density_score' => 0,
+				'applicable'           => false,
+				'issues'               => array(),
+				'above_fold_ratio'     => 0,
+			);
+		}
+
+		// "the_content" is a core WordPress filter; we are intentionally invoking
+		// it so shortcodes / blocks render before the pure analyzer sees them.
+		$content = null === $content
+			? ( class_exists( __NAMESPACE__ . '\\ContentGaps' )
+				? ContentGaps::render_post_snapshot( $post )
+				: (string) apply_filters( 'the_content', $post->post_content ) ) // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+			: (string) $content;
+		$result  = self::scan_html(
+			$content,
+			array( 'dismissed' => self::get_dismissed( $post_id ) )
+		);
+		$result  = array_merge(
+			array(
+				'post_id'    => (int) $post_id,
+				'scanned_at' => gmdate( 'c' ),
+			),
+			$result
 		);
 
 		update_post_meta( $post_id, self::POSTMETA_KEY, $result );
@@ -707,18 +752,67 @@ class Answer_Density {
 		// nightly cron find never-scanned and least-recently-scanned posts with
 		// a plain indexed meta query instead of unserializing every scan row.
 		update_post_meta( $post_id, self::SCAN_TS_KEY, time() );
-		// Invalidate the cached postmeta scan so the dashboard picks up the
-		// new value on its next refresh_summary() call.
+		// Invalidate both aggregate caches: their score version can still be
+		// current while their rows no longer match this saved post.
 		wp_cache_delete( self::ROWS_CACHE_KEY, self::CACHE_GROUP );
+		delete_option( self::SUMMARY_OPT );
 		return $result;
 	}
 
 	/**
+	 * Whether a persisted result belongs to the current scoring contract.
+	 *
+	 * Missing versions are stale too: scans written before SCORE_VERSION was
+	 * introduced must never be mixed with results from the current detector.
+	 *
+	 * @param mixed $result Persisted Answer Density result.
+	 * @return bool
+	 */
+	public static function is_current_result( $result ) {
+		return is_array( $result )
+			&& isset( $result['score_version'] )
+			&& self::SCORE_VERSION === (int) $result['score_version'];
+	}
+
+	/**
+	 * Remove a stale persisted scan and every cache derived from it.
+	 *
+	 * Deleting the rotation stamp makes the post a never-scanned target for the
+	 * next background pass if a caller only reads (rather than immediately
+	 * rescans) it.
+	 *
+	 * @param int   $post_id      Post ID.
+	 * @param array $stale_result Exact stale value that was read.
+	 */
+	private static function invalidate_persisted_result( $post_id, $stale_result ) {
+		// Match the value we read so a concurrent current-version scan cannot be
+		// deleted between get_post_meta() and this invalidation.
+		$deleted = delete_post_meta( $post_id, self::POSTMETA_KEY, $stale_result );
+		if ( $deleted ) {
+			delete_post_meta( $post_id, self::SCAN_TS_KEY );
+		}
+		wp_cache_delete( self::ROWS_CACHE_KEY, self::CACHE_GROUP );
+		delete_option( self::SUMMARY_OPT );
+	}
+
+	/**
 	 * Read the persisted scan for a post (does not trigger a fresh scan).
+	 *
+	 * Stale scoring-contract results are invalidated and reported as a cache
+	 * miss so API callers can recompute them with the current detector.
 	 */
 	public static function get_for_post( $post_id ) {
 		$saved = get_post_meta( $post_id, self::POSTMETA_KEY, true );
-		return is_array( $saved ) ? $saved : null;
+		if ( ! is_array( $saved ) ) {
+			return null;
+		}
+
+		if ( ! self::is_current_result( $saved ) ) {
+			self::invalidate_persisted_result( (int) $post_id, $saved );
+			return null;
+		}
+
+		return $saved;
 	}
 
 	/**
@@ -937,6 +1031,12 @@ class Answer_Density {
 		foreach ( (array) $rows as $r ) {
 			$data = maybe_unserialize( $r->meta_value );
 			if ( ! is_array( $data ) ) { continue; }
+			if ( ! self::is_current_result( $data ) ) {
+				// Never blend old score contracts into the current aggregate. Avoid
+				// deleting thousands of rows synchronously here; post reads replace
+				// them on demand and the bounded rotation refreshes the remainder.
+				continue;
+			}
 			$total_scanned++;
 
 			// A completed pass must update the dashboard time even when the most
@@ -1011,6 +1111,7 @@ class Answer_Density {
 		else                                  { $status = 'weak'; }
 
 		$summary = array(
+			'score_version'     => self::SCORE_VERSION,
 			'avg_score'        => $avg,
 			'status'           => $status,
 			'applicable_posts' => $applicable_posts,
@@ -1027,7 +1128,16 @@ class Answer_Density {
 
 	public static function get_summary() {
 		$s = get_option( self::SUMMARY_OPT, array() );
-		return is_array( $s ) ? $s : array();
+		if ( ! is_array( $s ) || empty( $s ) ) {
+			return array();
+		}
+
+		if ( ! isset( $s['score_version'] ) || self::SCORE_VERSION !== (int) $s['score_version'] ) {
+			delete_option( self::SUMMARY_OPT );
+			return array();
+		}
+
+		return $s;
 	}
 
 	/**
@@ -1049,7 +1159,11 @@ class Answer_Density {
 			if ( wp_is_post_revision( $post_id ) ) { return; }
 			if ( wp_is_post_autosave( $post_id ) ) { return; }
 			if ( ! in_array( $post->post_type, array( 'post', 'page' ), true ) ) { return; }
-			if ( $post->post_status !== 'publish' ) { return; }
+			// Draft Quality and the editor sidebar score work-in-progress, so their
+			// persisted Answer Density input must refresh on ordinary draft,
+			// pending, private and published saves alike. Only non-content states
+			// are excluded; scan_post() deliberately follows the same contract.
+			if ( in_array( $post->post_status, array( 'trash', 'auto-draft', 'inherit' ), true ) ) { return; }
 			self::scan_post( $post_id );
 		}, 20, 3 );
 	}

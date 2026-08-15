@@ -33,8 +33,8 @@ class EditorPanel {
         register_rest_route( 'asgm/v1', '/editor-panel/(?P<post_id>\d+)', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'get_post_gaps' ),
-            'permission_callback' => function () {
-                return current_user_can( 'edit_posts' );
+            'permission_callback' => function ( $request ) {
+                return current_user_can( 'edit_post', absint( $request['post_id'] ) );
             },
             'args'                => array(
                 'post_id' => array(
@@ -56,8 +56,8 @@ class EditorPanel {
         register_rest_route( 'asgm/v1', '/editor-panel/(?P<post_id>\d+)/fix', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'apply_fix' ),
-            'permission_callback' => function () {
-                return current_user_can( 'edit_posts' );
+            'permission_callback' => function ( $request ) {
+                return current_user_can( 'edit_post', absint( $request['post_id'] ) );
             },
             'args'                => array(
                 'post_id'  => array( 'required' => true ),
@@ -82,7 +82,9 @@ class EditorPanel {
             if ( ! empty( $cached )
                 && is_array( $cached )
                 && isset( $cached['score_version'] )
-                && ContentGaps::SCORE_VERSION === (int) $cached['score_version'] ) {
+                && ContentGaps::SCORE_VERSION === (int) $cached['score_version']
+                && isset( $cached['rendered_analysis']['score_version'] )
+                && RenderedPageEvaluator::SCORE_VERSION === (int) $cached['rendered_analysis']['score_version'] ) {
                 $cached['cached'] = true;
                 return rest_ensure_response( $cached );
             }
@@ -97,13 +99,14 @@ class EditorPanel {
         }
 
         $scanner = new ContentGaps();
-        // Use reflection to call the private analyze_post method.
-        $reflection = new \ReflectionMethod( $scanner, 'analyze_post' );
-        $reflection->setAccessible( true );
-        $result = $reflection->invoke( $scanner, $post );
+        $result  = $scanner->analyze_post( $post );
 
-        // Build AEO score: 100 minus gap_score (so 0 gaps = 100 score).
-        $aeo_score = max( 0, 100 - ( $result['gap_score'] ?? 0 ) );
+        // ContentGaps delegates scored checks to RenderedPageEvaluator. Keep a
+        // legacy fallback for mixed-version installs, but never recompute a
+        // second score when the shared engine supplied one.
+        $aeo_score = isset( $result['aeo_score'] )
+            ? (int) $result['aeo_score']
+            : max( 0, 100 - ( $result['gap_score'] ?? 0 ) );
         $result['aeo_score'] = $aeo_score;
         $result['cached']    = false;
 

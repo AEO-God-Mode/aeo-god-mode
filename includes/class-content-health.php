@@ -801,8 +801,8 @@ class Content_Health {
             'Nothing stored for the description an engine quotes underneath your result. Without one it writes its own from whatever text it finds first.'
                 . ( $template ? ' ' . $template . ' has a site-wide description template set, so some of these may still output something. Open one and check before working through the list.' : '' ),
             array(
-                'text' => 'Write these in bulk from the Posts screen with "Write AEO Meta Only", 1 credit per post.',
-                'href' => 'edit.php',
+                'text' => 'Generate, review, and save descriptions here, 1 credit per page.',
+                'href' => '',
             )
         );
 
@@ -812,8 +812,8 @@ class Content_Health {
             'Very short meta description',
             'These pages do store a description, so something renders under the result, but a few characters is not a snippet. It is usually a placeholder somebody typed to stop an SEO plugin complaining. The stored text and its length are next to each page.',
             array(
-                'text' => 'Rewrite these in bulk from the Posts screen with "Write AEO Meta Only", 1 credit per post.',
-                'href' => 'edit.php',
+                'text' => 'Generate, review, and save descriptions here, 1 credit per page.',
+                'href' => '',
             )
         );
 
@@ -823,8 +823,8 @@ class Content_Health {
             'Title longer than ' . self::TITLE_MAX . ' characters',
             'Long enough that search engines are likely to cut it off. Both Google and Bing truncate by pixel width rather than character count, so ' . self::TITLE_MAX . ' is a working rule of thumb, not a hard limit. Front-load the words that matter and it stops mattering. Lengths are counted as a reader sees them, with HTML entities decoded.',
             array(
-                'text' => 'Rewrite titles in bulk from the Posts screen with "Write AEO Titles Only", 1 credit per post.',
-                'href' => 'edit.php',
+                'text' => 'Generate, review, and save titles here, 1 credit per page.',
+                'href' => '',
             )
         );
 
@@ -878,8 +878,8 @@ class Content_Health {
                 'cluster_total'  => count( $dupes ),
                 'cluster_shown'  => count( $shown ),
                 'pro'            => array(
-                    'text' => 'Write a distinct description per page from the Posts screen with "Write AEO Meta Only", 1 credit per post.',
-                    'href' => 'edit.php',
+                    'text' => 'Generate, review, and save a distinct description for each page here, 1 credit per page.',
+                    'href' => '',
                 ),
             );
         }

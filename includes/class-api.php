@@ -146,6 +146,21 @@ class API {
                 'callback'            => array( $this, 'save_schema' ),
                 'permission_callback' => array( $this, 'admin_permission' ),
             ),
+            array(
+                'methods'             => 'DELETE',
+                'callback'            => array( $this, 'clear_schema_override' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/schema/(?P<post_id>\d+)/output', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'set_schema_type_output' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+            'args'                => array(
+                'type'    => array( 'required' => true ),
+                'enabled' => array( 'required' => true ),
+            ),
         ) );
 
         // ---- Robots ----
@@ -1677,6 +1692,9 @@ class API {
      */
     public function get_schema( $request ) {
         $post_id = absint( $request->get_param( 'post_id' ) );
+        if ( ! get_post( $post_id ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => __( 'Post not found.', 'aeo-god-mode' ) ), 404 );
+        }
         $schema  = new Schema();
         return rest_ensure_response( $schema->get_for_post( $post_id ) );
     }
@@ -1689,10 +1707,80 @@ class API {
      */
     public function save_schema( $request ) {
         $post_id = absint( $request->get_param( 'post_id' ) );
+        if ( ! get_post( $post_id ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => __( 'Post not found.', 'aeo-god-mode' ) ), 404 );
+        }
         $data    = $request->get_json_params();
-        update_post_meta( $post_id, '_asgm_schema_override', wp_json_encode( $data ) );
+        $schema  = new Schema();
+        $result  = $schema->save_override( $post_id, $data );
 
-        return rest_ensure_response( array( 'success' => true ) );
+        if ( is_wp_error( $result ) ) {
+            return new \WP_REST_Response(
+                array( 'success' => false, 'error' => $result->get_error_message() ),
+                400
+            );
+        }
+
+        $this->invalidate_schema_scan_caches();
+        return rest_ensure_response( array_merge( $result, $schema->get_for_post( $post_id ) ) );
+    }
+
+    /**
+     * Clear one stored schema type, or all saved overrides when type is empty.
+     */
+    public function clear_schema_override( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        if ( ! get_post( $post_id ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => __( 'Post not found.', 'aeo-god-mode' ) ), 404 );
+        }
+        $type    = sanitize_text_field( (string) $request->get_param( 'type' ) );
+        $schema  = new Schema();
+        $result  = $schema->clear_override( $post_id, $type );
+
+        $this->invalidate_schema_scan_caches();
+        return rest_ensure_response( array_merge( $result, $schema->get_for_post( $post_id ) ) );
+    }
+
+    /**
+     * Toggle one AEO schema type for a selected post without disabling the
+     * rest of the page graph.
+     */
+    public function set_schema_type_output( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        if ( ! get_post( $post_id ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => __( 'Post not found.', 'aeo-god-mode' ) ), 404 );
+        }
+        $type    = sanitize_text_field( (string) $request->get_param( 'type' ) );
+        $enabled = rest_sanitize_boolean( $request->get_param( 'enabled' ) );
+        $meta    = array(
+            'HowTo'   => '_asgm_disable_howto',
+            'FAQPage' => '_asgm_disable_faq',
+        );
+
+        if ( ! isset( $meta[ $type ] ) ) {
+            return new \WP_REST_Response(
+                array( 'success' => false, 'error' => __( 'Only HowTo and FAQPage can be toggled here.', 'aeo-god-mode' ) ),
+                400
+            );
+        }
+
+        if ( $enabled ) {
+            delete_post_meta( $post_id, $meta[ $type ] );
+        } else {
+            update_post_meta( $post_id, $meta[ $type ], true );
+        }
+
+        $this->invalidate_schema_scan_caches();
+        $schema = new Schema();
+        return rest_ensure_response( array_merge(
+            array( 'success' => true, 'type' => $type, 'enabled' => $enabled ),
+            $schema->get_for_post( $post_id )
+        ) );
+    }
+
+    /** Drop cached scan rows after a schema mutation. */
+    private function invalidate_schema_scan_caches() {
+        ContentGaps::invalidate_cached_results();
     }
 
     // -----------------------------------------------------------------------
@@ -1760,7 +1848,7 @@ class API {
             $data = Answer_Density::scan_post( $post_id );
         } else {
             $data = Answer_Density::get_for_post( $post_id );
-            if ( null === $data ) {
+            if ( ! Answer_Density::is_current_result( $data ) ) {
                 $data = Answer_Density::scan_post( $post_id );
             }
         }
@@ -3561,7 +3649,7 @@ HARD RULES
         return rest_ensure_response( array_merge( array( 'success' => true ), \AISEOGodMode\AI_Mentions::get_overview() ) );
     }
 
-    /** POST /citations/ai-mentions — run an always-on mention pull (3 credits). */
+    /** POST /citations/ai-mentions — search the indexed mention data (3 credits). */
     public function run_ai_mentions( \WP_REST_Request $request ) {
         $guard = $this->ai_mentions_guard( 'ai_mentions' );
         if ( true !== $guard ) {
@@ -4655,7 +4743,7 @@ HARD RULES
                         'existing' => $context['existing_meta'],
                     );
                 } else {
-                    $results[] = array( 'success' => false, 'error' => $result['error'] ?? 'Title generation failed' );
+                    $results[] = array( 'success' => false, 'post_id' => $pid, 'error' => $result['error'] ?? 'Title generation failed' );
                 }
             } elseif ( $is_meta_only_task ) {
                 $result = MetadataGenerator::generate_meta_only( $pid );
@@ -4673,7 +4761,7 @@ HARD RULES
                         'existing' => $context['existing_meta'],
                     );
                 } else {
-                    $results[] = array( 'success' => false, 'error' => $result['error'] ?? 'Meta description generation failed' );
+                    $results[] = array( 'success' => false, 'post_id' => $pid, 'error' => $result['error'] ?? 'Meta description generation failed' );
                 }
             } else {
                 $result = MetadataGenerator::generate( $pid, $style );

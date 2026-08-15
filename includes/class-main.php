@@ -66,6 +66,7 @@ class Main {
         // Free classes — always loaded.
         require_once $includes . 'class-api.php';
         require_once $includes . 'class-detector.php';
+        require_once $includes . 'class-faq-parser.php';
         require_once $includes . 'class-schema.php';
         require_once $includes . 'class-robots.php';
         require_once $includes . 'class-aeo.php';
@@ -81,6 +82,7 @@ class Main {
         require_once $includes . 'class-metadata-writer.php';
         require_once $includes . 'class-metadata-generator.php';
         require_once $includes . 'class-answer-density.php';
+        require_once $includes . 'class-rendered-page-evaluator.php';
         require_once $includes . 'class-link-health.php';
         require_once $includes . 'class-content-health.php';
         require_once $includes . 'class-crawler-access.php';
@@ -88,6 +90,7 @@ class Main {
         require_once $includes . 'class-okf.php';
         require_once $includes . 'class-affiliate-badge.php';
         require_once $includes . 'class-faq-blocks.php';
+        require_once $includes . 'class-draft-quality.php';
 
         // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
         // themselves on plugins_loaded priority 5/10. Free does not require any
@@ -128,6 +131,7 @@ class Main {
         // the Person node that exists on the page instead of one we predicted
         // from a plugin constant. See EEAT::author_person_id().
         add_action( 'wp_head', array( $this, 'render_native_meta' ), 1 );
+        add_filter( 'pre_get_document_title', array( __NAMESPACE__ . '\\MetadataWriter', 'filter_native_title' ), 20 );
         add_action( 'wp_head', array( $this, 'render_frontend_output' ), 9 );
         add_action( 'init', array( $this, 'boot_modules' ) );
         add_action( 'init', array( $this, 'register_post_meta_fields' ) );
@@ -460,12 +464,12 @@ class Main {
     /**
      * Register the per-post output kill switches so the block editor can
      * read and write them over REST. Each one turns OFF a single automatic
-     * front-end emitter for that post only: generated schema, the FAQPage
-     * block within it, or the post's llms.txt entry. Booleans, off by
+     * front-end emitter for that post only: generated schema, FAQPage/HowTo
+     * blocks within it, or the post's llms.txt entry. Booleans, off by
      * default, editable by anyone who can edit the post.
      */
     public function register_post_meta_fields() {
-        foreach ( array( '_asgm_disable_schema', '_asgm_disable_faq', '_asgm_disable_llms' ) as $key ) {
+        foreach ( array( '_asgm_disable_schema', '_asgm_disable_faq', '_asgm_disable_howto', '_asgm_disable_llms' ) as $key ) {
             foreach ( array( 'post', 'page' ) as $type ) {
                 register_post_meta( $type, $key, array(
                     'type'          => 'boolean',
@@ -501,6 +505,11 @@ class Main {
      * Boot all feature modules.
      */
     public function boot_modules() {
+        // Site Health reads the stored content-gap option even when safe mode
+        // prevents scanners from booting. Invalidate old scoring contracts
+        // before that early return so stale rows can never masquerade as fresh.
+        ContentGaps::maybe_invalidate_cached_results();
+
         $settings = get_option( 'asgm_settings', array() );
         $safe_mode = ! empty( $settings['safe_mode'] );
 
@@ -509,6 +518,7 @@ class Main {
         }
 
         // Free modules — always boot.
+        DraftQuality::init();
         Answer_Density::init();
         $this->modules['detector']     = new Detector();
         $this->modules['schema']       = new Schema();

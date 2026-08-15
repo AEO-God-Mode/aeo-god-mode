@@ -17,7 +17,63 @@ if ( ! defined( 'ABSPATH' ) ) {
 class ContentGaps {
 
     /** Version of the scoring contract stored in editor-panel caches. */
-    const SCORE_VERSION = 2;
+    const SCORE_VERSION = 7;
+
+    /** Option recording which scoring contract produced the site-wide rows. */
+    const RESULTS_VERSION_OPT = 'asgm_content_gap_score_version';
+
+    /** Non-autoloaded detailed rows consumed by the Content Gaps UI. */
+    const ACTION_RESULTS_OPT = 'asgm_content_gap_action_results';
+
+    /** Remove all site-wide scan rows after a content/schema mutation. */
+    public static function invalidate_cached_results() {
+        delete_option( 'asgm_content_gap_results' );
+        delete_option( self::ACTION_RESULTS_OPT );
+        delete_option( 'asgm_content_gap_last_scan' );
+        delete_option( 'asgm_content_gap_scan_summary' );
+        delete_transient( 'asgm_site_health' );
+    }
+
+    /**
+     * Remove site-wide rows written by an older scorer.
+     *
+     * This runs during boot, including safe mode, because Site Health reads the
+     * option directly. Leaving old rows in place would present historical
+     * scores as if they had been produced by the current contract.
+     *
+     * @return bool True when stale data was removed.
+     */
+    public static function maybe_invalidate_cached_results() {
+        $results        = get_option( 'asgm_content_gap_results', array() );
+        $action_results = get_option( self::ACTION_RESULTS_OPT, array() );
+        $stored_version = (int) get_option( self::RESULTS_VERSION_OPT, 0 );
+        $last_scan      = (string) get_option( 'asgm_content_gap_last_scan', '' );
+        $stale          = self::SCORE_VERSION !== $stored_version && ( ! empty( $results ) || '' !== $last_scan );
+
+        if ( ! $stale && ! empty( $results ) ) {
+            foreach ( (array) $results as $row ) {
+                if ( ! is_array( $row ) || self::SCORE_VERSION !== (int) ( $row['score_version'] ?? 0 ) ) {
+                    $stale = true;
+                    break;
+                }
+            }
+        }
+        if ( ! $stale && ! empty( $action_results ) ) {
+            foreach ( (array) $action_results as $row ) {
+                if ( ! is_array( $row ) || self::SCORE_VERSION !== (int) ( $row['score_version'] ?? 0 ) ) {
+                    $stale = true;
+                    break;
+                }
+            }
+        }
+
+        if ( $stale ) {
+            self::invalidate_cached_results();
+        }
+
+        update_option( self::RESULTS_VERSION_OPT, self::SCORE_VERSION, false );
+        return $stale;
+    }
 
     /**
      * Get cached scan results.
@@ -25,13 +81,26 @@ class ContentGaps {
      * @return array
      */
     public function get_results() {
-        $results   = get_option( 'asgm_content_gap_results', array() );
+        self::maybe_invalidate_cached_results();
+        $stored    = get_option( 'asgm_content_gap_results', array() );
+        $detailed  = get_option( self::ACTION_RESULTS_OPT, null );
+        $results   = is_array( $detailed )
+            ? $detailed
+            : array_values( array_filter( (array) $stored, function ( $row ) {
+                return is_array( $row ) && ( (int) ( $row['action_count'] ?? 0 ) > 0 || ! empty( $row['issues'] ) );
+            } ) );
         $last_scan = get_option( 'asgm_content_gap_last_scan', '' );
+        $summary   = get_option( 'asgm_content_gap_scan_summary', array() );
+        if ( ! is_array( $summary ) || self::SCORE_VERSION !== (int) ( $summary['score_version'] ?? 0 ) ) {
+            $summary = array();
+        }
 
         return array(
             'results'   => $results,
             'last_scan' => $last_scan,
             'count'     => count( $results ),
+            'total_scanned' => (int) ( $summary['total_scanned'] ?? count( (array) $stored ) ),
+            'summary'   => is_array( $summary ) ? $summary : array(),
         );
     }
 
@@ -86,9 +155,11 @@ class ContentGaps {
                 $post = get_post();
                 $gaps = $this->analyze_post( $post );
 
-                if ( ! empty( $gaps['issues'] ) ) {
-                    $results[] = $gaps;
-                }
+                // Store every scanned page, including clean pages. Site Health
+                // needs a real denominator rather than a list containing only
+                // failures, and an all-clean scan must remain distinguishable
+                // from a scan that never ran.
+                $results[] = $gaps;
             }
             wp_reset_postdata();
         }
@@ -98,16 +169,48 @@ class ContentGaps {
             return $b['gap_score'] - $a['gap_score'];
         } );
 
-        update_option( 'asgm_content_gap_results', $results );
+        $action_results = array_values( array_filter( $results, function ( $row ) {
+            return (int) ( $row['action_count'] ?? 0 ) > 0 || ! empty( $row['issues'] );
+        } ) );
+        $site_rows = array_map( function ( $row ) {
+            return array(
+                'post_id'       => (int) ( $row['post_id'] ?? 0 ),
+                'score_version' => self::SCORE_VERSION,
+                'gap_count'     => (int) ( $row['gap_count'] ?? 0 ),
+                'aeo_score'     => (int) ( $row['aeo_score'] ?? 0 ),
+            );
+        }, $results );
+
+        // Site Health still reads this historical option directly, so retain a
+        // lightweight row for every scanned page while keeping the potentially
+        // large diagnostic payload in a separate non-autoloaded option.
+        update_option( 'asgm_content_gap_results', $site_rows, false );
+        update_option( self::ACTION_RESULTS_OPT, $action_results, false );
         update_option( 'asgm_content_gap_last_scan', current_time( 'mysql' ) );
+        update_option( self::RESULTS_VERSION_OPT, self::SCORE_VERSION, false );
+        $pages_with_actions = count( $action_results );
+        $critical_posts = count( array_filter( $results, function ( $row ) {
+            return (int) ( $row['gap_count'] ?? 0 ) >= 3;
+        } ) );
+        update_option(
+            'asgm_content_gap_scan_summary',
+            array(
+                'score_version'     => self::SCORE_VERSION,
+                'total_scanned'     => count( $results ),
+                'pages_with_actions'=> $pages_with_actions,
+                'critical_posts'    => $critical_posts,
+            ),
+            false
+        );
 
         // Invalidate the site-health cache so the dashboard picks up any changes.
         delete_transient( 'asgm_site_health' );
 
         return array(
-            'results'   => $results,
-            'last_scan' => get_option( 'asgm_content_gap_last_scan' ),
-            'count'     => count( $results ),
+            'results'       => $action_results,
+            'last_scan'     => get_option( 'asgm_content_gap_last_scan' ),
+            'count'         => $pages_with_actions,
+            'total_scanned' => count( $results ),
         );
     }
 
@@ -116,13 +219,15 @@ class ContentGaps {
     /**
      * Analyze a single post for gaps.
      *
-     * @param \WP_Post $post Post object.
+     * @param \WP_Post   $post             Post object.
+     * @param string|null $rendered_content Optional single rendered snapshot.
      * @return array
      */
-    private function analyze_post( $post ) {
+    public function analyze_post( $post, $rendered_content = null ) {
         $issues   = array();
         $content  = $post->post_content;
         $wc       = str_word_count( wp_strip_all_tags( $content ) );
+        $settings = get_option( 'asgm_settings', array() );
 
         // 1. Word count check (skip for template-driven pages).
         $template = get_page_template_slug( $post->ID );
@@ -142,13 +247,23 @@ class ContentGaps {
         }
 
         // 2. Schema check (include third-party schema plugins).
-        $has_schema = get_post_meta( $post->ID, '_asgm_schema_override', true );
         $has_yoast_schema = get_post_meta( $post->ID, '_yoast_wpseo_schema_page_type', true );
         $has_rm_schema    = get_post_meta( $post->ID, 'rank_math_rich_snippet', true );
+        $yoast_active     = defined( 'WPSEO_VERSION' );
+        $rankmath_active  = defined( 'RANK_MATH_VERSION' ) || class_exists( '\\RankMath\\Paper\\Paper' );
+        $aioseo_active    = defined( 'AIOSEO_VERSION' ) || class_exists( '\AIOSEO\Plugin\AIOSEO' );
+        $seopress_active  = defined( 'SEOPRESS_VERSION' ) || defined( 'SEOPRESS_PRO_VERSION' );
+        $other_schema_plugin = $aioseo_active || $seopress_active;
+        $has_third_party_schema = $yoast_active || $rankmath_active || $other_schema_plugin;
 
-        $auto_schema = $this->has_auto_schema( $post );
+        $schema_data = class_exists( __NAMESPACE__ . '\\Schema' )
+            ? self::schema_post_snapshot( $post )
+            : array( 'schemas' => array() );
+        $schemas     = (array) ( $schema_data['schemas'] ?? array() );
+        $auto_schema = $this->has_auto_schema( $post, $schemas );
+        $has_schema_override = ! empty( $schema_data['applied_override_types'] );
 
-        if ( ! $has_schema && ! $has_yoast_schema && ! $has_rm_schema && ! $auto_schema ) {
+        if ( ! $has_third_party_schema && ! $auto_schema ) {
             $issues[] = array(
                 'type'     => 'no_schema',
                 'severity' => 'error',
@@ -158,9 +273,13 @@ class ContentGaps {
         }
 
         // 2b. Schema quality check (validate field completeness when schema exists).
-        if ( $has_schema || $has_yoast_schema || $has_rm_schema || $auto_schema ) {
+        // Only validate schema we can actually observe. A third-party plugin
+        // being active says the front end may emit schema; it does not make an
+        // empty or Breadcrumb-only local graph evidence that its Article/FAQ
+        // output is valid.
+        if ( $auto_schema ) {
             $validator  = new Validator();
-            $val_result = $validator->validate_post( $post->ID );
+            $val_result = $validator->validate_schemas( $schemas );
             if ( 'error' === $val_result['overall'] ) {
                 $error_msgs = array();
                 foreach ( $val_result['results'] as $r ) {
@@ -209,8 +328,12 @@ class ContentGaps {
             }
         }
 
-        // 3. FAQ opportunity.
-        if ( $this->has_faq_content( $content ) && ! $this->has_faq_schema( $post ) ) {
+        // 3. FAQ opportunity. As with HowTo, do not offer an AEO-only fix
+        // when output is disabled or assigned to another schema provider.
+        $can_add_faq = 'disabled' !== ( $schema_data['source'] ?? '' )
+            && ! in_array( 'FAQPage', (array) ( $schema_data['disabled_types'] ?? array() ), true )
+            && ! in_array( 'FAQPage', (array) ( $schema_data['delegated_types'] ?? array() ), true );
+        if ( $can_add_faq && $this->has_faq_content( $content ) && ! $this->has_faq_schema( $post, $schemas ) ) {
             $issues[] = array(
                 'type'     => 'faq_opportunity',
                 'severity' => 'info',
@@ -219,8 +342,14 @@ class ContentGaps {
             );
         }
 
-        // 4. HowTo opportunity.
-        if ( $this->has_howto_content( $post ) && ! $this->has_howto_schema( $post ) ) {
+        // 4. HowTo opportunity. Only offer the one-click AEO fix when AEO is
+        // actually allowed to emit the result. Delegated or globally disabled
+        // output otherwise creates an override that is immediately suppressed
+        // and leaves the issue permanently unresolved.
+        $can_add_howto = 'disabled' !== ( $schema_data['source'] ?? '' )
+            && ! in_array( 'HowTo', (array) ( $schema_data['disabled_types'] ?? array() ), true )
+            && ! in_array( 'HowTo', (array) ( $schema_data['delegated_types'] ?? array() ), true );
+        if ( $can_add_howto && $this->has_howto_content( $post, $schemas ) && ! $this->has_howto_schema( $post, $schemas ) ) {
             $issues[] = array(
                 'type'     => 'howto_opportunity',
                 'severity' => 'info',
@@ -234,6 +363,7 @@ class ContentGaps {
         $has_rm_desc    = get_post_meta( $post->ID, 'rank_math_description', true );
         $has_asgm_desc  = get_post_meta( $post->ID, '_asgm_meta_description', true );
         $has_aioseo     = get_post_meta( $post->ID, '_aioseo_description', true );
+        $has_seopress_desc = get_post_meta( $post->ID, '_seopress_titles_desc', true );
 
         // Rank Math auto-generates descriptions from a global template when no explicit one is set.
         // If Rank Math is active, treat it as having a meta description.
@@ -247,13 +377,117 @@ class ContentGaps {
             }
         }
 
-        if ( empty( $has_yoast_desc ) && empty( $has_rm_desc ) && empty( $has_asgm_desc ) && empty( $has_aioseo ) && ! $rm_auto ) {
+        if ( empty( $has_yoast_desc ) && empty( $has_rm_desc ) && empty( $has_asgm_desc ) && empty( $has_aioseo ) && empty( $has_seopress_desc ) && ! $rm_auto ) {
             $issues[] = array(
                 'type'     => 'no_meta_description',
                 'severity' => 'warning',
                 'message'  => __( 'No meta description set (Yoast, Rank Math, or AIOSEO).', 'aeo-god-mode' ),
                 'fix_type' => 'generate_meta_description',
             );
+        }
+
+        // The editor toolbar, generated-draft gate and public Domain Auditor
+        // must use one scoring implementation. Content Gaps remains the owner
+        // of local fix actions, but its scored findings now come from the pure
+        // rendered-page evaluator instead of a parallel heuristic.
+        $rendered_analysis = null;
+        if ( class_exists( __NAMESPACE__ . '\\RenderedPageEvaluator' ) ) {
+            $rendered_content = null === $rendered_content
+                ? self::render_post_snapshot( $post )
+                : (string) $rendered_content;
+            $metadata         = class_exists( __NAMESPACE__ . '\\MetadataWriter' )
+                ? MetadataWriter::read( $post->ID )
+                : array( 'meta_title' => '', 'meta_description' => '' );
+            $resolved_desc    = trim( (string) ( $metadata['meta_description'] ?? '' ) );
+            if ( '' === $resolved_desc ) {
+                foreach ( array( $has_asgm_desc, $has_rm_desc, $has_yoast_desc, $has_aioseo, $has_seopress_desc ) as $candidate_desc ) {
+                    if ( '' !== trim( (string) $candidate_desc ) ) {
+                        $resolved_desc = trim( (string) $candidate_desc );
+                        break;
+                    }
+                }
+            }
+            $has_runtime_metadata_provider = $yoast_active || $rankmath_active || $aioseo_active || $seopress_active || $rm_auto;
+
+            $evaluator_input = array(
+                'url'          => get_permalink( $post ),
+                'content_html' => $rendered_content,
+                'title'        => trim( (string) ( $metadata['meta_title'] ?? '' ) ) ?: get_the_title( $post ),
+                'page_kind'    => 'post' === $post->post_type ? 'editorial' : 'auto',
+            );
+            if ( '' !== $resolved_desc ) {
+                $evaluator_input['meta_description'] = $resolved_desc;
+            } elseif ( ! $has_runtime_metadata_provider ) {
+                // Native metadata is fully observable from post meta.
+                $evaluator_input['meta_description'] = '';
+            }
+            if ( $auto_schema ) {
+                $evaluator_input['schemas'] = $schemas;
+            } elseif ( $has_third_party_schema ) {
+                // Plugin activation alone cannot prove this post emits schema.
+                $evaluator_input['schema_presence'] = null;
+            } else {
+                $evaluator_input['schema_presence'] = false;
+            }
+
+            $rendered_analysis = RenderedPageEvaluator::evaluate(
+                $evaluator_input,
+                array(
+                    'profile'                  => 'generated_draft',
+                    'content_depth_eligible'   => ! $is_template_page,
+                    'require_reliable_content' => false,
+                )
+            );
+
+            // Replace only scored diagnostic families. Non-scoring ideas such
+            // as FAQ/HowTo opportunities and AI actions stay in this adapter.
+            $scored_types = array_keys( RenderedPageEvaluator::IMPACTS );
+            $issues = array_values( array_filter( $issues, function ( $issue ) use ( $scored_types ) {
+                return ! in_array( (string) ( $issue['type'] ?? '' ), $scored_types, true );
+            } ) );
+
+            $fix_map = array(
+                'no_schema'           => 'add_article_schema',
+                'no_meta_description' => 'generate_meta_description',
+                'aeo_weak'             => License::is_pro_build() ? 'analyze_citability' : null,
+            );
+            foreach ( (array) ( $rendered_analysis['checks'] ?? array() ) as $shared_check ) {
+                $type   = (string) ( $shared_check['id'] ?? '' );
+                $impact = (int) ( $shared_check['score_impact'] ?? 0 );
+                $status = (string) ( $shared_check['status'] ?? '' );
+                if ( ! in_array( $type, $scored_types, true ) || $impact <= 0 || ! in_array( $status, array( 'fail', 'warn' ), true ) ) {
+                    continue;
+                }
+                $issues[] = array(
+                    'type'            => $type,
+                    'severity'        => 'fail' === $status ? 'warning' : 'info',
+                    'message'         => (string) ( $shared_check['message'] ?? '' ),
+                    'fix_type'        => $fix_map[ $type ] ?? null,
+                    'score_impact'    => $impact,
+                    'counts_as_issue' => true,
+                    'scoring_engine'  => 'rendered_page_v' . RenderedPageEvaluator::SCORE_VERSION,
+                );
+            }
+
+            // Unknown runtime output is a review action, never a green pass and
+            // never a score penalty. The public page audit can make a definitive
+            // decision later from actual rendered HTML.
+            foreach ( (array) ( $rendered_analysis['checks'] ?? array() ) as $shared_check ) {
+                $type   = (string) ( $shared_check['id'] ?? '' );
+                $status = (string) ( $shared_check['status'] ?? '' );
+                if ( 'unknown' !== $status || ! in_array( $type, array( 'no_schema', 'no_meta_description' ), true ) ) {
+                    continue;
+                }
+                $issues[] = array(
+                    'type'            => $type,
+                    'severity'        => 'info',
+                    'message'         => (string) ( $shared_check['message'] ?? '' ) . ' ' . __( 'Verify the rendered front-end output.', 'aeo-god-mode' ),
+                    'fix_type'        => null,
+                    'score_impact'    => 0,
+                    'counts_as_issue' => false,
+                    'scoring_engine'  => 'rendered_page_v' . RenderedPageEvaluator::SCORE_VERSION,
+                );
+            }
         }
 
         // Only show AI-driven improvement opportunities if on the Pro build.
@@ -270,7 +504,7 @@ class ContentGaps {
             }
 
             // 6. AEO readiness / Citability.
-            if ( $wc >= 300 && ! $this->has_definitive_answer_structure( $content ) ) {
+            if ( ! is_array( $rendered_analysis ) && $wc >= 300 && ! $this->has_definitive_answer_structure( $content ) ) {
                 $issues[] = array(
                     'type'     => 'aeo_weak',
                     'severity' => 'info',
@@ -310,7 +544,6 @@ class ContentGaps {
 
             // 8. No speakable summary (only if speakable is enabled in settings).
             // Speakable schema is beta and used for topical news queries on Google Assistant.
-            $settings = get_option( 'asgm_settings', array() );
             if ( ! empty( $settings['speakable_enabled'] ) && $wc >= 500 && in_array( $post->post_type, array( 'post' ), true ) ) {
                 $has_speakable = get_post_meta( $post->ID, '_asgm_speakable_summary', true );
                 if ( empty( $has_speakable ) ) {
@@ -355,7 +588,9 @@ class ContentGaps {
         $issue_count       = 0;
         $opportunity_count = 0;
         foreach ( $issues as &$issue ) {
-            $impact                   = isset( $weights[ $issue['type'] ] ) ? $weights[ $issue['type'] ] : 0;
+            $impact                   = isset( $issue['score_impact'] )
+                ? (int) $issue['score_impact']
+                : ( isset( $weights[ $issue['type'] ] ) ? $weights[ $issue['type'] ] : 0 );
             $issue['score_impact']    = $impact;
             $issue['counts_as_issue'] = $impact > 0;
             $gap_score               += $impact;
@@ -368,7 +603,9 @@ class ContentGaps {
         }
         unset( $issue );
 
-        $gap_score = min( 100, $gap_score );
+        $gap_score = is_array( $rendered_analysis ) && isset( $rendered_analysis['scores']['aeo'] )
+            ? 100 - (int) $rendered_analysis['scores']['aeo']
+            : min( 100, $gap_score );
 
         // Build list of checks that were actually evaluated for this post.
         $applicable = array(
@@ -402,14 +639,16 @@ class ContentGaps {
         elseif ( ! empty( $has_rm_desc ) )  { $meta_desc = $has_rm_desc;   $meta_source = 'Rank Math'; }
         elseif ( ! empty( $has_yoast_desc ) ) { $meta_desc = $has_yoast_desc; $meta_source = 'Yoast'; }
         elseif ( ! empty( $has_aioseo ) )   { $meta_desc = $has_aioseo;     $meta_source = 'AIOSEO'; }
+        elseif ( ! empty( $has_seopress_desc ) ) { $meta_desc = $has_seopress_desc; $meta_source = 'SEOPress'; }
         elseif ( $rm_auto )                  { $meta_source = 'Rank Math (auto-template)'; }
 
         // Schema: identify which types are active.
         $schema_sources = array();
         if ( $auto_schema )      $schema_sources[] = 'AEO God Mode (auto)';
-        if ( $has_schema )       $schema_sources[] = 'AEO God Mode (custom)';
-        if ( $has_yoast_schema ) $schema_sources[] = 'Yoast';
-        if ( $has_rm_schema )    $schema_sources[] = 'Rank Math';
+        if ( $has_schema_override ) $schema_sources[] = 'AEO God Mode (custom)';
+        if ( $has_yoast_schema || $yoast_active ) $schema_sources[] = 'Yoast';
+        if ( $has_rm_schema || $rankmath_active ) $schema_sources[] = 'Rank Math';
+        if ( $other_schema_plugin ) $schema_sources[] = 'Third-party SEO plugin';
 
         // Image count.
         preg_match_all( '/<img[^>]+>/i', $content, $img_matches );
@@ -459,9 +698,9 @@ class ContentGaps {
             'schema_sources'  => $schema_sources,
             'citability'      => $citability ? $citability : null,
             'has_faq_content' => $this->has_faq_content( $content ),
-            'has_faq_schema'  => $this->has_faq_schema( $post ),
-            'has_howto'       => $this->has_howto_content( $post ),
-            'has_howto_schema' => $this->has_howto_schema( $post ),
+            'has_faq_schema'  => $this->has_faq_schema( $post, $schemas ),
+            'has_howto'       => $this->has_howto_content( $post, $schemas ),
+            'has_howto_schema' => $this->has_howto_schema( $post, $schemas ),
             'has_speakable'   => ! empty( get_post_meta( $post->ID, '_asgm_speakable_summary', true ) ),
             'has_llms_desc'   => ! empty( get_post_meta( $post->ID, '_asgm_llms_description', true ) ),
         );
@@ -473,14 +712,78 @@ class ContentGaps {
             'post_type'         => $post->post_type,
             'word_count'        => $wc,
             'score_version'     => self::SCORE_VERSION,
+            'scoring_engine'    => is_array( $rendered_analysis ) ? 'rendered_page_v' . RenderedPageEvaluator::SCORE_VERSION : 'legacy',
+            'aeo_score'         => max( 0, 100 - $gap_score ),
             'gap_score'         => $gap_score,
-            'gap_count'         => count( $issues ),
+            // Site Health consumes gap_count as a defect count. Keep optional
+            // actions separate so they cannot lower the site-health result.
+            'gap_count'         => $issue_count,
+            'action_count'      => count( $issues ),
             'issue_count'       => $issue_count,
             'opportunity_count' => $opportunity_count,
             'issues'            => $issues,
             'applicable_checks' => $applicable,
             'details'           => $details,
+            'rendered_analysis' => $rendered_analysis,
         );
+    }
+
+    /**
+     * Render one post with the loop globals shortcodes expect, then restore
+     * the caller's context. This gives REST/sidebar scans the same post context
+     * as a singular template without issuing a network request.
+     *
+     * @param \WP_Post $post_obj Post to render.
+     * @return string Rendered content snapshot.
+     */
+    public static function render_post_snapshot( $post_obj ) {
+        global $post;
+
+        $previous_post = $post;
+        $post          = $post_obj; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+        setup_postdata( $post_obj );
+
+        try {
+            $rendered = (string) apply_filters( 'the_content', (string) $post_obj->post_content ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+        } finally {
+            if ( $previous_post instanceof \WP_Post ) {
+                $post = $previous_post; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+                setup_postdata( $previous_post );
+            } else {
+                wp_reset_postdata();
+                $post = $previous_post; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+            }
+        }
+
+        return $rendered;
+    }
+
+    /**
+     * Build local schema with the same post globals a singular request exposes.
+     *
+     * @param \WP_Post $post_obj Post to inspect.
+     * @return array Schema engine result.
+     */
+    public static function schema_post_snapshot( $post_obj ) {
+        global $post;
+
+        $previous_post = $post;
+        $post          = $post_obj; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+        setup_postdata( $post_obj );
+
+        try {
+            $result = ( new Schema() )->get_for_post( $post_obj->ID );
+        } finally {
+            if ( $previous_post instanceof \WP_Post ) {
+                $post = $previous_post; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+                setup_postdata( $previous_post );
+            } else {
+                wp_reset_postdata();
+                $post = $previous_post; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+            }
+        }
+
+        return is_array( $result ) ? $result : array( 'schemas' => array() );
     }
 
     /**
@@ -507,6 +810,17 @@ class ContentGaps {
             case 'add_faq_schema':
                 $post = get_post( $post_id );
                 if ( ! $post ) break;
+
+                $faq_preview = ( new Schema() )->get_for_post( $post_id );
+                if ( 'disabled' === ( $faq_preview['source'] ?? '' ) ) {
+                    return array( 'success' => false, 'message' => __( 'Enable the AEO Schema Engine for this post before generating FAQ markup.', 'aeo-god-mode' ) );
+                }
+                if ( in_array( 'FAQPage', (array) ( $faq_preview['disabled_types'] ?? array() ), true ) ) {
+                    return array( 'success' => false, 'message' => __( 'Turn on FAQ output for this post before generating it.', 'aeo-god-mode' ) );
+                }
+                if ( in_array( 'FAQPage', (array) ( $faq_preview['delegated_types'] ?? array() ), true ) ) {
+                    return array( 'success' => false, 'message' => __( 'FAQPage ownership is delegated to another SEO plugin. Change the FAQPage resolution in Schema Conflicts before generating with AEO God Mode.', 'aeo-god-mode' ) );
+                }
 
                 $faq    = array();
                 $source = 'regex';
@@ -622,37 +936,52 @@ class ContentGaps {
                 $post = get_post( $post_id );
                 if ( ! $post ) break;
 
-                $steps = array();
-                if ( class_exists( '\AISEOGodMode\AI_Assist' ) ) {
-                    $ai = new \AISEOGodMode\AI_Assist();
-                    $ai_result = $ai->extract_howto_steps( $post );
-                    if ( ! is_wp_error( $ai_result ) && ! empty( $ai_result['steps'] ) ) {
-                        foreach ( $ai_result['steps'] as $s ) {
-                            $steps[] = array(
-                                '@type' => 'HowToStep',
-                                'name'  => sanitize_text_field( $s['name'] ?? '' ),
-                                'text'  => wp_kses_post( $s['text'] ?? '' ),
-                            );
-                        }
-                    }
+                // Free must be able to complete this fix without a Pro-only
+                // extractor. Use the exact deterministic parser that powers
+                // preview/front-end output, so this action never spends an AI
+                // credit unexpectedly or freezes a snapshot of current steps.
+                $schema_engine = new Schema();
+                $preview       = $schema_engine->get_for_post( $post_id );
+                if ( 'disabled' === ( $preview['source'] ?? '' ) ) {
+                    return array(
+                        'success' => false,
+                        'message' => __( 'Enable the AEO Schema Engine for this post before regenerating HowTo markup.', 'aeo-god-mode' ),
+                    );
+                }
+                if ( in_array( 'HowTo', (array) ( $preview['disabled_types'] ?? array() ), true ) ) {
+                    return array(
+                        'success' => false,
+                        'message' => __( 'Turn on HowTo output for this post before regenerating it.', 'aeo-god-mode' ),
+                    );
+                }
+                if ( in_array( 'HowTo', (array) ( $preview['delegated_types'] ?? array() ), true ) ) {
+                    return array(
+                        'success' => false,
+                        'message' => __( 'HowTo ownership is delegated to another SEO plugin. Change the HowTo resolution in Schema Conflicts before regenerating with AEO God Mode.', 'aeo-god-mode' ),
+                    );
+                }
+                $schema        = $schema_engine->detect_howto_for_post( $post_id );
+                $steps         = $schema ? (array) ( $schema['step'] ?? array() ) : array();
+
+                if ( empty( $schema ) || count( $steps ) < 5 ) {
+                    return array(
+                        'success' => false,
+                        'message' => __( 'No HowTo was generated. Use a “How to” title and at least five complete, sequential steps (an ordered list under a steps heading or explicit “Step 1:” sections).', 'aeo-god-mode' ),
+                    );
                 }
 
-                $schema = array(
-                    '@context' => 'https://schema.org',
-                    '@type'    => 'HowTo',
-                    'name'     => $post->post_title,
-                    'step'     => $steps,
-                );
-                if ( ! empty( $ai_result['total_time'] ) ) {
-                    $schema['totalTime'] = sanitize_text_field( $ai_result['total_time'] );
-                }
-                $this->merge_schema_override( $post_id, $schema );
+                // Automatic detection already emits this exact schema. Clear
+                // any old HowTo override so future title/step edits continue
+                // to update automatically instead of becoming stale again.
+                $schema_engine->clear_override( $post_id, 'HowTo' );
+                self::invalidate_cached_results();
                 return array(
                     'success'    => true,
                     'fix_type'   => $fix_type,
                     'post_id'    => $post_id,
                     'step_count' => count( $steps ),
-                    'source'     => ! empty( $steps ) ? 'ai' : 'empty',
+                    'source'     => 'pattern',
+                    'persisted'  => false,
                 );
 
             case 'analyze_citability':
@@ -669,7 +998,7 @@ class ContentGaps {
                     return array( 'success' => false, 'message' => $ai_result->get_error_message() );
                 }
 
-                update_post_meta( $post_id, '_asgm_citability_score', intval( $ai_result['score'] ?? 0 ) );
+                update_post_meta( $post_id, '_asgm_ai_citability_score', intval( $ai_result['score'] ?? 0 ) );
 
                 // Also run rule-based scoring for the breakdown tooltip.
                 $rule_score = null;
@@ -831,6 +1160,14 @@ class ContentGaps {
      * @param array $schema  The schema array (must include @type).
      */
     private function merge_schema_override( $post_id, $schema ) {
+        if ( class_exists( __NAMESPACE__ . '\\Schema' ) ) {
+            $result = ( new Schema() )->upsert_override( $post_id, $schema );
+            if ( ! is_wp_error( $result ) ) {
+                self::invalidate_cached_results();
+            }
+            return;
+        }
+
         $existing_raw = get_post_meta( $post_id, '_asgm_schema_override', true );
         $existing     = array();
 
@@ -1075,14 +1412,17 @@ class ContentGaps {
      * @param \WP_Post $post Post.
      * @return bool
      */
-    private function has_auto_schema( $post ) {
-        $schema_engine = new Schema();
-        $result = $schema_engine->get_for_post( $post->ID );
-        if ( empty( $result['schemas'] ) ) {
+    private function has_auto_schema( $post, $schemas = null ) {
+        if ( null === $schemas ) {
+            $schema_engine = new Schema();
+            $result        = $schema_engine->get_for_post( $post->ID );
+            $schemas       = (array) ( $result['schemas'] ?? array() );
+        }
+        if ( empty( $schemas ) ) {
             return false;
         }
         // Breadcrumb alone doesn't count as meaningful schema coverage.
-        foreach ( $result['schemas'] as $schema ) {
+        foreach ( $schemas as $schema ) {
             $type = isset( $schema['@type'] ) ? $schema['@type'] : '';
             if ( $type && 'BreadcrumbList' !== $type ) {
                 return true;
@@ -1101,6 +1441,13 @@ class ContentGaps {
      * @return bool
      */
     private function has_faq_content( $content ) {
+        if ( class_exists( __NAMESPACE__ . '\\FaqParser' ) ) {
+            $own_faq = FaqParser::parse_aeogm( $content );
+            if ( ! empty( $own_faq['pairs'] ) ) {
+                return true;
+            }
+        }
+
         // Gutenberg FAQ blocks (Yoast, Rank Math).
         if ( false !== strpos( $content, 'wp:yoast/faq-block' ) ) {
             return true;
@@ -1109,8 +1456,8 @@ class ContentGaps {
             return true;
         }
 
-        // FAQ shortcodes ([faq], [q], or third-party like [accordion]).
-        if ( preg_match( '/\[(faq|accordion|toggle|question|answer)\b/i', $content ) ) {
+        // FAQ shortcodes, including AEO God Mode's own accordion contract.
+        if ( preg_match( '/\[(?:aeogm_faqs?|faq|accordion|toggle|question|answer)\b/i', $content ) ) {
             return true;
         }
 
@@ -1173,8 +1520,15 @@ class ContentGaps {
      * @param \WP_Post $post Post.
      * @return bool
      */
-    private function has_faq_schema( $post ) {
+    private function has_faq_schema( $post, $schemas = null ) {
         $content = $post->post_content;
+
+        // AEO God Mode's schema engine is the source of truth for its own
+        // automatic markup. If it emits FAQPage, the editor checker must not
+        // call the same content an unhandled FAQ opportunity.
+        if ( $this->has_generated_schema_type( $post, 'FAQPage', $schemas ) ) {
+            return true;
+        }
 
         // Yoast FAQ block auto-generates FAQPage schema on the front end.
         if ( false !== strpos( $content, 'wp:yoast/faq-block' ) ) {
@@ -1193,6 +1547,16 @@ class ContentGaps {
             return true;
         }
 
+        // Generic [faq] shortcodes may be handled by their owning third-party
+        // plugin. Our own [aeogm_faq] is intentionally not counted here: its
+        // truth comes from has_generated_schema_type(), which honours module
+        // and per-post disable switches.
+        if ( preg_match_all( '/\[faq\b[^\]]*\]/i', $content, $shortcode_matches ) ) {
+            if ( count( $shortcode_matches[0] ) >= 2 ) {
+                return true;
+            }
+        }
+
         // [faq] / [faq title="..."] shortcodes. Many themes/plugins generate
         // FAQPage schema from these, and AEO God Mode's own Schema_Generator
         // produces FAQPage schema for [faq title="..."]...[/faq] pairs.
@@ -1201,12 +1565,6 @@ class ContentGaps {
             if ( count( $shortcode_matches[0] ) >= 2 ) {
                 return true;
             }
-        }
-
-        // Our plugin's schema override.
-        $override = get_post_meta( $post->ID, '_asgm_schema_override', true );
-        if ( $override && false !== strpos( $override, 'FAQPage' ) ) {
-            return true;
         }
 
         // Yoast schema page type meta.
@@ -1236,11 +1594,11 @@ class ContentGaps {
      * @param \WP_Post $post Post.
      * @return bool
      */
-    private function has_howto_content( $post ) {
-        // Title starts with "How to".
-        if ( preg_match( '/^how\s+to\b/i', $post->post_title ) ) {
-            return true;
+    private function has_howto_content( $post, $schemas = null ) {
+        if ( get_post_meta( $post->ID, '_asgm_disable_schema', true ) || get_post_meta( $post->ID, '_asgm_disable_howto', true ) ) {
+            return false;
         }
+
         // Rank Math / Yoast HowTo blocks.
         if ( false !== strpos( $post->post_content, 'wp:yoast/how-to-block' ) ) {
             return true;
@@ -1248,7 +1606,12 @@ class ContentGaps {
         if ( false !== strpos( $post->post_content, 'wp:rank-math/howto-block' ) ) {
             return true;
         }
-        return false;
+
+        // Eligibility is distinct from effective output. Asking the merged
+        // graph here made the old opportunity condition logically impossible
+        // because has_howto_schema() queried that same graph again.
+        return class_exists( __NAMESPACE__ . '\\Schema' )
+            && null !== ( new Schema() )->detect_howto_for_post( $post->ID );
     }
 
     /**
@@ -1257,11 +1620,11 @@ class ContentGaps {
      * @param \WP_Post $post Post.
      * @return bool
      */
-    private function has_howto_schema( $post ) {
-        $override = get_post_meta( $post->ID, '_asgm_schema_override', true );
-        if ( $override && false !== strpos( $override, 'HowTo' ) ) {
+    private function has_howto_schema( $post, $schemas = null ) {
+        if ( $this->has_generated_schema_type( $post, 'HowTo', $schemas ) ) {
             return true;
         }
+
         // Yoast HowTo block auto-generates schema.
         if ( false !== strpos( $post->post_content, 'wp:yoast/how-to-block' ) ) {
             return true;
@@ -1275,6 +1638,40 @@ class ContentGaps {
         if ( 'howto' === $rm_snippet ) {
             return true;
         }
+        return false;
+    }
+
+    /**
+     * Whether AEO God Mode's automatic schema graph contains a type.
+     *
+     * This deliberately asks the schema engine instead of duplicating its
+     * content detectors. It is the shared contract used by the generator,
+     * front-end output and editor checker.
+     *
+     * @param \WP_Post $post Post object.
+     * @param string   $type Schema.org type.
+     * @return bool
+     */
+    private function has_generated_schema_type( $post, $type, $schemas = null ) {
+        if ( null === $schemas ) {
+            $previous_post  = isset( $GLOBALS['post'] ) ? $GLOBALS['post'] : null;
+            $GLOBALS['post'] = $post;
+            $result          = self::schema_post_snapshot( $post );
+            $schemas         = (array) ( $result['schemas'] ?? array() );
+
+            if ( null !== $previous_post ) {
+                $GLOBALS['post'] = $previous_post;
+            } else {
+                unset( $GLOBALS['post'] );
+            }
+        }
+
+        foreach ( (array) $schemas as $schema ) {
+            if ( $type === ( $schema['@type'] ?? '' ) ) {
+                return true;
+            }
+        }
+
         return false;
     }
 

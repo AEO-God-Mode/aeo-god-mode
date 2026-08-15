@@ -66,41 +66,15 @@ class Schema {
      * @return array Array of schema objects.
      */
     private function generate_schemas( $settings ) {
-        $schemas = array();
+        $schemas          = array();
+        $override_schemas = array();
         $business = isset( $settings['business'] ) ? $settings['business'] : array();
 
         // Check for per-post overrides.
         if ( is_singular() ) {
-            $post_id  = get_the_ID();
-            $override = get_post_meta( $post_id, '_asgm_schema_override', true );
-
-            if ( $override ) {
-                $decoded = is_string( $override ) ? json_decode( $override, true ) : $override;
-                if ( $decoded ) {
-                    // Legacy: single schema with @type at top level.
-                    if ( isset( $decoded['@type'] ) ) {
-                        if ( ! isset( $decoded['@context'] ) ) {
-                            $decoded['@context'] = 'https://schema.org';
-                        }
-                        return array( $decoded );
-                    }
-                    // New: keyed array of multiple schemas (e.g. FAQPage + HowTo).
-                    if ( is_array( $decoded ) ) {
-                        $override_schemas = array();
-                        foreach ( $decoded as $s ) {
-                            if ( is_array( $s ) && isset( $s['@type'] ) ) {
-                                if ( ! isset( $s['@context'] ) ) {
-                                    $s['@context'] = 'https://schema.org';
-                                }
-                                $override_schemas[] = $s;
-                            }
-                        }
-                        if ( ! empty( $override_schemas ) ) {
-                            return $override_schemas;
-                        }
-                    }
-                }
-            }
+            $post_id          = get_the_ID();
+            $override_state   = $this->override_state_for_post( $post_id );
+            $override_schemas = $override_state['schemas'];
         }
 
         // Homepage: WebSite + Organization (skip if Yoast or Rank Math handles it).
@@ -138,8 +112,10 @@ class Schema {
             }
         }
 
-        // HowTo auto-detection (skip if Yoast or Rank Math handles it).
-        if ( is_singular() && ! $this->third_party_handles( 'HowTo' ) ) {
+        // HowTo auto-detection (skip if disabled for this post or delegated
+        // to Yoast/Rank Math). The per-type gate applies to both automatic
+        // and saved overrides via override_state_for_post().
+        if ( is_singular() && ! get_post_meta( get_the_ID(), '_asgm_disable_howto', true ) && ! $this->third_party_handles( 'HowTo' ) ) {
             $howto = $this->detect_howto_schema();
             if ( $howto ) {
                 $schemas[] = $howto;
@@ -191,7 +167,7 @@ class Schema {
             }
         }
 
-        return $schemas;
+        return $this->merge_schema_graph( $schemas, $override_schemas );
     }
 
     /**
@@ -282,63 +258,497 @@ class Schema {
         }
 
         $settings = get_option( 'asgm_settings', array() );
+        $modules  = isset( $settings['modules'] ) ? $settings['modules'] : array();
         $schemas  = array();
-        $business = isset( $settings['business'] ) ? $settings['business'] : array();
 
-        // Override check.
-        $override = get_post_meta( $post_id, '_asgm_schema_override', true );
-        if ( $override ) {
-            $decoded = is_string( $override ) ? json_decode( $override, true ) : $override;
-            if ( $decoded ) {
-                $override_schemas = array();
+        // The automatic detectors and third-party ownership checks use the
+        // current post globals. Establish that context before reading saved
+        // overrides so delegated types are suppressed consistently too.
+        $previous_post   = isset( $GLOBALS['post'] ) ? $GLOBALS['post'] : null;
+        $GLOBALS['post'] = $post;
+        $override_state  = $this->override_state_for_post( $post_id );
+        $detected_howto  = $this->detect_howto_schema();
+        $delegated_types = $this->delegated_schema_types();
 
-                // Multi-schema format: { "FAQPage": {...}, "HowTo": {...} }.
-                if ( ! isset( $decoded['@type'] ) ) {
-                    foreach ( $decoded as $type_key => $schema_obj ) {
-                        if ( is_array( $schema_obj ) ) {
-                            // Inject @type from the key if not set inside the object.
-                            if ( ! isset( $schema_obj['@type'] ) && is_string( $type_key ) && ! is_numeric( $type_key ) ) {
-                                $schema_obj['@type'] = $type_key;
-                            }
-                            if ( ! isset( $schema_obj['@context'] ) ) {
-                                $schema_obj['@context'] = 'https://schema.org';
-                            }
-                            $override_schemas[] = $schema_obj;
-                        }
-                    }
-                }
-
-                // Legacy single-schema format: { "@type": "FAQPage", ... }.
-                if ( empty( $override_schemas ) && isset( $decoded['@type'] ) ) {
-                    if ( ! isset( $decoded['@context'] ) ) {
-                        $decoded['@context'] = 'https://schema.org';
-                    }
-                    $override_schemas[] = $decoded;
-                }
-
-                if ( ! empty( $override_schemas ) ) {
-                    return array(
-                        'post_id'  => $post_id,
-                        'source'   => 'override',
-                        'schemas'  => $override_schemas,
-                    );
-                }
+        // Match the actual front-end render gates. A preview of markup the
+        // plugin would not emit is worse than no preview at all.
+        if ( ! empty( $settings['safe_mode'] ) || empty( $modules['schema'] ) || get_post_meta( $post_id, '_asgm_disable_schema', true ) ) {
+            if ( null !== $previous_post ) {
+                $GLOBALS['post'] = $previous_post;
+            } else {
+                unset( $GLOBALS['post'] );
             }
+            return array(
+                'post_id'                => $post_id,
+                'source'                 => 'disabled',
+                'schemas'                => array(),
+                'override_types'         => $override_state['stored_types'],
+                'applied_override_types' => array(),
+                'invalid_overrides'      => $override_state['invalid'],
+                'suppressed_overrides'   => $override_state['suppressed'],
+                'disabled_types'         => $this->disabled_schema_types( $post_id ),
+                'delegated_types'        => $delegated_types,
+                'howto_eligible'         => ! empty( $detected_howto ),
+            );
         }
 
-        // Always include Article for posts.
-        if ( 'post' === $post->post_type ) {
+        $override_schemas = $override_state['schemas'];
+
+        if ( 'post' === $post->post_type && ! $this->third_party_handles( 'Article' ) ) {
             $schemas[] = $this->article_schema_for_post( $post );
         }
 
-        // Breadcrumb.
-        $schemas[] = $this->breadcrumb_schema_for_post( $post );
+        if ( ! $this->third_party_handles( 'BreadcrumbList' ) ) {
+            $breadcrumb = $this->breadcrumb_schema_for_post( $post );
+            if ( $breadcrumb ) {
+                $schemas[] = $breadcrumb;
+            }
+        }
+
+        if ( ! get_post_meta( $post_id, '_asgm_disable_faq', true ) && ! $this->third_party_handles( 'FAQPage' ) ) {
+            $faq = $this->detect_faq_schema();
+            if ( $faq ) {
+                $schemas[] = $faq;
+            }
+        }
+
+        // Parse once even when output is disabled/delegated so Schema Preview
+        // can truthfully say whether the current content is eligible.
+        if ( $detected_howto && ! get_post_meta( $post_id, '_asgm_disable_howto', true ) && ! $this->third_party_handles( 'HowTo' ) ) {
+            $schemas[] = $detected_howto;
+        }
+
+        if ( ! $this->third_party_handles( 'VideoObject' ) ) {
+            $video = $this->detect_video_schema();
+            if ( $video ) {
+                $schemas[] = $video;
+            }
+        }
+
+        if ( null !== $previous_post ) {
+            $GLOBALS['post'] = $previous_post;
+        } else {
+            unset( $GLOBALS['post'] );
+        }
 
         return array(
-            'post_id' => $post_id,
-            'source'  => 'auto',
-            'schemas' => $schemas,
+            'post_id'                    => $post_id,
+            'source'                     => empty( $override_schemas ) ? 'auto' : 'auto+override',
+            'schemas'                    => $this->merge_schema_graph( $schemas, $override_schemas ),
+            'override_types'             => $override_state['stored_types'],
+            'applied_override_types'     => $override_state['applied_types'],
+            'invalid_overrides'          => $override_state['invalid'],
+            'suppressed_overrides'       => $override_state['suppressed'],
+            'disabled_types'             => $this->disabled_schema_types( $post_id ),
+            'delegated_types'            => $delegated_types,
+            'howto_eligible'             => ! empty( $detected_howto ),
         );
+    }
+
+    /**
+     * Detect a HowTo from the current post title and body using the exact
+     * parser used by front-end output. This is intentionally available to the
+     * Free content-fix path so Free never depends on Pro's AI extractor.
+     *
+     * @param int $post_id Post ID.
+     * @return array|null Complete HowTo schema, or null when ineligible.
+     */
+    public function detect_howto_for_post( $post_id ) {
+        $post = get_post( $post_id );
+        if ( ! $post ) {
+            return null;
+        }
+
+        $previous_post   = isset( $GLOBALS['post'] ) ? $GLOBALS['post'] : null;
+        $GLOBALS['post'] = $post;
+        $schema          = $this->detect_howto_schema();
+
+        if ( null !== $previous_post ) {
+            $GLOBALS['post'] = $previous_post;
+        } else {
+            unset( $GLOBALS['post'] );
+        }
+
+        return $schema;
+    }
+
+    /**
+     * Validate and save one or more per-post schema overrides.
+     *
+     * @param int   $post_id Post ID.
+     * @param array $payload Schema object or keyed schema graph.
+     * @return array|\WP_Error Saved state or validation error.
+     */
+    public function save_override( $post_id, $payload ) {
+        if ( ! get_post( $post_id ) ) {
+            return new \WP_Error( 'asgm_schema_post_missing', __( 'Post not found.', 'aeo-god-mode' ) );
+        }
+
+        $candidates = $this->decode_override_candidates( $payload );
+        if ( empty( $candidates ) ) {
+            return new \WP_Error( 'asgm_schema_override_empty', __( 'No valid schema objects were supplied.', 'aeo-god-mode' ) );
+        }
+
+        $schemas = array();
+        foreach ( $candidates as $candidate ) {
+            $normalized = $this->normalize_override_schema( $post_id, $candidate['schema'], $candidate['type_key'] );
+            if ( is_wp_error( $normalized ) ) {
+                return $normalized;
+            }
+            $schemas[ $normalized['@type'] ] = $normalized;
+        }
+
+        if ( class_exists( __NAMESPACE__ . '\\Validator' ) ) {
+            $validation = ( new Validator() )->validate_schemas( array_values( $schemas ) );
+            if ( 'error' === ( $validation['overall'] ?? '' ) ) {
+                $errors = array();
+                foreach ( (array) ( $validation['results'] ?? array() ) as $row ) {
+                    $errors = array_merge( $errors, (array) ( $row['errors'] ?? array() ) );
+                }
+                return new \WP_Error(
+                    'asgm_schema_override_invalid',
+                    implode( ' ', array_slice( array_unique( $errors ), 0, 3 ) ) ?: __( 'Schema override is invalid.', 'aeo-god-mode' )
+                );
+            }
+        }
+
+        $this->write_override_schemas( $post_id, $schemas );
+
+        return array(
+            'success'        => true,
+            'override_types' => array_values( array_keys( $schemas ) ),
+        );
+    }
+
+    /**
+     * Add or replace one override type while preserving valid sibling types.
+     * Legacy invalid siblings are deliberately omitted so any successful fix
+     * also heals poisoned storage left by older plugin versions.
+     *
+     * @param int   $post_id Post ID.
+     * @param array $schema  One schema object.
+     * @return array|\WP_Error
+     */
+    public function upsert_override( $post_id, $schema ) {
+        $normalized = $this->normalize_override_schema( $post_id, $schema );
+        if ( is_wp_error( $normalized ) ) {
+            return $normalized;
+        }
+
+        $schemas = array();
+        foreach ( $this->decode_override_candidates( get_post_meta( $post_id, '_asgm_schema_override', true ) ) as $candidate ) {
+            $existing = $this->normalize_override_schema( $post_id, $candidate['schema'], $candidate['type_key'] );
+            if ( is_wp_error( $existing ) ) {
+                continue;
+            }
+            $schemas[ $existing['@type'] ] = $existing;
+        }
+        $schemas[ $normalized['@type'] ] = $normalized;
+        $this->write_override_schemas( $post_id, $schemas );
+
+        return array(
+            'success'        => true,
+            'override_types' => array_values( array_keys( $schemas ) ),
+        );
+    }
+
+    /**
+     * Remove one saved schema type while preserving every other override.
+     * Passing an empty type clears the whole override value.
+     *
+     * @param int    $post_id Post ID.
+     * @param string $type    Optional schema @type.
+     * @return array
+     */
+    public function clear_override( $post_id, $type = '' ) {
+        $type = sanitize_text_field( (string) $type );
+        if ( '' === $type ) {
+            delete_post_meta( $post_id, '_asgm_schema_override' );
+            return array( 'success' => true, 'removed' => 'all', 'override_types' => array() );
+        }
+
+        $remaining = array();
+        foreach ( $this->decode_override_candidates( get_post_meta( $post_id, '_asgm_schema_override', true ) ) as $candidate ) {
+            $candidate_type = $this->candidate_type( $candidate['schema'], $candidate['type_key'] );
+            if ( $type === $candidate_type ) {
+                continue;
+            }
+            if ( '' === $candidate_type ) {
+                continue;
+            }
+            $remaining[ $candidate_type ] = $candidate['schema'];
+        }
+
+        $this->write_override_schemas( $post_id, $remaining );
+
+        return array(
+            'success'        => true,
+            'removed'        => $type,
+            'override_types' => array_values( array_keys( $remaining ) ),
+        );
+    }
+
+    /**
+     * Decode, validate, and apply stored overrides without ever allowing an
+     * invalid legacy HowTo to poison front-end output. Invalid values remain
+     * visible to the authenticated preview so the owner can clear them.
+     *
+     * @param int $post_id Post ID.
+     * @return array
+     */
+    private function override_state_for_post( $post_id ) {
+        $state = array(
+            'schemas'       => array(),
+            'stored_types'  => array(),
+            'applied_types' => array(),
+            'invalid'       => array(),
+            'suppressed'    => array(),
+        );
+
+        $raw_override = get_post_meta( $post_id, '_asgm_schema_override', true );
+        $candidates   = $this->decode_override_candidates( $raw_override );
+        if ( ! empty( $raw_override ) && empty( $candidates ) ) {
+            $state['invalid'][] = array(
+                'type'   => 'Unknown',
+                'reason' => __( 'Saved schema override ignored because it is malformed or contains no schema objects.', 'aeo-god-mode' ),
+            );
+            return $state;
+        }
+
+        foreach ( $candidates as $candidate ) {
+            $type = $this->candidate_type( $candidate['schema'], $candidate['type_key'] );
+            if ( '' !== $type ) {
+                $state['stored_types'][] = $type;
+            }
+
+            $normalized = $this->normalize_override_schema( $post_id, $candidate['schema'], $candidate['type_key'] );
+            if ( is_wp_error( $normalized ) ) {
+                $state['invalid'][] = array(
+                    'type'   => $type ?: 'Unknown',
+                    'reason' => $normalized->get_error_message(),
+                );
+                continue;
+            }
+
+            $type = (string) $normalized['@type'];
+            if ( $this->schema_type_disabled( $post_id, $type ) ) {
+                $state['suppressed'][] = array(
+                    'type'   => $type,
+                    'reason' => __( 'Disabled for this post.', 'aeo-god-mode' ),
+                );
+                continue;
+            }
+            if ( $this->third_party_handles( $type ) ) {
+                $state['suppressed'][] = array(
+                    'type'   => $type,
+                    'reason' => __( 'Delegated to the configured SEO plugin.', 'aeo-god-mode' ),
+                );
+                continue;
+            }
+
+            $state['schemas'][]       = $normalized;
+            $state['applied_types'][] = $type;
+        }
+
+        $state['stored_types']  = array_values( array_unique( $state['stored_types'] ) );
+        $state['applied_types'] = array_values( array_unique( $state['applied_types'] ) );
+        return $state;
+    }
+
+    /**
+     * Convert legacy flat and modern keyed override formats into candidates.
+     *
+     * @param mixed $raw Stored or submitted override.
+     * @return array
+     */
+    private function decode_override_candidates( $raw ) {
+        $decoded = is_string( $raw ) ? json_decode( $raw, true ) : $raw;
+        if ( ! is_array( $decoded ) || empty( $decoded ) ) {
+            return array();
+        }
+        if ( isset( $decoded['@type'] ) ) {
+            return array( array( 'type_key' => '', 'schema' => $decoded ) );
+        }
+        if ( isset( $decoded['@graph'] ) && is_array( $decoded['@graph'] ) ) {
+            $decoded = $decoded['@graph'];
+        }
+
+        $candidates = array();
+        foreach ( $decoded as $type_key => $schema ) {
+            if ( is_array( $schema ) ) {
+                $candidates[] = array( 'type_key' => $type_key, 'schema' => $schema );
+            }
+        }
+        return $candidates;
+    }
+
+    /** @return string */
+    private function candidate_type( $schema, $type_key = '' ) {
+        $raw_type = is_array( $schema ) ? ( $schema['@type'] ?? '' ) : '';
+        $type     = is_string( $raw_type ) ? $raw_type : '';
+        if ( '' === $type && is_string( $type_key ) && ! is_numeric( $type_key ) ) {
+            $type = $type_key;
+        }
+        return sanitize_text_field( $type );
+    }
+
+    /**
+     * Normalize one override and reject structurally invalid HowTo data.
+     *
+     * @return array|\WP_Error
+     */
+    private function normalize_override_schema( $post_id, $schema, $type_key = '' ) {
+        if ( ! is_array( $schema ) ) {
+            return new \WP_Error( 'asgm_schema_override_invalid', __( 'Schema override must be an object.', 'aeo-god-mode' ) );
+        }
+        if ( array_key_exists( '@type', $schema ) && ! is_string( $schema['@type'] ) ) {
+            return new \WP_Error( 'asgm_schema_override_type_invalid', __( 'Schema override @type must be a single text value.', 'aeo-god-mode' ) );
+        }
+
+        $type = $this->candidate_type( $schema, $type_key );
+        if ( '' === $type ) {
+            return new \WP_Error( 'asgm_schema_override_type_missing', __( 'Schema override is missing @type.', 'aeo-god-mode' ) );
+        }
+        $schema['@type']    = $type;
+        $schema['@context'] = $schema['@context'] ?? 'https://schema.org';
+
+        if ( 'HowTo' !== $type ) {
+            return $schema;
+        }
+
+        $steps = array();
+        foreach ( (array) ( $schema['step'] ?? array() ) as $step ) {
+            if ( ! is_array( $step ) ) {
+                continue;
+            }
+            $name = sanitize_text_field( (string) ( $step['name'] ?? '' ) );
+            $text = wp_kses_post( (string) ( $step['text'] ?? '' ) );
+            if ( '' === trim( wp_strip_all_tags( $name ) ) && '' === trim( wp_strip_all_tags( $text ) ) ) {
+                continue;
+            }
+            $normalized_step = $step;
+            $normalized_step['@type']    = 'HowToStep';
+            $normalized_step['position'] = count( $steps ) + 1;
+            if ( '' !== $name ) {
+                $normalized_step['name'] = $name;
+            } else {
+                unset( $normalized_step['name'] );
+            }
+            if ( '' !== trim( wp_strip_all_tags( $text ) ) ) {
+                $normalized_step['text'] = $text;
+            } else {
+                unset( $normalized_step['text'] );
+            }
+            $steps[] = $normalized_step;
+        }
+
+        if ( count( $steps ) < 2 ) {
+            return new \WP_Error(
+                'asgm_howto_steps_invalid',
+                sprintf(
+                    /* translators: %d: complete HowTo step count */
+                    __( 'Saved HowTo ignored: at least 2 complete steps are required; %d found.', 'aeo-god-mode' ),
+                    count( $steps )
+                )
+            );
+        }
+
+        // A generated override's old title must never survive a post rename.
+        // The schema describes this page, so keep its name tied to the current
+        // WordPress title while preserving every other intentional field.
+        $current_title = get_the_title( $post_id );
+        if ( '' !== trim( (string) $current_title ) ) {
+            $schema['name'] = wp_strip_all_tags( $current_title );
+        }
+        $schema['step'] = $steps;
+        return $schema;
+    }
+
+    /** Persist canonical flat/keyed storage, deleting the meta when empty. */
+    private function write_override_schemas( $post_id, $schemas ) {
+        if ( empty( $schemas ) ) {
+            delete_post_meta( $post_id, '_asgm_schema_override' );
+            return;
+        }
+        if ( 1 === count( $schemas ) ) {
+            update_post_meta( $post_id, '_asgm_schema_override', wp_slash( wp_json_encode( reset( $schemas ) ) ) );
+            return;
+        }
+        update_post_meta( $post_id, '_asgm_schema_override', wp_slash( wp_json_encode( $schemas ) ) );
+    }
+
+    /** @return bool */
+    private function schema_type_disabled( $post_id, $type ) {
+        if ( 'HowTo' === $type ) {
+            return (bool) get_post_meta( $post_id, '_asgm_disable_howto', true );
+        }
+        if ( 'FAQPage' === $type ) {
+            return (bool) get_post_meta( $post_id, '_asgm_disable_faq', true );
+        }
+        return false;
+    }
+
+    /** @return string[] */
+    private function disabled_schema_types( $post_id ) {
+        $types = array();
+        if ( get_post_meta( $post_id, '_asgm_disable_faq', true ) ) {
+            $types[] = 'FAQPage';
+        }
+        if ( get_post_meta( $post_id, '_asgm_disable_howto', true ) ) {
+            $types[] = 'HowTo';
+        }
+        return $types;
+    }
+
+    /**
+     * Schema types currently assigned to another SEO plugin.
+     *
+     * Authenticated previews expose this list so callers never offer an AEO
+     * regeneration action for markup the ownership rules will suppress.
+     *
+     * @return string[]
+     */
+    private function delegated_schema_types() {
+        $types = array();
+        foreach ( array( 'Article', 'BreadcrumbList', 'FAQPage', 'HowTo', 'VideoObject' ) as $type ) {
+            if ( $this->third_party_handles( $type ) ) {
+                $types[] = $type;
+            }
+        }
+        return $types;
+    }
+
+    /**
+     * Merge additions by @type while preserving the automatic base graph.
+     *
+     * A custom FAQ or HowTo is additive; it must not silently remove Article
+     * and BreadcrumbList. When an override uses the same type, the override
+     * replaces that one automatic node.
+     *
+     * @param array $base      Automatically generated schemas.
+     * @param array $overrides Per-post additions/replacements.
+     * @return array
+     */
+    private function merge_schema_graph( $base, $overrides ) {
+        $by_type = array();
+        $order   = array();
+
+        foreach ( array_merge( (array) $base, (array) $overrides ) as $schema ) {
+            if ( ! is_array( $schema ) || empty( $schema['@type'] ) ) {
+                continue;
+            }
+            $type = (string) $schema['@type'];
+            if ( ! isset( $by_type[ $type ] ) ) {
+                $order[] = $type;
+            }
+            $by_type[ $type ] = $schema;
+        }
+
+        $merged = array();
+        foreach ( $order as $type ) {
+            $merged[] = $by_type[ $type ];
+        }
+        return $merged;
     }
 
     // -----------------------------------------------------------------------
@@ -643,35 +1053,28 @@ class Schema {
 
         $content = $post->post_content;
 
-        // Detect AEO God Mode's own [aeogm_faq q="Q"]A[/aeogm_faq] accordion
-        // shortcodes (class-faq-blocks.php renders the accordion; schema is
-        // emitted here, once, so the two never disagree or double up).
-        if ( false !== stripos( $content, '[aeogm_faq' ) ) {
-            $pattern = '/\[aeogm_faq\s+[^\]]*?(?:q|title)\s*=\s*(?:"([^"]+)"|\'([^\']+)\')[^\]]*\](.+?)\[\/aeogm_faq\]/si';
-            if ( preg_match_all( $pattern, $content, $matches, PREG_SET_ORDER ) ) {
+        // Detect AEO God Mode's own accordion with the same canonical parser
+        // used by Draft Quality and Content Gaps. Malformed or empty pairs do
+        // not become schema merely because an opening shortcode is present.
+        if ( class_exists( __NAMESPACE__ . '\\FaqParser' ) ) {
+            $parsed = FaqParser::parse_aeogm( $content );
+            if ( ! empty( $parsed['wrapper_balanced'] ) && count( $parsed['pairs'] ) >= 2 ) {
                 $faqs = array();
-                foreach ( $matches as $match ) {
-                    $question = trim( $match[1] !== '' ? $match[1] : $match[2] );
-                    $answer   = trim( wp_strip_all_tags( strip_shortcodes( $match[3] ) ) );
-                    $answer   = preg_replace( '/\s+/', ' ', $answer );
-                    if ( $question !== '' && $answer !== '' ) {
-                        $faqs[] = array(
-                            '@type'          => 'Question',
-                            'name'           => $question,
-                            'acceptedAnswer' => array(
-                                '@type' => 'Answer',
-                                'text'  => $answer,
-                            ),
-                        );
-                    }
-                }
-                if ( count( $faqs ) >= 2 ) {
-                    return array(
-                        '@context'   => 'https://schema.org',
-                        '@type'      => 'FAQPage',
-                        'mainEntity' => $faqs,
+                foreach ( $parsed['pairs'] as $pair ) {
+                    $faqs[] = array(
+                        '@type'          => 'Question',
+                        'name'           => $pair['question'],
+                        'acceptedAnswer' => array(
+                            '@type' => 'Answer',
+                            'text'  => $pair['answer'],
+                        ),
                     );
                 }
+                return array(
+                    '@context'   => 'https://schema.org',
+                    '@type'      => 'FAQPage',
+                    'mainEntity' => $faqs,
+                );
             }
         }
 
@@ -961,7 +1364,7 @@ class Schema {
 
         // Require: should ideally start with an action verb (imperative mood).
         // Common step starters: Add, Create, Set, Configure, Open, Click, Enter, etc.
-        $action_verbs = '/^(add|allow|apply|audit|ask|assemble|avoid|begin|build|calculate|check|choose|clean|click|close|collect|combine|compare|complete|configure|connect|consider|contact|continue|contribute|copy|create|cut|define|delete|deploy|describe|design|determine|develop|disable|download|drag|edit|enable|ensure|enter|establish|evaluate|examine|export|fill|find|fix|focus|follow|format|gather|generate|get|give|go|grant|handle|identify|implement|import|improve|include|insert|install|integrate|investigate|keep|launch|learn|link|list|load|locate|log|maintain|make|manage|map|mark|measure|merge|modify|monitor|move|name|navigate|note|obtain|open|optimize|order|organize|participate|paste|perform|pick|place|plan|post|prepare|press|prevent|print|provide|publish|pull|push|put|read|receive|record|reduce|register|release|remove|rename|repeat|replace|report|request|require|research|reset|resolve|respond|restart|restore|retrieve|review|revise|run|save|scan|schedule|search|secure|select|send|set|share|sign|specify|start|stop|store|structure|submit|subscribe|summarize|switch|sync|tag|take|target|tell|test|track|transfer|try|tune|turn|type|undo|uninstall|unlink|update|upgrade|upload|use|utilize|validate|verify|view|visit|wait|watch|work|write)\b/i';
+        $action_verbs = '/^(add|allow|apply|attach|audit|ask|assemble|avoid|begin|brew|build|calculate|check|choose|clean|click|close|collect|combine|compare|complete|configure|connect|consider|contact|continue|contribute|copy|create|cut|define|delete|deploy|describe|design|determine|develop|disable|download|drag|dry|edit|enable|ensure|enter|establish|evaluate|examine|export|fill|find|fix|focus|follow|format|gather|generate|get|give|go|grant|grind|handle|heat|identify|implement|import|improve|include|insert|install|integrate|investigate|keep|launch|learn|link|list|load|locate|log|maintain|make|manage|map|mark|measure|merge|modify|monitor|move|name|navigate|note|obtain|open|optimize|order|organize|participate|paste|perform|pick|place|plan|post|pour|prepare|press|prevent|print|provide|publish|pull|push|put|read|receive|record|reduce|register|release|remove|rename|repeat|replace|report|request|require|research|reset|resolve|respond|restart|restore|retrieve|return|review|revise|rinse|run|save|scan|schedule|search|secure|select|send|set|share|sign|specify|start|stop|store|structure|submit|subscribe|summarize|switch|sync|tag|take|target|tell|test|track|transfer|try|tune|turn|type|undo|uninstall|unlink|update|upgrade|upload|use|utilize|validate|verify|view|visit|wait|watch|weigh|work|write)\b/i';
 
         if ( preg_match( $action_verbs, $text ) ) {
             return true;
@@ -1321,13 +1724,13 @@ class Schema {
             if ( $yoast_on && in_array( $type, array( 'Article', 'WebSite', 'Organization', 'BreadcrumbList' ), true ) ) {
                 return true;
             }
-            if ( 'FAQPage' === $type && is_singular() ) {
+            if ( 'FAQPage' === $type ) {
                 $post = get_post();
                 if ( $post && has_block( 'yoast/faq-block', $post ) ) {
                     return true;
                 }
             }
-            if ( 'HowTo' === $type && is_singular() ) {
+            if ( 'HowTo' === $type ) {
                 $post = get_post();
                 if ( $post && has_block( 'yoast/how-to-block', $post ) ) {
                     return true;
@@ -1340,19 +1743,25 @@ class Schema {
             if ( in_array( $type, array( 'Article', 'WebSite', 'Organization', 'BreadcrumbList' ), true ) ) {
                 return true;
             }
-            if ( 'FAQPage' === $type && is_singular() ) {
+            if ( 'FAQPage' === $type ) {
                 $post = get_post();
                 if ( $post && has_block( 'rank-math/faq-block', $post ) ) {
                     return true;
                 }
-                $rm_snippet = get_post_meta( get_the_ID(), 'rank_math_rich_snippet', true );
-                if ( 'faq' === $rm_snippet ) {
+                $rm_snippet = $post ? get_post_meta( $post->ID, 'rank_math_rich_snippet', true ) : '';
+                $rm_schema  = $post ? get_post_meta( $post->ID, 'rank_math_schema_FAQPage', true ) : '';
+                if ( 'faq' === $rm_snippet || ! empty( $rm_schema ) ) {
                     return true;
                 }
             }
-            if ( 'HowTo' === $type && is_singular() ) {
-                $rm_snippet = get_post_meta( get_the_ID(), 'rank_math_rich_snippet', true );
-                if ( 'howto' === $rm_snippet ) {
+            if ( 'HowTo' === $type ) {
+                $post = get_post();
+                if ( $post && has_block( 'rank-math/howto-block', $post ) ) {
+                    return true;
+                }
+                $rm_snippet = $post ? get_post_meta( $post->ID, 'rank_math_rich_snippet', true ) : '';
+                $rm_schema  = $post ? get_post_meta( $post->ID, 'rank_math_schema_HowTo', true ) : '';
+                if ( 'howto' === $rm_snippet || ! empty( $rm_schema ) ) {
                     return true;
                 }
             }

@@ -106,6 +106,11 @@ class MetadataWriter {
         // Write meta title.
         if ( ! empty( $meta_title ) ) {
             update_post_meta( $post_id, $keys['title'], sanitize_text_field( $meta_title ) );
+            // Every generated-title flow writes through this class. Keeping
+            // the provenance stamp here prevents the generator from writing a
+            // title successfully while the AEO sidebar still says it was
+            // never optimized.
+            update_post_meta( $post_id, '_asgm_generated_title', 'yes' );
             $written[] = 'meta_title';
         }
 
@@ -171,19 +176,27 @@ class MetadataWriter {
             return;
         }
 
-        $title = get_post_meta( $post_id, '_asgm_meta_title', true );
         $desc  = get_post_meta( $post_id, '_asgm_meta_description', true );
-
-        if ( ! empty( $title ) ) {
-            // Override the document title via WordPress filter.
-            add_filter( 'pre_get_document_title', function() use ( $title ) {
-                return esc_html( $title );
-            }, 99 );
-        }
 
         if ( ! empty( $desc ) ) {
             echo '<meta name="description" content="' . esc_attr( $desc ) . '" />' . "\n";
         }
+    }
+
+    /**
+     * Filter the native document title before core renders wp_head.
+     *
+     * @param string $title Existing document title.
+     * @return string
+     */
+    public static function filter_native_title( $title ) {
+        if ( self::SEO_NATIVE !== self::detect_seo_plugin() || ! is_singular() ) {
+            return $title;
+        }
+
+        $post_id = get_queried_object_id();
+        $stored  = $post_id ? get_post_meta( $post_id, '_asgm_meta_title', true ) : '';
+        return '' !== trim( (string) $stored ) ? wp_strip_all_tags( $stored ) : $title;
     }
 
     /**
