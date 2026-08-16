@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.44
+Stable tag: 1.6.46
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -134,7 +134,9 @@ This plugin connects to external services only for the features described below.
 
 **AI generation and analysis**
 
-When an authorised user manually starts an AI task, the relevant title, content text, and selected task settings are sent securely to the AEO God Mode service for processing. The service returns the generated text or analysis to the WordPress site. No AI task is triggered simply because someone visits a page.
+When an authorised user manually starts an AI task, the relevant title, content text, and selected task settings are sent securely to the AEO God Mode service for processing. The service returns the generated text or analysis to the WordPress site.
+
+When an authorised user asks the plugin to generate featured-image alt text, the selected image and the page and attachment context shown in the review are sent securely to the AEO God Mode service. The free Content Health scan stays on the WordPress site and sends no images or page content. No AI task runs because someone visits a page or opens the dashboard.
 
 Service: <https://aeogodmode.io/>
 Privacy policy: <https://aeogodmode.io/privacy/>
@@ -154,8 +156,18 @@ OAuth token exchanges and authorised Search Console requests are proxied through
 
 == Changelog ==
 
+= 1.6.46 =
+* Added image thumbnails and two-credit AI alt-text generation to Content Health image review
+
+= 1.6.45 =
+* Improved Search Console opportunity data
+* Topical Map planning
+* contextual anchors
+* Content Health bulk fixes
+* AI alt text
+* and clearer workflow UI
+
 = 1.6.44 =
-* No fixed ceiling for topical authority plans
 * Safe duplicate-resistant expansion across repeated design passes
 
 = 1.6.43 =

@@ -863,6 +863,16 @@ class API {
             'callback'            => array( $this, 'fix_content_health' ),
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
+        register_rest_route( self::NAMESPACE, '/content-health/featured-alt/generate', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'generate_content_health_featured_alt' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+        register_rest_route( self::NAMESPACE, '/content-health/image-alt/generate', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'generate_content_health_image_alt' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
 
         // ---- AI Plugin Manifest ----
         register_rest_route( self::NAMESPACE, '/ai-plugin', array(
@@ -2372,7 +2382,12 @@ class API {
         if ( class_exists( '\AISEOGodMode\GSC' ) ) {
             $gsc_status    = ( new \AISEOGodMode\GSC() )->get_status();
             $gsc_connected = ! empty( $gsc_status['connected'] );
-            $gsc_queries   = count( (array) get_option( 'asgm_gsc_query_data', array() ) );
+            $gsc_snapshot  = is_callable( array( '\AISEOGodMode\GSC', 'get_coherent_snapshot' ) )
+                ? (array) \AISEOGodMode\GSC::get_coherent_snapshot()
+                : array();
+            $gsc_queries   = count( isset( $gsc_snapshot['queries'] )
+                ? (array) $gsc_snapshot['queries']
+                : (array) get_option( 'asgm_gsc_query_data', array() ) );
         }
 
         // 3. Topical Map rows. Direct table query so the check works even
@@ -3932,6 +3947,27 @@ HARD RULES
         $result = Content_Health::apply_fixes(
             sanitize_key( (string) $request->get_param( 'group' ) ),
             (array) $request->get_param( 'items' )
+        );
+        if ( is_wp_error( $result ) ) {
+            return $result;
+        }
+        return rest_ensure_response( $result );
+    }
+
+    /** POST /content-health/featured-alt/generate — inspect one unique image, 2 credits. */
+    public function generate_content_health_featured_alt( \WP_REST_Request $request ) {
+        $result = Content_Health::generate_featured_alt( absint( $request->get_param( 'attachment_id' ) ) );
+        if ( is_wp_error( $result ) ) {
+            return $result;
+        }
+        return rest_ensure_response( $result );
+    }
+
+    /** POST /content-health/image-alt/generate — inspect one in-content image, 2 credits. */
+    public function generate_content_health_image_alt( \WP_REST_Request $request ) {
+        $result = Content_Health::generate_image_alt(
+            absint( $request->get_param( 'post_id' ) ),
+            esc_url_raw( (string) $request->get_param( 'src' ) )
         );
         if ( is_wp_error( $result ) ) {
             return $result;

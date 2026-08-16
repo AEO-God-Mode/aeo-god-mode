@@ -743,7 +743,13 @@ class LLMS {
 
         // Search Console impressions, keyed by permalink.
         $gsc = array();
-        foreach ( (array) get_option( 'asgm_gsc_page_data', array() ) as $row ) {
+        $snapshot = class_exists( '\\AISEOGodMode\\GSC' ) && is_callable( array( '\\AISEOGodMode\\GSC', 'get_coherent_snapshot' ) )
+            ? (array) \AISEOGodMode\GSC::get_coherent_snapshot()
+            : array();
+        $gsc_pages = isset( $snapshot['pages'] )
+            ? array_values( (array) $snapshot['pages'] )
+            : array_values( (array) get_option( 'asgm_gsc_page_data', array() ) );
+        foreach ( $gsc_pages as $row ) {
             if ( is_array( $row ) && ! empty( $row['url'] ) ) {
                 $gsc[ untrailingslashit( (string) $row['url'] ) ] = (int) ( $row['impressions'] ?? 0 );
             }

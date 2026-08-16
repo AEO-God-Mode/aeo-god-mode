@@ -137,10 +137,8 @@ class MetadataGenerator {
         );
     }
 
-    /**
-     * Increment local free tier usage.
-     */
-    private static function use_free_credit() {
+    /** Increment local free-tier usage by the server-defined task cost. */
+    public static function use_free_credits( $amount = 1 ) {
         $usage = get_option( 'asgm_free_metadata_usage', array() );
         $month = gmdate( 'Y-m' );
 
@@ -148,7 +146,8 @@ class MetadataGenerator {
             $usage = array( 'month' => $month, 'used' => 0 );
         }
 
-        $usage['used'] = (int) $usage['used'] + 1;
+        $amount        = max( 1, min( self::FREE_TIER_MONTHLY, absint( $amount ) ) );
+        $usage['used'] = min( self::FREE_TIER_MONTHLY, (int) $usage['used'] + $amount );
         update_option( 'asgm_free_metadata_usage', $usage );
     }
 
@@ -228,7 +227,7 @@ class MetadataGenerator {
         // self::FREE_TIER_MONTHLY). Pro credit charging happens server-side
         // inside the proxy.
         if ( empty( $key ) ) {
-            self::use_free_credit();
+            self::use_free_credits();
         }
 
         return array(
@@ -312,7 +311,7 @@ class MetadataGenerator {
         // self::FREE_TIER_MONTHLY). Pro credit charging happens server-side
         // inside the proxy.
         if ( empty( $key ) ) {
-            self::use_free_credit();
+            self::use_free_credits();
         }
 
         // Extract the suggested titles from the response.
@@ -393,7 +392,7 @@ class MetadataGenerator {
         }
 
         if ( empty( $key ) ) {
-            self::use_free_credit();
+            self::use_free_credits();
         }
 
         return array(

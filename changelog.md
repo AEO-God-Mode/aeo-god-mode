@@ -5,9 +5,21 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.46
+
+- Added image thumbnails and two-credit AI alt-text generation to Content Health image review
+
+## 1.6.45
+
+- Improved Search Console opportunity data
+- Topical Map planning
+- contextual anchors
+- Content Health bulk fixes
+- AI alt text
+- and clearer workflow UI
+
 ## 1.6.44
 
-- No fixed ceiling for topical authority plans
 - Safe duplicate-resistant expansion across repeated design passes
 
 ## 1.6.43

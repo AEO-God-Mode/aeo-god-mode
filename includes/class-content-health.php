@@ -50,15 +50,20 @@ class Content_Health {
     const BATCH = 25;
 
     /**
-     * Ceiling on posts queued, matching Link_Health's harvest limit.
+     * Content Health is intentionally uncapped.
      *
-     * A site with more published content than this gets its oldest MAX_POSTS
-     * scanned, and public_state() reports the real published total alongside a
-     * truncated flag so the client can say so out loud. A diagnostic that
-     * silently scans a fifth of a site and prints a clean-looking total is
-     * worse than one that admits its ceiling.
+     * The work is still performed in BATCH-sized requests, but the queue must
+     * contain every eligible published item. A cap made a "full scan" capable
+     * of missing featured images on larger stores and custom-post-type sites.
+     * Zero is retained in the response as the conventional "no limit" value.
      */
-    const MAX_POSTS = 500;
+    const MAX_POSTS = 0;
+
+    /** AI cost for inspecting one unique featured-image attachment. */
+    const FEATURED_ALT_CREDITS = 2;
+
+    /** Maximum local image payload sent for one vision request (4 MiB). */
+    const MAX_VISION_IMAGE_BYTES = 4194304;
 
     /**
      * Character count above which a title is reported as long.
@@ -138,6 +143,7 @@ class Content_Health {
             'checked'         => (int) ( $raw['checked'] ?? 0 ),
             'total'           => (int) ( $raw['total'] ?? 0 ),
             'published_total' => (int) ( $raw['published_total'] ?? 0 ),
+            'post_types'      => ( isset( $raw['post_types'] ) && is_array( $raw['post_types'] ) ) ? $raw['post_types'] : self::scannable_post_types(),
             'pages'           => ( isset( $raw['pages'] ) && is_array( $raw['pages'] ) ) ? $raw['pages'] : array(),
             'desc_index'      => ( isset( $raw['desc_index'] ) && is_array( $raw['desc_index'] ) ) ? $raw['desc_index'] : array(),
             'has_content'     => ! empty( $raw['has_content'] ),
@@ -150,17 +156,18 @@ class Content_Health {
     }
 
     /**
-     * Start a scan: queue every published post and page, drop prior results.
+     * Start a scan: queue every eligible published content item, drop prior results.
      *
      * Costs two queries, one for the queue and one cached count for the honest
      * site total. The parsing happens batch by batch, so this returns instantly
      * even on a site with hundreds of posts.
      */
     public static function start_scan() {
+        $post_types = self::scannable_post_types();
         $ids = get_posts( array(
-            'post_type'        => array( 'post', 'page' ),
+            'post_type'        => $post_types,
             'post_status'      => 'publish',
-            'posts_per_page'   => self::MAX_POSTS,
+            'posts_per_page'   => -1,
             'fields'           => 'ids',
             'orderby'          => 'ID',
             'order'            => 'ASC',
@@ -176,6 +183,7 @@ class Content_Health {
             // will reach. The client needs both to tell the truth about a site
             // bigger than MAX_POSTS.
             'published_total' => self::published_total(),
+            'post_types'      => $post_types,
             'pages'           => array(),
             'desc_index'      => array(),
             // Separate from total on purpose. total counts down as the queue
@@ -189,7 +197,39 @@ class Content_Health {
     }
 
     /**
-     * Published posts and pages on the whole site.
+     * Public, editor-visible content types Content Health can inspect.
+     *
+     * Posts and pages always belong. Other types must expose an editor or a
+     * featured image, which includes WooCommerce products, EDD downloads and
+     * ordinary public custom post types while excluding attachments, menus,
+     * patterns and other internal records.
+     */
+    private static function scannable_post_types() {
+        $types = get_post_types(
+            array(
+                'public'  => true,
+                'show_ui' => true,
+            ),
+            'names'
+        );
+        $types = array_values( array_filter( array_map( 'sanitize_key', (array) $types ), static function ( $type ) {
+            if ( in_array( $type, array( 'attachment', 'nav_menu_item', 'revision', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation' ), true ) ) {
+                return false;
+            }
+            return in_array( $type, array( 'post', 'page' ), true )
+                || post_type_supports( $type, 'editor' )
+                || post_type_supports( $type, 'thumbnail' );
+        } ) );
+
+        /** Filter the public content types included in a full Content Health scan. */
+        $types = apply_filters( 'aeogm_content_health_post_types', $types );
+        $types = array_values( array_unique( array_filter( array_map( 'sanitize_key', (array) $types ), 'post_type_exists' ) ) );
+
+        return ! empty( $types ) ? $types : array( 'post', 'page' );
+    }
+
+    /**
+     * Published eligible content items on the whole site.
      *
      * wp_count_posts() is cached per post type and reads the same statuses the
      * queue query asks for, so this is a cheap honest denominator rather than a
@@ -197,7 +237,7 @@ class Content_Health {
      */
     private static function published_total() {
         $total = 0;
-        foreach ( array( 'post', 'page' ) as $type ) {
+        foreach ( self::scannable_post_types() as $type ) {
             $counts = wp_count_posts( $type );
             $total += isset( $counts->publish ) ? (int) $counts->publish : 0;
         }
@@ -866,8 +906,8 @@ class Content_Health {
             $by_flag,
             'alt_featured',
             'Featured images with no alt text',
-            'The attachment behind these featured images has no alt text stored. Unlike an image in the content there is no way to mark a featured image as decorative, so this is missing text rather than a deliberate choice. Fix it on the attachment itself, in the Media library, and every page using that image is fixed at once.',
-            array( 'text' => 'Review and save featured-image alt text here.', 'href' => '' )
+            'The Media Library image used as the featured image has no alt text. Each unique image is listed once, with every published page it affects. AI can inspect the actual image and draft one proposal for 2 credits. Nothing changes until you review and save it.',
+            array( 'text' => 'Inspect each unique image for 2 credits, then review and save its alt text here.', 'href' => '' )
         );
 
         $groups = array_values( array_filter( $groups ) );
@@ -943,7 +983,8 @@ class Content_Health {
             // What the site publishes, versus what this scan could reach.
             'published_total'  => $published_total,
             'max_posts'        => self::MAX_POSTS,
-            'truncated'        => $published_total > $total,
+            'truncated'        => false,
+            'post_types'       => array_values( (array) ( $state['post_types'] ?? self::scannable_post_types() ) ),
             'remaining'        => count( $state['queue'] ),
             // The honest empty state lives here. A site with nothing published
             // has has_content false, and the client must say "nothing to check"
@@ -1058,6 +1099,50 @@ class Content_Health {
             return self::paginated_detail_response( 'clusters', $key, $summaries, $page, $per_page );
         }
 
+        // A single Media Library attachment can be the featured image for
+        // many pages. Show and fix it once, but retain the full affected-page
+        // count and page list so the customer can see the reach of that edit.
+        if ( 'alt_featured' === $key ) {
+            $rows = self::featured_attachment_rows( $state );
+            if ( '' !== $search ) {
+                $needle = function_exists( 'mb_strtolower' ) ? mb_strtolower( $search ) : strtolower( $search );
+                $rows   = array_values( array_filter( $rows, static function ( $row ) use ( $needle ) {
+                    $haystacks = array(
+                        (string) ( $row['title'] ?? '' ),
+                        (string) ( $row['attachment_title'] ?? '' ),
+                    );
+                    foreach ( (array) ( $row['affected_pages'] ?? array() ) as $affected ) {
+                        $haystacks[] = (string) ( $affected['title'] ?? '' );
+                    }
+                    foreach ( $haystacks as $haystack ) {
+                        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $haystack ) : strtolower( $haystack );
+                        if ( false !== strpos( $lower, $needle ) ) {
+                            return true;
+                        }
+                    }
+                    return false;
+                } ) );
+            }
+
+            $affected_total = 0;
+            foreach ( $rows as $row ) {
+                $affected_total += (int) ( $row['affected_count'] ?? 0 );
+            }
+
+            return self::paginated_detail_response(
+                'featured_images',
+                $key,
+                $rows,
+                $page,
+                $per_page,
+                array(
+                    'unique_total'   => count( $rows ),
+                    'affected_total' => $affected_total,
+                    'credit_each'    => self::FEATURED_ALT_CREDITS,
+                )
+            );
+        }
+
         $rows = array();
         foreach ( (array) $state['pages'] as $stored_page ) {
             if ( ! array_key_exists( $key, (array) ( $stored_page['flags'] ?? array() ) ) ) {
@@ -1085,6 +1170,70 @@ class Content_Health {
         }
 
         return self::paginated_detail_response( 'pages', $key, $rows, $page, $per_page );
+    }
+
+    /**
+     * Unique missing-alt featured images, each with every affected page.
+     *
+     * @param array|null $state Optional stored scan state.
+     * @return array<int,array<string,mixed>>
+     */
+    private static function featured_attachment_rows( $state = null ) {
+        $state = $state ?: self::get_state();
+        $by_attachment = array();
+
+        foreach ( (array) ( $state['pages'] ?? array() ) as $stored_page ) {
+            if ( ! array_key_exists( 'alt_featured', (array) ( $stored_page['flags'] ?? array() ) ) ) {
+                continue;
+            }
+            $post_id       = (int) ( $stored_page['post_id'] ?? 0 );
+            $attachment_id = (int) get_post_thumbnail_id( $post_id );
+            if ( ! $post_id || ! $attachment_id ) {
+                continue;
+            }
+
+            if ( ! isset( $by_attachment[ $attachment_id ] ) ) {
+                $attachment_title = self::display_text( get_the_title( $attachment_id ) );
+                if ( '' === $attachment_title ) {
+                    $attachment_title = basename( (string) get_attached_file( $attachment_id ) );
+                }
+                $by_attachment[ $attachment_id ] = array(
+                    // post_id stays as the first affected page for old clients;
+                    // current clients key selection and writes by attachment_id.
+                    'post_id'          => $post_id,
+                    'attachment_id'    => $attachment_id,
+                    'title'            => $attachment_title ?: 'Featured image',
+                    'attachment_title' => $attachment_title,
+                    'image_url'        => (string) ( wp_get_attachment_image_url( $attachment_id, 'medium_large' ) ?: wp_get_attachment_image_url( $attachment_id, 'thumbnail' ) ),
+                    'edit_url'         => get_edit_post_link( $attachment_id, 'raw' ),
+                    'view_url'         => '',
+                    'affected_count'   => 0,
+                    'affected_pages'   => array(),
+                );
+            }
+
+            $by_attachment[ $attachment_id ]['affected_count']++;
+            $by_attachment[ $attachment_id ]['affected_pages'][] = array(
+                'post_id'  => $post_id,
+                'title'    => self::display_text( $stored_page['title'] ?? '' ),
+                'type'     => (string) ( $stored_page['type'] ?? '' ),
+                'edit_url' => get_edit_post_link( $post_id, 'raw' ),
+                'view_url' => get_permalink( $post_id ),
+            );
+        }
+
+        foreach ( $by_attachment as &$row ) {
+            $count         = (int) $row['affected_count'];
+            $row['detail'] = sprintf( 'Used as the featured image on %d published %s', $count, 1 === $count ? 'page' : 'pages' );
+        }
+        unset( $row );
+
+        uasort( $by_attachment, static function ( $a, $b ) {
+            $count = (int) ( $b['affected_count'] ?? 0 ) <=> (int) ( $a['affected_count'] ?? 0 );
+            return 0 !== $count ? $count : strcasecmp( (string) ( $a['title'] ?? '' ), (string) ( $b['title'] ?? '' ) );
+        } );
+
+        return array_values( $by_attachment );
     }
 
     /** Evidence needed to preview a repair without opening the post editor. */
@@ -1162,6 +1311,261 @@ class Content_Health {
         }
     }
 
+    /**
+     * Inspect one selected featured image and draft alt text for review.
+     *
+     * Nothing is written here. The reviewed value must come back through
+     * apply_fixes(), which keeps generation and publication as two deliberate
+     * user actions. The AI proxy charges exactly FEATURED_ALT_CREDITS for a
+     * usable result and does not charge failed or unreadable attempts.
+     *
+     * @param int $attachment_id Media Library attachment ID.
+     * @return array|\WP_Error
+     */
+    public static function generate_featured_alt( $attachment_id ) {
+        $attachment_id = absint( $attachment_id );
+        if ( ! $attachment_id || ! wp_attachment_is_image( $attachment_id ) || ! current_user_can( 'edit_post', $attachment_id ) ) {
+            return new \WP_Error( 'asgm_featured_alt_permission', 'You cannot edit this featured image.', array( 'status' => 403 ) );
+        }
+
+        $existing = self::trim_text( (string) get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ) );
+        if ( '' !== $existing ) {
+            return new \WP_Error( 'asgm_featured_alt_resolved', 'This image already has alt text. Re-scan Content Health before generating another value.', array( 'status' => 409 ) );
+        }
+
+        $matches = array_values( array_filter( self::featured_attachment_rows(), static function ( $row ) use ( $attachment_id ) {
+            return (int) ( $row['attachment_id'] ?? 0 ) === $attachment_id;
+        } ) );
+        if ( empty( $matches ) ) {
+            return new \WP_Error( 'asgm_featured_alt_stale', 'This image is no longer in the current featured-image findings. Re-scan Content Health.', array( 'status' => 409 ) );
+        }
+
+        $image_input = self::featured_image_input( $attachment_id );
+        if ( is_wp_error( $image_input ) ) {
+            return $image_input;
+        }
+
+        $row          = $matches[0];
+        $context_rows = array();
+        foreach ( array_slice( (array) ( $row['affected_pages'] ?? array() ), 0, 20 ) as $page ) {
+            $context_rows[] = sprintf(
+                '%s: %s',
+                sanitize_text_field( (string) ( $page['type'] ?? 'content' ) ),
+                sanitize_text_field( (string) ( $page['title'] ?? 'Untitled' ) )
+            );
+        }
+
+        $proposal = self::generate_alt_proposal(
+            $image_input,
+            sanitize_text_field( (string) ( $row['attachment_title'] ?? '' ) ),
+            implode( "\n", $context_rows )
+        );
+        if ( is_wp_error( $proposal ) ) {
+            return $proposal;
+        }
+
+        return array(
+            'success'        => true,
+            'attachment_id'  => $attachment_id,
+            'alt_text'       => $proposal['alt_text'],
+            'affected_count' => (int) ( $row['affected_count'] ?? 0 ),
+            'credits_taken'  => self::FEATURED_ALT_CREDITS,
+            'credits'        => $proposal['credits'],
+        );
+    }
+
+    /**
+     * Inspect one unresolved image inside a page and draft alt text for review.
+     *
+     * @param int    $post_id Editable post containing the image.
+     * @param string $src     Exact image source from the saved post content.
+     * @return array|\WP_Error
+     */
+    public static function generate_image_alt( $post_id, $src ) {
+        $post_id = absint( $post_id );
+        $src     = esc_url_raw( (string) $src );
+        if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+            return new \WP_Error( 'asgm_image_alt_permission', 'You cannot edit this page.', array( 'status' => 403 ) );
+        }
+        if ( '' === $src ) {
+            return new \WP_Error( 'asgm_image_alt_source', 'Choose an image to inspect.', array( 'status' => 400 ) );
+        }
+
+        $matching_image = null;
+        foreach ( array( 'alt_missing', 'alt_empty' ) as $finding ) {
+            foreach ( (array) ( self::repair_context( $finding, $post_id )['images'] ?? array() ) as $image ) {
+                if ( hash_equals( (string) ( $image['src'] ?? '' ), $src ) ) {
+                    $matching_image = $image;
+                    break 2;
+                }
+            }
+        }
+        if ( ! $matching_image ) {
+            return new \WP_Error( 'asgm_image_alt_stale', 'This image no longer needs alt text. Re-scan Content Health.', array( 'status' => 409 ) );
+        }
+        if ( empty( $matching_image['editable'] ) ) {
+            return new \WP_Error( 'asgm_image_alt_pattern', 'This image comes from a synced pattern. Edit the pattern instead.', array( 'status' => 409 ) );
+        }
+
+        $image_input = self::image_input_from_src( $src );
+        if ( is_wp_error( $image_input ) ) {
+            return $image_input;
+        }
+
+        $post_type = get_post_type_object( get_post_type( $post_id ) );
+        $context   = sprintf(
+            '%s: %s',
+            sanitize_text_field( (string) ( $post_type->labels->singular_name ?? 'Page' ) ),
+            sanitize_text_field( (string) get_the_title( $post_id ) )
+        );
+        $proposal = self::generate_alt_proposal( $image_input, wp_basename( wp_parse_url( $src, PHP_URL_PATH ) ?: $src ), $context );
+        if ( is_wp_error( $proposal ) ) {
+            return $proposal;
+        }
+
+        return array(
+            'success'       => true,
+            'post_id'       => $post_id,
+            'src'           => $src,
+            'alt_text'      => $proposal['alt_text'],
+            'credits_taken' => self::FEATURED_ALT_CREDITS,
+            'credits'       => $proposal['credits'],
+        );
+    }
+
+    /** Use a local Media Library file when possible, otherwise its public URL. */
+    private static function image_input_from_src( $src ) {
+        $lookup_src = $src;
+        $src_host   = strtolower( (string) wp_parse_url( $src, PHP_URL_HOST ) );
+        $home_host  = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+        if ( $src_host && $home_host && hash_equals( $home_host, $src_host ) ) {
+            $lookup_src = set_url_scheme( $src, (string) wp_parse_url( home_url(), PHP_URL_SCHEME ) );
+        }
+
+        $attachment_id = attachment_url_to_postid( $lookup_src );
+        if ( ! $attachment_id ) {
+            $original = preg_replace( '/-\d+x\d+(?=\.[^.]+$)/', '', $lookup_src );
+            if ( is_string( $original ) && $original !== $lookup_src ) {
+                $attachment_id = attachment_url_to_postid( $original );
+            }
+        }
+        if ( $attachment_id && wp_attachment_is_image( $attachment_id ) ) {
+            return self::featured_image_input( $attachment_id );
+        }
+        return preg_match( '#^https?://#i', $src ) ? $src : new \WP_Error( 'asgm_image_alt_file', 'WordPress could not prepare this image for inspection.', array( 'status' => 400 ) );
+    }
+
+    /** Call the vision proxy without saving; successful proposals cost two credits. */
+    private static function generate_alt_proposal( $image_input, $title, $context ) {
+        $credits = MetadataGenerator::get_credits();
+        if ( ! empty( $credits['success'] ) && (int) ( $credits['remaining'] ?? 0 ) < self::FEATURED_ALT_CREDITS ) {
+            return new \WP_Error(
+                'asgm_image_alt_credits',
+                sprintf( 'Not enough credits. This image needs %d credits and you have %d.', self::FEATURED_ALT_CREDITS, (int) ( $credits['remaining'] ?? 0 ) ),
+                array( 'status' => 429, 'needed' => self::FEATURED_ALT_CREDITS, 'remaining' => (int) ( $credits['remaining'] ?? 0 ) )
+            );
+        }
+
+        $license_key = License::is_pro_build() ? License::get_key() : '';
+        $response = wp_remote_post( MetadataGenerator::API_URL, array(
+            'body'    => wp_json_encode( array(
+                'license_key' => $license_key,
+                'task'        => 'featured_image_alt',
+                'title'       => sanitize_text_field( (string) $title ),
+                'content'     => sanitize_textarea_field( (string) $context ),
+                'image_data'  => $image_input,
+                'request_id'  => self::new_ai_request_id(),
+                'site_url'    => home_url(),
+            ) ),
+            'headers' => array( 'Content-Type' => 'application/json' ),
+            'timeout' => 60,
+        ) );
+        if ( is_wp_error( $response ) ) {
+            return new \WP_Error( 'asgm_image_alt_remote', 'The image could not be sent for inspection. Nothing was charged. ' . $response->get_error_message(), array( 'status' => 502 ) );
+        }
+
+        $status = (int) wp_remote_retrieve_response_code( $response );
+        $body   = json_decode( wp_remote_retrieve_body( $response ), true );
+        if ( 200 !== $status || ! is_array( $body ) || empty( $body['success'] ) ) {
+            return new \WP_Error(
+                'asgm_image_alt_proxy',
+                (string) ( $body['error'] ?? 'The AI service could not inspect this image. Nothing was saved.' ),
+                array( 'status' => $status ?: 502, 'credits' => $body['credits'] ?? null )
+            );
+        }
+
+        $alt = sanitize_text_field( (string) ( $body['result']['alt_text'] ?? '' ) );
+        $alt = self::trim_text( function_exists( 'mb_substr' ) ? mb_substr( $alt, 0, 250 ) : substr( $alt, 0, 250 ) );
+        if ( '' === $alt ) {
+            return new \WP_Error( 'asgm_image_alt_empty', 'The AI did not return usable alt text. Nothing was saved.', array( 'status' => 502 ) );
+        }
+
+        if ( empty( $license_key ) ) {
+            MetadataGenerator::use_free_credits( self::FEATURED_ALT_CREDITS );
+            $credits = MetadataGenerator::get_credits();
+        } else {
+            $credits = is_array( $body['credits'] ?? null ) ? $body['credits'] : MetadataGenerator::get_credits();
+        }
+
+        return array( 'alt_text' => $alt, 'credits' => $credits );
+    }
+
+    /** Build a bounded image data URL, or a public URL for offloaded media. */
+    private static function featured_image_input( $attachment_id ) {
+        $mime    = (string) get_post_mime_type( $attachment_id );
+        $allowed = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp' );
+        if ( ! in_array( $mime, $allowed, true ) ) {
+            return new \WP_Error( 'asgm_featured_alt_type', 'This image format cannot be inspected. Use JPEG, PNG, GIF, or WebP.', array( 'status' => 400 ) );
+        }
+
+        $full       = (string) get_attached_file( $attachment_id );
+        $metadata   = wp_get_attachment_metadata( $attachment_id );
+        $candidates = array();
+        if ( $full && is_array( $metadata ) ) {
+            $base = trailingslashit( dirname( $full ) );
+            foreach ( array( 'medium_large', 'large', 'medium', 'thumbnail' ) as $size ) {
+                $file = (string) ( $metadata['sizes'][ $size ]['file'] ?? '' );
+                if ( '' !== $file ) {
+                    $candidates[] = $base . wp_basename( $file );
+                }
+            }
+        }
+        if ( $full ) {
+            $candidates[] = $full;
+        }
+
+        foreach ( array_unique( $candidates ) as $path ) {
+            if ( ! is_readable( $path ) ) {
+                continue;
+            }
+            $size = filesize( $path );
+            if ( false === $size || $size <= 0 || $size > self::MAX_VISION_IMAGE_BYTES ) {
+                continue;
+            }
+            $bytes = file_get_contents( $path );
+            if ( false !== $bytes && '' !== $bytes ) {
+                return 'data:' . $mime . ';base64,' . base64_encode( $bytes );
+            }
+        }
+
+        // Offloaded-media plugins may intentionally have no local file. A
+        // public HTTP(S) attachment URL still lets the vision model inspect it.
+        $url = esc_url_raw( (string) wp_get_attachment_url( $attachment_id ) );
+        if ( preg_match( '#^https?://#i', $url ) ) {
+            return $url;
+        }
+
+        return new \WP_Error( 'asgm_featured_alt_file', 'WordPress could not prepare this image for inspection. The file may be missing or larger than 4 MB.', array( 'status' => 400 ) );
+    }
+
+    /** Per-call idempotency key, so a network retry cannot charge twice. */
+    private static function new_ai_request_id() {
+        if ( function_exists( 'wp_generate_uuid4' ) ) {
+            return wp_generate_uuid4();
+        }
+        return 'aegm-' . substr( md5( uniqid( '', true ) . wp_rand() ), 0, 28 );
+    }
+
     /** Apply reviewed, deterministic Content Health repairs. */
     public static function apply_fixes( $key, $items ) {
         $key     = sanitize_key( (string) $key );
@@ -1173,6 +1577,46 @@ class Content_Health {
         $written = array();
         foreach ( array_slice( (array) $items, 0, 50 ) as $item ) {
             $post_id = absint( $item['post_id'] ?? 0 );
+
+            if ( 'alt_featured' === $key ) {
+                $attachment_id = absint( $item['attachment_id'] ?? 0 );
+                if ( ! $attachment_id && $post_id ) {
+                    // Backward compatibility for clients that still submit the
+                    // affected page rather than the shared attachment.
+                    $attachment_id = (int) get_post_thumbnail_id( $post_id );
+                }
+                $alt = sanitize_text_field( (string) ( $item['alt_text'] ?? '' ) );
+                if ( ! $attachment_id || ! wp_attachment_is_image( $attachment_id ) || ! current_user_can( 'edit_post', $attachment_id ) ) {
+                    $written[] = array( 'attachment_id' => $attachment_id, 'success' => false, 'error' => 'You cannot edit this featured image.' );
+                    continue;
+                }
+                if ( '' === self::trim_text( $alt ) ) {
+                    $written[] = array( 'attachment_id' => $attachment_id, 'success' => false, 'error' => 'Enter useful alt text before saving.' );
+                    continue;
+                }
+
+                $affected = array_values( array_filter( self::featured_attachment_rows(), static function ( $row ) use ( $attachment_id ) {
+                    return (int) ( $row['attachment_id'] ?? 0 ) === $attachment_id;
+                } ) );
+                if ( empty( $affected ) ) {
+                    $written[] = array( 'attachment_id' => $attachment_id, 'success' => false, 'error' => 'This image is no longer an unresolved featured-image finding. Re-scan Content Health.' );
+                    continue;
+                }
+
+                update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+                $affected_pages = (array) ( $affected[0]['affected_pages'] ?? array() );
+                $written[]      = array(
+                    'attachment_id'    => $attachment_id,
+                    'post_id'          => (int) ( $affected[0]['post_id'] ?? 0 ),
+                    'success'          => true,
+                    'affected_count'   => count( $affected_pages ),
+                    'affected_post_ids' => array_values( array_map( static function ( $page ) {
+                        return (int) ( $page['post_id'] ?? 0 );
+                    }, $affected_pages ) ),
+                );
+                continue;
+            }
+
             if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
                 $written[] = array( 'post_id' => $post_id, 'success' => false, 'error' => 'You cannot edit this page.' );
                 continue;
@@ -1194,18 +1638,6 @@ class Content_Health {
                 $written[] = is_wp_error( $result )
                     ? array( 'post_id' => $post_id, 'success' => false, 'error' => $result->get_error_message() )
                     : array( 'post_id' => $post_id, 'success' => true, 'changed' => $changed );
-                continue;
-            }
-
-            if ( 'alt_featured' === $key ) {
-                $attachment_id = (int) get_post_thumbnail_id( $post_id );
-                $alt           = sanitize_text_field( (string) ( $item['alt_text'] ?? '' ) );
-                if ( ! $attachment_id || '' === self::trim_text( $alt ) ) {
-                    $written[] = array( 'post_id' => $post_id, 'success' => false, 'error' => 'Enter useful alt text before saving.' );
-                    continue;
-                }
-                update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
-                $written[] = array( 'post_id' => $post_id, 'success' => true, 'attachment_id' => $attachment_id );
                 continue;
             }
 
