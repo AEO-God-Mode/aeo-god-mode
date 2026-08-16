@@ -370,6 +370,12 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/research', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_topical_research' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             // ---- Consensus Score (Growth) ----
             register_rest_route( self::NAMESPACE, '/consensus-score', array(
                 'methods'             => 'POST',
@@ -482,6 +488,22 @@ class API {
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_recommendations' ),
                 'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/extended', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_gsc_extended' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/gsc/ai-visibility/import', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'import_gsc_ai_visibility' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+                'args'                => array(
+                    'csv' => array( 'required' => true, 'type' => 'string' ),
+                    'filename' => array( 'required' => false, 'type' => 'string' ),
+                ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/keyword-optimize', array(
@@ -2644,6 +2666,30 @@ class API {
     public function get_gsc_recommendations() {
         $gsc = new GSC();
         return rest_ensure_response( $gsc->get_recommendations() );
+    }
+
+    /**
+     * Get sitemap, device/country, hourly and imported Google AI evidence.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_gsc_extended() {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->get_extended_data() );
+    }
+
+    /**
+     * Import a CSV exported from Google's generative AI performance report.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response|\WP_Error
+     */
+    public function import_gsc_ai_visibility( $request ) {
+        $gsc = new GSC();
+        return rest_ensure_response( $gsc->import_ai_visibility_csv(
+            (string) $request->get_param( 'csv' ),
+            (string) $request->get_param( 'filename' )
+        ) );
     }
 
     // -----------------------------------------------------------------------
@@ -4982,6 +5028,27 @@ HARD RULES
         }
         $stored = \AISEOGodMode\Topical_Map::save_seeds( $list );
         return new \WP_REST_Response( array( 'success' => true, 'seed_keywords' => $stored ), 200 );
+    }
+
+    /**
+     * Save cleaned third-party topic research for the Territory Designer.
+     * It is deliberately kept separate from measured market keywords so an
+     * imported AEO angle never inherits the source phrase's search volume.
+     */
+    public function save_topical_research( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $rows = $request->get_param( 'rows' );
+        if ( ! is_array( $rows ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Send research rows as a list.' ), 400 );
+        }
+        $summary = \AISEOGodMode\Topical_Map::save_research(
+            $rows,
+            sanitize_text_field( (string) ( $request->get_param( 'source' ) ?? '' ) )
+        );
+        return new \WP_REST_Response( array( 'success' => true, 'research' => $summary ), 200 );
     }
 
     /* ─── Consensus Score (Growth) ─── */

@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class DraftQuality {
 
     /** Contract version persisted with each evaluation. */
-    const CONTRACT_VERSION = 3;
+    const CONTRACT_VERSION = 4;
 
     /** Post-meta key containing the latest evaluation. */
     const META_KEY = '_asgm_draft_quality';
@@ -369,8 +369,9 @@ class DraftQuality {
             true
         );
 
-        $missing_links = array();
-        $duplicate_links = array();
+        $missing_links     = array();
+        $duplicate_links   = array();
+        $anchor_mismatches = array();
         foreach ( $expectations['internal_urls'] as $url ) {
             $occurrences = self::url_occurrences( (string) $post->post_content, $url );
             if ( 0 === $occurrences ) {
@@ -379,19 +380,42 @@ class DraftQuality {
                 $duplicate_links[] = $url;
             }
         }
-        $link_status = ! empty( $missing_links ) ? 'fail' : ( ! empty( $duplicate_links ) ? 'warn' : 'pass' );
+        foreach ( $expectations['internal_links'] as $planned_link ) {
+            $expected_anchor = self::normalize_anchor_text( (string) ( $planned_link['anchor'] ?? '' ) );
+            if ( '' === $expected_anchor || in_array( $planned_link['url'], $missing_links, true ) ) {
+                continue;
+            }
+
+            $actual_anchors = self::anchor_texts_for_url( (string) $post->post_content, $planned_link['url'] );
+            if ( ! in_array( $expected_anchor, $actual_anchors, true ) ) {
+                $anchor_mismatches[] = array(
+                    'url'      => $planned_link['url'],
+                    'expected' => $planned_link['anchor'],
+                    'actual'   => $actual_anchors,
+                );
+            }
+        }
+        $link_status = ( ! empty( $missing_links ) || ! empty( $anchor_mismatches ) )
+            ? 'fail'
+            : ( ! empty( $duplicate_links ) ? 'warn' : 'pass' );
         self::add_check(
             $checks,
             'planned_links',
             __( 'Planned internal links', 'aeo-god-mode' ),
             $link_status,
-            empty( $missing_links )
-                ? ( empty( $duplicate_links )
-                    ? sprintf( __( 'All %d planned links are present exactly once.', 'aeo-god-mode' ), count( $expectations['internal_urls'] ) )
-                    : sprintf( __( '%d planned link(s) appear more than once.', 'aeo-god-mode' ), count( $duplicate_links ) ) )
-                : sprintf( __( '%d planned link(s) are missing.', 'aeo-god-mode' ), count( $missing_links ) ),
+            ! empty( $missing_links )
+                ? sprintf( __( '%d planned link(s) are missing.', 'aeo-god-mode' ), count( $missing_links ) )
+                : ( ! empty( $anchor_mismatches )
+                    ? sprintf( __( '%d planned link(s) use different anchor text.', 'aeo-god-mode' ), count( $anchor_mismatches ) )
+                    : ( empty( $duplicate_links )
+                        ? sprintf( __( 'All %d planned links and anchors are present exactly once.', 'aeo-god-mode' ), count( $expectations['internal_urls'] ) )
+                        : sprintf( __( '%d planned link(s) appear more than once.', 'aeo-god-mode' ), count( $duplicate_links ) ) ) ),
             true,
-            array( 'missing_urls' => $missing_links, 'duplicate_urls' => $duplicate_links )
+            array(
+                'missing_urls'      => $missing_links,
+                'duplicate_urls'    => $duplicate_links,
+                'anchor_mismatches' => $anchor_mismatches,
+            )
         );
 
         self::add_format_check( $checks, $post, $expectations['format'], $gaps, $faq_count );
@@ -632,30 +656,110 @@ class DraftQuality {
             }
         }
 
+        $links = array();
+        foreach ( (array) ( $expectations['internal_links'] ?? array() ) as $link ) {
+            if ( ! is_array( $link ) ) {
+                continue;
+            }
+            $url    = esc_url_raw( (string) ( $link['url'] ?? '' ) );
+            $anchor = sanitize_text_field( (string) ( $link['anchor'] ?? '' ) );
+            if ( ! $url ) {
+                continue;
+            }
+            $urls[]        = $url;
+            $links[ $url ] = array(
+                'url'    => $url,
+                'anchor' => $anchor,
+            );
+        }
+
         return array(
-            'length'        => 'long' === ( $expectations['length'] ?? '' ) ? 'long' : 'standard',
-            'format'        => sanitize_key( (string) ( $expectations['format'] ?? 'guide' ) ),
-            'faq_min'       => max( 2, min( 8, (int) ( $expectations['faq_min'] ?? 4 ) ) ),
-            'faq_max'       => max( 2, min( 8, (int) ( $expectations['faq_max'] ?? 6 ) ) ),
-            'internal_urls' => array_values( array_unique( $urls ) ),
+            'length'         => 'long' === ( $expectations['length'] ?? '' ) ? 'long' : 'standard',
+            'format'         => sanitize_key( (string) ( $expectations['format'] ?? 'guide' ) ),
+            'faq_min'        => max( 2, min( 8, (int) ( $expectations['faq_min'] ?? 4 ) ) ),
+            'faq_max'        => max( 2, min( 8, (int) ( $expectations['faq_max'] ?? 6 ) ) ),
+            'internal_urls'  => array_values( array_unique( $urls ) ),
+            'internal_links' => array_values( $links ),
         );
     }
 
     /** Keep provenance useful for audits without accepting arbitrary data. */
     private static function normalize_provenance( $provenance ) {
+        $secondary_keywords = array();
+        foreach ( array_slice( (array) ( $provenance['secondary_keywords'] ?? array() ), 0, 12 ) as $keyword ) {
+            $item = is_array( $keyword ) ? $keyword : array( 'keyword' => $keyword );
+            $text = sanitize_text_field( (string) ( $item['keyword'] ?? '' ) );
+            if ( '' === $text ) {
+                continue;
+            }
+            $secondary_keywords[] = array(
+                'keyword' => $text,
+                'volume'  => max( 0, (int) ( $item['volume'] ?? 0 ) ),
+                'source'  => sanitize_key( (string) ( $item['source'] ?? '' ) ),
+            );
+        }
+
         return array(
-            'source'         => sanitize_key( (string) ( $provenance['source'] ?? '' ) ),
-            'map_item_id'    => absint( $provenance['map_item_id'] ?? 0 ),
-            'model'          => sanitize_text_field( (string) ( $provenance['model'] ?? '' ) ),
-            'prompt_version' => sanitize_text_field( (string) ( $provenance['prompt_version'] ?? '' ) ),
-            'request_id'     => sanitize_text_field( (string) ( $provenance['request_id'] ?? '' ) ),
-            'generated_at'   => sanitize_text_field( (string) ( $provenance['generated_at'] ?? '' ) ),
-            'scorers'        => array(
+            'source'            => sanitize_key( (string) ( $provenance['source'] ?? '' ) ),
+            'map_item_id'       => absint( $provenance['map_item_id'] ?? 0 ),
+            'model'             => sanitize_text_field( (string) ( $provenance['model'] ?? '' ) ),
+            'prompt_version'    => sanitize_text_field( (string) ( $provenance['prompt_version'] ?? '' ) ),
+            'request_id'        => sanitize_text_field( (string) ( $provenance['request_id'] ?? '' ) ),
+            'generated_at'      => sanitize_text_field( (string) ( $provenance['generated_at'] ?? '' ) ),
+            'planned_slug'      => sanitize_title( (string) ( $provenance['planned_slug'] ?? '' ) ),
+            'planned_url'       => esc_url_raw( (string) ( $provenance['planned_url'] ?? '' ) ),
+            'target_provenance' => self::normalize_target_provenance( $provenance['target_provenance'] ?? null ),
+            'secondary_keywords' => $secondary_keywords,
+            'scorers'           => array(
                 'page_health'   => ContentGaps::SCORE_VERSION,
                 'rendered_page' => defined( __NAMESPACE__ . '\\RenderedPageEvaluator::SCORE_VERSION' ) ? RenderedPageEvaluator::SCORE_VERSION : null,
                 'answer_density' => defined( __NAMESPACE__ . '\\Answer_Density::SCORE_VERSION' ) ? Answer_Density::SCORE_VERSION : null,
                 'citability'    => defined( __NAMESPACE__ . '\\CitabilityScore::SCORE_VERSION' ) ? CitabilityScore::SCORE_VERSION : null,
             ),
+        );
+    }
+
+    /** Keep the selected GSC/market target and its bounded evidence auditable. */
+    private static function normalize_target_provenance( $target ) {
+        if ( ! is_array( $target ) ) {
+            return null;
+        }
+
+        $evidence = is_array( $target['evidence'] ?? null ) ? $target['evidence'] : null;
+        if ( is_array( $evidence ) ) {
+            $rows = array();
+            foreach ( array_slice( (array) ( $evidence['rows'] ?? array() ), 0, 10 ) as $row ) {
+                if ( ! is_array( $row ) ) {
+                    continue;
+                }
+                $rows[] = array(
+                    'page'        => esc_url_raw( (string) ( $row['page'] ?? '' ) ),
+                    'impressions' => max( 0, (int) ( $row['impressions'] ?? 0 ) ),
+                    'clicks'      => max( 0, (int) ( $row['clicks'] ?? 0 ) ),
+                    'ctr'         => max( 0, (float) ( $row['ctr'] ?? 0 ) ),
+                    'position'    => max( 0, (float) ( $row['position'] ?? 0 ) ),
+                );
+            }
+            $evidence = array(
+                'query'       => sanitize_text_field( (string) ( $evidence['query'] ?? '' ) ),
+                'keyword'     => sanitize_text_field( (string) ( $evidence['keyword'] ?? '' ) ),
+                'page'        => esc_url_raw( (string) ( $evidence['page'] ?? '' ) ),
+                'impressions' => max( 0, (int) ( $evidence['impressions'] ?? 0 ) ),
+                'clicks'      => max( 0, (int) ( $evidence['clicks'] ?? 0 ) ),
+                'ctr'         => max( 0, (float) ( $evidence['ctr'] ?? 0 ) ),
+                'position'    => max( 0, (float) ( $evidence['position'] ?? 0 ) ),
+                'volume'      => max( 0, (int) ( $evidence['volume'] ?? 0 ) ),
+                'intent'      => sanitize_key( (string) ( $evidence['intent'] ?? '' ) ),
+                'rows'        => $rows,
+            );
+        }
+
+        return array(
+            'driver'      => sanitize_key( (string) ( $target['driver'] ?? '' ) ),
+            'target'      => sanitize_text_field( (string) ( $target['target'] ?? '' ) ),
+            'source'      => sanitize_key( (string) ( $target['source'] ?? '' ) ),
+            'exact_match' => ! empty( $target['exact_match'] ),
+            'evidence'    => $evidence,
         );
     }
 
@@ -783,5 +887,28 @@ class DraftQuality {
 
         $pattern = '/href\s*=\s*(["\'])' . preg_quote( $needle, '/' ) . '\/?(?:[#?][^"\']*)?\1/i';
         return preg_match_all( $pattern, $content, $matches );
+    }
+
+    /** Return normalized linked text for every anchor pointing at a planned URL. */
+    private static function anchor_texts_for_url( $content, $url ) {
+        $content = html_entity_decode( (string) $content, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+        $needle  = untrailingslashit( (string) $url );
+        if ( '' === $needle ) {
+            return array();
+        }
+
+        $pattern = '/<a\b[^>]*href\s*=\s*(["\'])' . preg_quote( $needle, '/' ) . '\/?(?:[#?][^"\']*)?\1[^>]*>(.*?)<\/a>/is';
+        if ( ! preg_match_all( $pattern, $content, $matches ) ) {
+            return array();
+        }
+
+        return array_values( array_filter( array_map( array( __CLASS__, 'normalize_anchor_text' ), $matches[2] ) ) );
+    }
+
+    /** Normalize planned and rendered anchor text for a deterministic comparison. */
+    private static function normalize_anchor_text( $text ) {
+        $text = html_entity_decode( wp_strip_all_tags( (string) $text ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+        $text = preg_replace( '/\s+/u', ' ', trim( $text ) );
+        return function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
     }
 }

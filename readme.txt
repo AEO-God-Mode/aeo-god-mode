@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.40
+Stable tag: 1.6.44
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -153,6 +153,24 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.44 =
+* No fixed ceiling for topical authority plans
+* Safe duplicate-resistant expansion across repeated design passes
+
+= 1.6.43 =
+* Keeps redesigned topical maps clean by retiring obsolete AI suggestions
+* Preserves and reactivates previously selected ideas when relevant again
+
+= 1.6.42 =
+* Curated topic research signals for stronger authority maps
+* evidence-safe demand handling
+* and research visibility in the Topical Map
+
+= 1.6.41 =
+* Expanded Topical Map authority plans to 100–150 focused article opportunities
+* Added planned WordPress categories, publish-next priorities, and future internal links
+* Generated Topical Map drafts now reuse or create their planned category automatically
 
 = 1.6.40 =
 * Content Health bulk fixes and verified rescans
