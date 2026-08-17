@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class DraftQuality {
 
     /** Contract version persisted with each evaluation. */
-    const CONTRACT_VERSION = 5;
+    const CONTRACT_VERSION = 6;
 
     /** Post-meta key containing the latest evaluation. */
     const META_KEY = '_asgm_draft_quality';
@@ -372,12 +372,25 @@ class DraftQuality {
             ? FaqParser::parse_aeogm( (string) $post->post_content )
             : array( 'pairs' => array(), 'wrapper_balanced' => false, 'item_open_count' => 0, 'item_close_count' => 0 );
         $faq_count  = count( (array) $faq_parse['pairs'] );
+        $custom_faq = self::required_shortcode_by_name( $expectations['required_shortcodes'], 'faq' );
+        if ( $custom_faq ) {
+            $custom_faq_report = self::shortcode_report( (string) $post->post_content, $custom_faq );
+            $faq_count          = (int) $custom_faq_report['complete'];
+            $faq_parse          = array(
+                'pairs'             => array_fill( 0, $faq_count, array() ),
+                'wrapper_balanced'  => ! empty( $custom_faq_report['balanced'] ),
+                'item_open_count'   => (int) $custom_faq_report['open'],
+                'item_close_count'  => (int) $custom_faq_report['close'],
+            );
+        }
         $faq_absent = 0 === $faq_count
             && 0 === (int) ( $faq_parse['item_open_count'] ?? 0 )
             && 0 === (int) ( $faq_parse['item_close_count'] ?? 0 );
-        $faq_ok     = ( 0 === $expectations['faq_min'] && $faq_absent )
-            || ( $faq_count >= $expectations['faq_min']
-                && $faq_count <= $expectations['faq_max']
+        $faq_required_min = $custom_faq ? max( 1, (int) ( $custom_faq['min_occurrences'] ?? 1 ) ) : $expectations['faq_min'];
+        $faq_required_max = $custom_faq ? 20 : $expectations['faq_max'];
+        $faq_ok     = ( 0 === $faq_required_min && $faq_absent )
+            || ( $faq_count >= $faq_required_min
+                && $faq_count <= $faq_required_max
                 && ! empty( $faq_parse['wrapper_balanced'] )
                 && $faq_count === (int) $faq_parse['item_open_count']
                 && $faq_count === (int) $faq_parse['item_close_count'] );
@@ -386,17 +399,19 @@ class DraftQuality {
             'faq_contract',
             __( 'FAQ contract', 'aeo-god-mode' ),
             $faq_ok ? 'pass' : 'fail',
-            ( 0 === $expectations['faq_min'] && $faq_absent )
+            ( 0 === $faq_required_min && $faq_absent )
                 ? __( 'FAQ is optional for this recipe; no FAQ block was added.', 'aeo-god-mode' )
                 : sprintf(
                     /* translators: 1: FAQ count, 2: minimum, 3: maximum */
                     __( '%1$d complete FAQ items; expected %2$d–%3$d inside one balanced wrapper.', 'aeo-god-mode' ),
                     $faq_count,
-                    $expectations['faq_min'],
-                    $expectations['faq_max']
+                    $faq_required_min,
+                    $faq_required_max
                 ),
             true
         );
+
+        self::add_required_formatting_check( $checks, (string) $post->post_content, $expectations['required_shortcodes'] );
 
         $missing_links     = array();
         $duplicate_links   = array();
@@ -748,6 +763,31 @@ class DraftQuality {
             $word_max = max( $word_min, min( 6000, $word_max ) );
         }
 
+        $required_shortcodes = array();
+        foreach ( array_slice( (array) ( $expectations['required_shortcodes'] ?? array() ), 0, 20 ) as $shortcode ) {
+            if ( ! is_array( $shortcode ) ) {
+                continue;
+            }
+            $name = sanitize_key( (string) ( $shortcode['name'] ?? '' ) );
+            if ( '' === $name ) {
+                continue;
+            }
+            $attributes = array();
+            foreach ( array_slice( (array) ( $shortcode['required_attributes'] ?? array() ), 0, 10 ) as $attribute ) {
+                $attribute = sanitize_key( (string) $attribute );
+                if ( '' !== $attribute ) {
+                    $attributes[] = $attribute;
+                }
+            }
+            $required_shortcodes[ $name ] = array(
+                'name'                => $name,
+                'opening_example'     => sanitize_text_field( (string) ( $shortcode['opening_example'] ?? '[' . $name . ']' ) ),
+                'closing_example'     => '[/' . $name . ']',
+                'required_attributes' => array_values( array_unique( $attributes ) ),
+                'min_occurrences'     => max( 1, min( 10, (int) ( $shortcode['min_occurrences'] ?? 1 ) ) ),
+            );
+        }
+
         return array(
             'length'         => 'long' === ( $expectations['length'] ?? '' ) ? 'long' : 'standard',
             'format'         => sanitize_key( (string) ( $expectations['format'] ?? 'guide' ) ),
@@ -764,6 +804,70 @@ class DraftQuality {
             'faq_max'        => $faq_max,
             'internal_urls'  => array_values( array_unique( $urls ) ),
             'internal_links' => array_values( $links ),
+            'required_shortcodes' => array_values( $required_shortcodes ),
+        );
+    }
+
+    /** Find one required shortcode by canonical name. */
+    private static function required_shortcode_by_name( $items, $name ) {
+        foreach ( (array) $items as $item ) {
+            if ( $name === (string) ( $item['name'] ?? '' ) ) {
+                return $item;
+            }
+        }
+        return null;
+    }
+
+    /** Count balanced shortcode pairs and required opening attributes. */
+    private static function shortcode_report( $content, $rule ) {
+        $name  = preg_quote( (string) ( $rule['name'] ?? '' ), '/' );
+        $open  = preg_match_all( '/\[' . $name . '\b([^\]]*)\]/i', $content, $opening_matches );
+        $close = preg_match_all( '/\[\/' . $name . '\s*\]/i', $content, $unused_closing );
+        $attrs = (array) ( $rule['required_attributes'] ?? array() );
+        $with_required_attributes = 0;
+        foreach ( (array) ( $opening_matches[1] ?? array() ) as $opening_attributes ) {
+            $has_all = true;
+            foreach ( $attrs as $attribute ) {
+                if ( ! preg_match( '/\b' . preg_quote( $attribute, '/' ) . '\s*=\s*(?:"[^"]+"|\'[^\']+\'|[^\s\]]+)/i', (string) $opening_attributes ) ) {
+                    $has_all = false;
+                    break;
+                }
+            }
+            if ( $has_all ) {
+                $with_required_attributes++;
+            }
+        }
+        return array(
+            'open'       => (int) $open,
+            'close'      => (int) $close,
+            'complete'   => min( (int) $open, (int) $close, $with_required_attributes ),
+            'balanced'   => (int) $open > 0 && (int) $open === (int) $close && (int) $open === $with_required_attributes,
+            'attributes' => $with_required_attributes,
+        );
+    }
+
+    /** Add one blocking check for the owner's global WordPress format contract. */
+    private static function add_required_formatting_check( &$checks, $content, $rules ) {
+        $missing = array();
+        foreach ( (array) $rules as $rule ) {
+            $report = self::shortcode_report( $content, $rule );
+            $minimum = max( 1, (int) ( $rule['min_occurrences'] ?? 1 ) );
+            if ( empty( $report['balanced'] ) || $report['complete'] < $minimum ) {
+                $missing[] = '[' . (string) ( $rule['name'] ?? 'shortcode' ) . ']';
+            }
+        }
+        self::add_check(
+            $checks,
+            'required_wordpress_formatting',
+            __( 'Required WordPress formatting', 'aeo-god-mode' ),
+            empty( $rules ) ? 'not_applicable' : ( empty( $missing ) ? 'pass' : 'fail' ),
+            empty( $rules )
+                ? __( 'No site-wide formatting rules are configured.', 'aeo-god-mode' )
+                : ( empty( $missing )
+                    ? __( 'Every required shortcode block is present and balanced.', 'aeo-god-mode' )
+                    : sprintf( __( 'Missing or incomplete required blocks: %s.', 'aeo-god-mode' ), implode( ', ', $missing ) ) ),
+            ! empty( $rules ),
+            array( 'missing' => $missing )
         );
     }
 

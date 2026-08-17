@@ -1648,6 +1648,7 @@ class API {
         $current  = get_option( 'asgm_settings', array() );
         $merged   = $this->deep_merge( $current, $body );
         $merged   = $this->sanitize_affiliate_settings( $merged );
+        $merged   = $this->sanitize_knowledge_base_settings( $merged );
 
         update_option( 'asgm_settings', $merged );
 
@@ -1707,6 +1708,27 @@ class API {
         }
 
         $settings['affiliate'] = $aff;
+        return $settings;
+    }
+
+    /**
+     * Keep the dedicated generation-format contract bounded while preserving
+     * WordPress shortcode brackets, attributes, quotes and line breaks.
+     *
+     * @param array $settings Merged settings.
+     * @return array
+     */
+    private function sanitize_knowledge_base_settings( $settings ) {
+        if ( isset( $settings['kb_mode'] ) && ! in_array( $settings['kb_mode'], array( 'off', 'always', 'ask' ), true ) ) {
+            $settings['kb_mode'] = 'ask';
+        }
+        if ( array_key_exists( 'kb_formatting_guidelines', $settings ) ) {
+            $settings['kb_formatting_guidelines'] = mb_substr(
+                sanitize_textarea_field( (string) $settings['kb_formatting_guidelines'] ),
+                0,
+                4000
+            );
+        }
         return $settings;
     }
 

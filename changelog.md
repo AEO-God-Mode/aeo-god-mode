@@ -5,6 +5,11 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.50
+
+- Required formatting rules in Knowledge Base
+- Automatic shortcode validation before charging
+
 ## 1.6.49
 
 - Actionable AEO Readiness edits
