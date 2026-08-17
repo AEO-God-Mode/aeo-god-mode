@@ -5,6 +5,23 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.49
+
+- Actionable AEO Readiness edits
+- Contextual internal-link anchors
+
+## 1.6.48
+
+- Charge Keyword Optimize only for safe edits saved
+- Refund zero-result runs automatically
+- Cache repeated no-result checks
+
+## 1.6.47
+
+- Content Gaps now shows analysis-ready recommendations with safe preview and verified save
+- Improved content recipes and earned-source opportunities
+- Stronger Content Health and topical-map workflows
+
 ## 1.6.46
 
 - Added image thumbnails and two-credit AI alt-text generation to Content Health image review

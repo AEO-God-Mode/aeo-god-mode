@@ -1223,8 +1223,10 @@ class Schema {
 
         // No "any ordered list" fallback. Too risky for false positives.
 
-        // Minimum 5 steps (3 is too borderline), maximum 25.
-        if ( count( $steps ) < 5 ) {
+        // Three complete steps are enough for a real short workflow. The
+        // title and explicit step-structure gates above still prevent an
+        // ordinary listicle from being mistaken for a HowTo.
+        if ( count( $steps ) < 3 ) {
             return null;
         }
         $steps = array_slice( $steps, 0, 25 );

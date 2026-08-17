@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 class Answer_Density {
 
 	/** Version of the detector contract persisted with each scan. */
-	const SCORE_VERSION   = 3;
+	const SCORE_VERSION   = 4;
 
 	const POSTMETA_KEY    = '_asgm_answer_density';
 	const SCAN_TS_KEY     = '_asgm_ad_scanned'; // numeric post meta: unix time of last scan. Drives rotation ordering.
@@ -292,9 +292,11 @@ class Answer_Density {
 	 * "This means X" win over the filler regex `^This\s+(is|means)\b`.
 	 *
 	 * @param string $body_html Body text after a heading (already sliced).
+	 * @param string $heading   Optional heading text. Used to keep methodology
+	 *                          statements from passing under unrelated questions.
 	 * @return array{classification:string,words_before_answer:int,first_sentence:string}
 	 */
-	public static function classify_answer( $body_html ) {
+	public static function classify_answer( $body_html, $heading = '' ) {
 		$plain = self::body_to_plain( $body_html );
 		$plain = trim( $plain );
 		if ( $plain === '' ) {
@@ -324,7 +326,7 @@ class Answer_Density {
 			$s = trim( $sentence );
 			if ( $s === '' ) { continue; }
 
-			$is_answer = self::sentence_is_direct_answer( $s );
+			$is_answer = self::sentence_is_direct_answer( $s, $heading );
 			$is_filler = self::sentence_is_filler( $s );
 
 			if ( $is_answer && ! $is_filler ) {
@@ -354,7 +356,7 @@ class Answer_Density {
 	 *  - Fact-first: contains a digit OR a date OR a proper-noun pair AND
 	 *    is reasonably short (< 35 words — long sentences usually bury).
 	 */
-	private static function sentence_is_direct_answer( $s ) {
+	private static function sentence_is_direct_answer( $s, $heading = '' ) {
 		// Subject character set: letters, digits, spaces, apostrophes,
 		// hyphens, AND periods (for "robots.txt", "U.S.", file extensions,
 		// version numbers). Without periods we miss legitimate definitional
@@ -415,6 +417,16 @@ class Answer_Density {
 			'succeed','succeeds','backfire','backfires','stall','stalls','plateau','plateaus','outperform','outperforms',
 		) );
 		if ( preg_match( '/^' . $subject . '\s+(' . $action_verbs . ')\b/u', $s ) ) {
+			return true;
+		}
+
+		// Past-tense process language is answer-first only when the heading asks
+		// about the method. Without heading context, "We scored these tools" can
+		// wrongly pass beneath an unrelated question such as "When should you
+		// switch?". Keep this small and explicitly gated.
+		if ( '' !== trim( (string) $heading )
+			&& preg_match( '/\b(how\s+(?:did|do|does|was|were|we)|method|methodology|score|scoring|rate|rating|rank|ranking|compare|comparison|test|testing|review|measure|evaluate|assess)\b/iu', $heading )
+			&& preg_match( '/^' . $subject . '\s+(used|applied|chose|selected|evaluated|ranked|scored|rated|graded|measured|assessed|tested|reviewed|compared|calculated|checked|weighted)\b/u', $s ) ) {
 			return true;
 		}
 
@@ -580,7 +592,7 @@ class Answer_Density {
 			// score or make the shared publishing gate disagree with the page.
 			$is_dismissed = ! empty( $dismissed ) && in_array( self::normalize_heading( $h['text'] ), $dismissed, true );
 			$body  = self::extract_after_heading( $content, $h['end'], $h['level'] );
-			$class = self::classify_answer( $body );
+			$class = self::classify_answer( $body, $h['text'] );
 
 			// Capture the first ~200 words of the body as plain text. The
 			// AI-rewrite flow needs this as context: far more grounding than

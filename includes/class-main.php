@@ -91,6 +91,7 @@ class Main {
         require_once $includes . 'class-affiliate-badge.php';
         require_once $includes . 'class-faq-blocks.php';
         require_once $includes . 'class-draft-quality.php';
+        require_once $includes . 'class-earned-source-api.php';
 
         // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
         // themselves on plugins_loaded priority 5/10. Free does not require any
@@ -166,6 +167,11 @@ class Main {
 
         // Local avatar upload — replaces Gravatar for users with uploaded photos.
         API::init_avatar_filters();
+
+        // Free owns the stable REST contract used by the shared Pro/Growth UI.
+        // The paid repository and matching implementation are supplied by the
+        // Pro companion at runtime, so no paid source is shipped in Free.
+        Earned_Source_API::init();
 
         // Ensure user profile form supports file uploads.
         add_action( 'user_edit_form_tag', function() {

@@ -17,13 +17,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 class ContentGaps {
 
     /** Version of the scoring contract stored in editor-panel caches. */
-    const SCORE_VERSION = 7;
+    const SCORE_VERSION = 8;
 
     /** Option recording which scoring contract produced the site-wide rows. */
     const RESULTS_VERSION_OPT = 'asgm_content_gap_score_version';
 
     /** Non-autoloaded detailed rows consumed by the Content Gaps UI. */
     const ACTION_RESULTS_OPT = 'asgm_content_gap_action_results';
+
+    /** Improvement previews expire quickly so they cannot overwrite later edits. */
+    const IMPROVEMENT_PREVIEW_TTL = 900;
+
+    /** Prefix used for short-lived, user-bound improvement previews. */
+    const IMPROVEMENT_PREVIEW_PREFIX = 'asgm_content_improvement_';
 
     /** Remove all site-wide scan rows after a content/schema mutation. */
     public static function invalidate_cached_results() {
@@ -32,6 +38,98 @@ class ContentGaps {
         delete_option( 'asgm_content_gap_last_scan' );
         delete_option( 'asgm_content_gap_scan_summary' );
         delete_transient( 'asgm_site_health' );
+    }
+
+    /**
+     * Give every AI improvement a stable opaque ID for the current post body.
+     *
+     * The dashboard sends this ID back instead of sending arbitrary prompt text.
+     * The server then resolves the exact suggestion from the trusted cached
+     * analysis before spending another credit on a rewrite preview.
+     *
+     * @param int    $post_id      Post ID.
+     * @param array  $improvements Raw AI improvements.
+     * @param string $content_hash Hash of the saved post content.
+     * @return array
+     */
+    private function identify_improvements( $post_id, $improvements, $content_hash ) {
+        $identified = array();
+
+        foreach ( array_values( (array) $improvements ) as $index => $improvement ) {
+            if ( ! is_array( $improvement ) ) {
+                $improvement = array( 'suggestion' => trim( (string) $improvement ) );
+            }
+
+            $suggestion = trim( (string) ( $improvement['suggestion'] ?? $improvement['text'] ?? '' ) );
+            if ( '' === $suggestion ) {
+                continue;
+            }
+
+            $identity          = $post_id . '|' . $content_hash . '|' . $index . '|' . $suggestion;
+            $improvement['id'] = 'imp_' . substr( hash_hmac( 'sha256', $identity, wp_salt( 'auth' ) ), 0, 24 );
+            $identified[]      = $improvement;
+        }
+
+        return $identified;
+    }
+
+    /**
+     * Resolve an improvement ID against the current cached analysis.
+     *
+     * @param int      $post_id       Post ID.
+     * @param \WP_Post $post          Current saved post.
+     * @param string   $improvement_id Opaque improvement ID.
+     * @return array|\WP_Error
+     */
+    private function resolve_cached_improvement( $post_id, $post, $improvement_id ) {
+        $cached = get_post_meta( $post_id, '_asgm_ai_cache_suggest_content_improvements', true );
+        if ( ! is_array( $cached ) || empty( $cached['data']['improvements'] ) || empty( $cached['expires'] ) || empty( $cached['content_hash'] ) ) {
+            return new \WP_Error( 'analysis_missing', __( 'Run the content analysis again before previewing this change.', 'aeo-god-mode' ) );
+        }
+
+        $prompt_version = class_exists( '\\AISEOGodMode\\AI_Assist' ) ? \AISEOGodMode\AI_Assist::PROMPT_VERSION : 0;
+        $cache_hash     = md5( $post->post_content . $post->post_title . $prompt_version );
+        if ( time() > (int) $cached['expires'] || ! hash_equals( (string) $cached['content_hash'], $cache_hash ) ) {
+            return new \WP_Error( 'analysis_stale', __( 'This page changed after it was analysed. Run the analysis again first.', 'aeo-god-mode' ) );
+        }
+
+        $content_hash = md5( $post->post_content );
+        $identified   = $this->identify_improvements( $post_id, $cached['data']['improvements'], $content_hash );
+        foreach ( $identified as $improvement ) {
+            if ( hash_equals( (string) $improvement['id'], $improvement_id ) ) {
+                return $improvement;
+            }
+        }
+
+        return new \WP_Error( 'improvement_missing', __( 'That improvement is no longer available. Run the analysis again.', 'aeo-god-mode' ) );
+    }
+
+    /**
+     * Create a short-lived preview reference that contains the trusted rewrite.
+     *
+     * @param int    $post_id      Post ID.
+     * @param string $content_hash Hash of the saved content used for the preview.
+     * @param string $find         Exact original excerpt.
+     * @param string $replace      Proposed replacement.
+     * @param string $summary      Human-readable summary.
+     * @return string Preview ID.
+     */
+    private function store_improvement_preview( $post_id, $content_hash, $find, $replace, $summary ) {
+        $preview_id = str_replace( '-', '', wp_generate_uuid4() );
+        set_transient(
+            self::IMPROVEMENT_PREVIEW_PREFIX . $preview_id,
+            array(
+                'user_id'      => get_current_user_id(),
+                'post_id'      => (int) $post_id,
+                'content_hash' => $content_hash,
+                'find'         => $find,
+                'replace'      => $replace,
+                'summary'      => $summary,
+                'expires_at'   => time() + self::IMPROVEMENT_PREVIEW_TTL,
+            ),
+            self::IMPROVEMENT_PREVIEW_TTL
+        );
+        return $preview_id;
     }
 
     /**
@@ -449,7 +547,7 @@ class ContentGaps {
             $fix_map = array(
                 'no_schema'           => 'add_article_schema',
                 'no_meta_description' => 'generate_meta_description',
-                'aeo_weak'             => License::is_pro_build() ? 'analyze_citability' : null,
+                'aeo_weak'             => License::is_pro_build() ? 'suggest_content_improvements' : null,
             );
             foreach ( (array) ( $rendered_analysis['checks'] ?? array() ) as $shared_check ) {
                 $type   = (string) ( $shared_check['id'] ?? '' );
@@ -503,34 +601,55 @@ class ContentGaps {
                 );
             }
 
-            // 6. AEO readiness / Citability.
+            // 6. AEO readiness. Use the actionable improvement workflow here,
+            // not the read-only Citability report: writers expect this card to
+            // produce edits they can preview and apply in Gutenberg.
             if ( ! is_array( $rendered_analysis ) && $wc >= 300 && ! $this->has_definitive_answer_structure( $content ) ) {
                 $issues[] = array(
                     'type'     => 'aeo_weak',
                     'severity' => 'info',
-                    'message'  => __( 'No clear definitive answer structure found. Run AI analysis to get a citability score and actionable improvements.', 'aeo-god-mode' ),
-                    'fix_type' => 'analyze_citability',
+                    'message'  => __( 'The opening and important sections do not consistently lead with a direct answer. Analyze this page, preview specific edits, then apply the ones you want.', 'aeo-god-mode' ),
+                    'fix_type' => 'suggest_content_improvements',
                 );
             }
 
-            // 7. Content improvements (always show for posts 500+ words so user can view/re-run AI suggestions).
-            if ( $wc >= 500 ) {
+            $has_aeo_readiness_issue = (bool) array_filter(
+                $issues,
+                static function ( $issue ) {
+                    return 'aeo_weak' === (string) ( $issue['type'] ?? '' );
+                }
+            );
+
+            // 7. Keep the general improvements action available on pages that
+            // pass AEO Readiness. When Readiness has failed, that card already
+            // owns this same workflow, so a second identical card is noise.
+            if ( $wc >= 500 && ! $has_aeo_readiness_issue ) {
                 $has_improvements = get_post_meta( $post->ID, '_asgm_ai_cache_suggest_content_improvements', true );
-                if ( ! empty( $has_improvements ) && isset( $has_improvements['data'] ) ) {
+                $prompt_version   = class_exists( '\\AISEOGodMode\\AI_Assist' ) ? \AISEOGodMode\AI_Assist::PROMPT_VERSION : 0;
+                $current_hash     = md5( $post->post_content . $post->post_title . $prompt_version );
+                $cache_is_current = ! empty( $has_improvements )
+                    && isset( $has_improvements['data'], $has_improvements['expires'], $has_improvements['content_hash'] )
+                    && time() <= (int) $has_improvements['expires']
+                    && hash_equals( (string) $has_improvements['content_hash'], $current_hash );
+                if ( $cache_is_current ) {
                     // Already analyzed — show as info so user can still view results and re-run.
                     $cached_data = $has_improvements['data'];
                     $count = isset( $cached_data['improvements'] ) ? count( $cached_data['improvements'] ) : 0;
                     $grade = isset( $cached_data['overall_aeo_grade'] ) ? $cached_data['overall_aeo_grade'] : 'N/A';
                     $issues[] = array(
-                        'type'     => 'content_improvements',
-                        'severity' => 'info',
-                        'message'  => sprintf(
+                        'type'              => 'content_improvements',
+                        'severity'          => 'info',
+                        'message'           => sprintf(
                             /* translators: 1: number of improvements, 2: grade */
-                            __( 'Previous analysis found %1$d improvement(s) (Grade: %2$s). Click to view or re-run.', 'aeo-god-mode' ),
+                            __( 'A saved analysis found %1$d improvement idea(s) (Grade: %2$s).', 'aeo-god-mode' ),
                             $count,
                             $grade
                         ),
-                        'fix_type' => 'suggest_content_improvements',
+                        'fix_type'          => 'suggest_content_improvements',
+                        'analysis_cached'   => true,
+                        'analysis_count'    => $count,
+                        'analysis_grade'    => $grade,
+                        'analysis_cached_at'=> (string) ( $has_improvements['cached_at'] ?? '' ),
                     );
                 } else {
                     $issues[] = array(
@@ -709,6 +828,7 @@ class ContentGaps {
             'post_id'           => $post->ID,
             'title'             => get_the_title( $post ),
             'url'               => get_permalink( $post ),
+            'edit_url'          => get_edit_post_link( $post->ID, 'raw' ),
             'post_type'         => $post->post_type,
             'word_count'        => $wc,
             'score_version'     => self::SCORE_VERSION,
@@ -902,9 +1022,12 @@ class ContentGaps {
                 $result = \AISEOGodMode\MetadataGenerator::generate_titles( $post_id );
                 if ( ! empty( $result['success'] ) ) {
                     return array(
-                        'success'  => true,
-                        'fix_type' => $fix_type,
-                        'result'   => $result['result'], // Contains the raw completion or metadata string
+                        'success'   => true,
+                        'operation' => 'draft',
+                        'persisted' => false,
+                        'resolved'  => false,
+                        'fix_type'  => $fix_type,
+                        'result'    => $result['result'], // Contains the raw completion or metadata string
                     );
                 }
                 return array(
@@ -963,10 +1086,10 @@ class ContentGaps {
                 $schema        = $schema_engine->detect_howto_for_post( $post_id );
                 $steps         = $schema ? (array) ( $schema['step'] ?? array() ) : array();
 
-                if ( empty( $schema ) || count( $steps ) < 5 ) {
+                if ( empty( $schema ) || count( $steps ) < 3 ) {
                     return array(
                         'success' => false,
-                        'message' => __( 'No HowTo was generated. Use a “How to” title and at least five complete, sequential steps (an ordered list under a steps heading or explicit “Step 1:” sections).', 'aeo-god-mode' ),
+                        'message' => __( 'No HowTo was generated. Use a “How to” title and at least three complete, sequential steps (an ordered list under a steps heading or explicit “Step 1:” sections).', 'aeo-god-mode' ),
                     );
                 }
 
@@ -1009,6 +1132,9 @@ class ContentGaps {
 
                 return array(
                     'success'         => true,
+                    'operation'       => 'analysis',
+                    'persisted'       => false,
+                    'resolved'        => false,
                     'fix_type'        => $fix_type,
                     'post_id'         => $post_id,
                     'score'           => $rule_score ? $rule_score['score'] : ( $ai_result['score'] ?? 0 ),
@@ -1027,30 +1153,67 @@ class ContentGaps {
                 }
                 $ai = new \AISEOGodMode\AI_Assist();
 
+                $cached_before  = get_post_meta( $post_id, '_asgm_ai_cache_suggest_content_improvements', true );
+                $expected_hash  = md5( $post->post_content . $post->post_title . \AISEOGodMode\AI_Assist::PROMPT_VERSION );
+                $was_cached     = is_array( $cached_before )
+                    && isset( $cached_before['data'], $cached_before['expires'], $cached_before['content_hash'] )
+                    && time() <= (int) $cached_before['expires']
+                    && hash_equals( (string) $cached_before['content_hash'], $expected_hash );
+
                 $ai_result = $ai->suggest_improvements( $post );
                 if ( is_wp_error( $ai_result ) ) {
                     return array( 'success' => false, 'message' => $ai_result->get_error_message() );
                 }
 
-                $count = count( $ai_result['improvements'] ?? array() );
-                $grade = $ai_result['overall_aeo_grade'] ?? 'N/A';
+                $content_hash    = md5( $post->post_content );
+                $improvements    = $this->identify_improvements( $post_id, $ai_result['improvements'] ?? array(), $content_hash );
+                $count           = count( $improvements );
+                $grade           = $ai_result['overall_aeo_grade'] ?? 'N/A';
+                $grade_reasoning = $ai_result['grade_reasoning'] ?? ( $ai_result['reasoning'] ?? '' );
                 return array(
-                    'success'      => true,
-                    'fix_type'     => $fix_type,
-                    'post_id'      => $post_id,
-                    'improvements' => $ai_result['improvements'] ?? array(),
-                    'grade'        => $grade,
-                    'count'        => $count,
-                    'source'       => 'ai',
+                    'success'         => true,
+                    'operation'       => 'analysis',
+                    'persisted'       => false,
+                    'resolved'        => false,
+                    'fix_type'        => $fix_type,
+                    'post_id'         => $post_id,
+                    'improvements'    => $improvements,
+                    'grade'           => $grade,
+                    'grade_reasoning' => sanitize_text_field( (string) $grade_reasoning ),
+                    'count'           => $count,
+                    'cached'          => $was_cached,
+                    'analyzed_at'     => $was_cached ? (string) ( $cached_before['cached_at'] ?? '' ) : current_time( 'mysql' ),
+                    'content_hash'    => $content_hash,
+                    'source'          => 'ai',
                 );
 
             case 'apply_improvement':
                 $post = get_post( $post_id );
                 if ( ! $post ) break;
+                $is_editor_preview = isset( $extra['editor_content'] ) && is_string( $extra['editor_content'] ) && '' !== trim( $extra['editor_content'] );
+                if ( $is_editor_preview ) {
+                    // Work against the exact live Gutenberg snapshot so this
+                    // response cannot discard other edits that have not yet
+                    // been saved to the database.
+                    $post               = clone $post;
+                    $post->post_content = $extra['editor_content'];
+                }
                 if ( ! class_exists( '\AISEOGodMode\AI_Assist' ) ) {
                     return array( 'success' => false, 'message' => 'AI Assist module requires Pro.' );
                 }
-                $suggestion = isset( $extra['suggestion'] ) ? trim( (string) wp_unslash( $extra['suggestion'] ) ) : '';
+                if ( $is_editor_preview ) {
+                    $suggestion = isset( $extra['suggestion'] ) ? trim( (string) wp_unslash( $extra['suggestion'] ) ) : '';
+                } else {
+                    $improvement_id = isset( $extra['improvement_id'] ) ? sanitize_key( (string) $extra['improvement_id'] ) : '';
+                    if ( '' === $improvement_id ) {
+                        return array( 'success' => false, 'message' => __( 'Choose an improvement from the saved analysis first.', 'aeo-god-mode' ) );
+                    }
+                    $trusted_improvement = $this->resolve_cached_improvement( $post_id, $post, $improvement_id );
+                    if ( is_wp_error( $trusted_improvement ) ) {
+                        return array( 'success' => false, 'code' => $trusted_improvement->get_error_code(), 'message' => $trusted_improvement->get_error_message() );
+                    }
+                    $suggestion = trim( (string) ( $trusted_improvement['suggestion'] ?? $trusted_improvement['text'] ?? '' ) );
+                }
                 if ( $suggestion === '' ) {
                     return array( 'success' => false, 'message' => 'No suggestion text provided.' );
                 }
@@ -1062,26 +1225,148 @@ class ContentGaps {
                 $find    = isset( $res['find'] ) ? (string) $res['find'] : '';
                 $replace = isset( $res['replace'] ) ? (string) $res['replace'] : '';
                 $summary = isset( $res['summary'] ) ? (string) $res['summary'] : '';
-                if ( $find === '' || strpos( $post->post_content, $find ) === false ) {
+                $matches = '' !== $find ? substr_count( $post->post_content, $find ) : 0;
+                if ( '' === $find || '' === $replace || $find === $replace || 1 !== $matches ) {
                     return array(
                         'success'  => false,
                         'fix_type' => $fix_type,
                         'matched'  => false,
-                        'message'  => 'Could not pinpoint the exact spot to edit automatically. Here is the suggested rewrite to paste in by hand.',
+                        'message'  => 0 === $matches
+                            ? __( 'The AI could not pinpoint the exact saved text safely. Open the editor to make this change by hand.', 'aeo-god-mode' )
+                            : __( 'The same text appears more than once, so AEO God Mode will not guess which copy to change.', 'aeo-god-mode' ),
                         'replace'  => $replace,
                         'summary'  => $summary,
                     );
                 }
+                if ( strlen( $replace ) > max( 12000, ( strlen( $find ) * 4 ) + 2000 ) || preg_match( '/\[(?:insert|add|placeholder|todo)[^\]]*\]/i', $replace ) ) {
+                    return array(
+                        'success' => false,
+                        'code'    => 'unsafe_preview',
+                        'message' => __( 'The proposed rewrite was too broad or contained placeholder text, so nothing was changed.', 'aeo-god-mode' ),
+                    );
+                }
                 $pos         = strpos( $post->post_content, $find );
                 $new_content = substr( $post->post_content, 0, $pos ) . $replace . substr( $post->post_content, $pos + strlen( $find ) );
-                return array(
+                $response    = array(
                     'success'         => true,
+                    'status'          => 'preview_ready',
+                    'operation'       => 'preview',
+                    'persisted'       => false,
+                    'saved'           => false,
+                    'resolved'        => false,
                     'fix_type'        => $fix_type,
                     'post_id'         => $post_id,
                     'matched'         => true,
                     'applied_content' => $new_content,
+                    'find'            => $find,
+                    'replace'         => $replace,
                     'summary'         => $summary,
+                    'content_hash'    => md5( $post->post_content ),
                     'source'          => 'ai',
+                );
+                if ( ! $is_editor_preview ) {
+                    $response['preview_id'] = $this->store_improvement_preview(
+                        $post_id,
+                        md5( $post->post_content ),
+                        $find,
+                        $replace,
+                        $summary
+                    );
+                    $response['expires_at'] = time() + self::IMPROVEMENT_PREVIEW_TTL;
+                }
+                return $response;
+
+            case 'save_improvement':
+                $post = get_post( $post_id );
+                if ( ! $post ) break;
+                if ( ! current_user_can( 'edit_post', $post_id ) ) {
+                    return array( 'success' => false, 'message' => __( 'You cannot edit this post.', 'aeo-god-mode' ) );
+                }
+
+                $preview_id = isset( $extra['preview_id'] ) ? sanitize_key( (string) $extra['preview_id'] ) : '';
+                $preview    = '' !== $preview_id ? get_transient( self::IMPROVEMENT_PREVIEW_PREFIX . $preview_id ) : false;
+                if ( ! is_array( $preview ) ) {
+                    return array( 'success' => false, 'code' => 'preview_expired', 'message' => __( 'That preview expired. Build it again before saving.', 'aeo-god-mode' ) );
+                }
+                if ( (int) ( $preview['user_id'] ?? 0 ) !== get_current_user_id() || (int) ( $preview['post_id'] ?? 0 ) !== $post_id ) {
+                    return array( 'success' => false, 'code' => 'preview_owner', 'message' => __( 'That preview does not belong to this page and user.', 'aeo-god-mode' ) );
+                }
+
+                $find          = (string) ( $preview['find'] ?? '' );
+                $replace       = (string) ( $preview['replace'] ?? '' );
+                $summary       = sanitize_text_field( (string) ( $preview['summary'] ?? '' ) );
+                $expected_hash = (string) ( $preview['content_hash'] ?? '' );
+                $current_hash  = md5( $post->post_content );
+                if ( '' === $find || '' === $replace || '' === $expected_hash ) {
+                    return array( 'success' => false, 'message' => __( 'The preview is incomplete. Build it again before saving.', 'aeo-god-mode' ) );
+                }
+                if ( ! hash_equals( $current_hash, $expected_hash ) ) {
+                    return array(
+                        'success' => false,
+                        'code'    => 'content_changed',
+                        'message' => __( 'This page changed after the preview was built. Preview the change again so no newer edits are overwritten.', 'aeo-god-mode' ),
+                    );
+                }
+
+                $match_count = substr_count( $post->post_content, $find );
+                $position    = strpos( $post->post_content, $find );
+                if ( 1 !== $match_count || false === $position ) {
+                    return array(
+                        'success' => false,
+                        'code'    => 'text_not_found',
+                        'message' => __( 'The original text is no longer uniquely identifiable. Preview the change again.', 'aeo-god-mode' ),
+                    );
+                }
+
+                $new_content = substr( $post->post_content, 0, $position ) . $replace . substr( $post->post_content, $position + strlen( $find ) );
+                $revision_id = wp_save_post_revision( $post_id );
+                $updated_id  = wp_update_post(
+                    wp_slash(
+                        array(
+                            'ID'           => $post_id,
+                            'post_content' => $new_content,
+                        )
+                    ),
+                    true
+                );
+                if ( is_wp_error( $updated_id ) || (int) $updated_id !== $post_id ) {
+                    return array(
+                        'success' => false,
+                        'message' => is_wp_error( $updated_id )
+                            ? $updated_id->get_error_message()
+                            : __( 'WordPress did not confirm the page update.', 'aeo-god-mode' ),
+                    );
+                }
+
+                clean_post_cache( $post_id );
+                $saved_content = (string) get_post_field( 'post_content', $post_id, 'raw' );
+                if ( $saved_content !== $new_content ) {
+                    return array(
+                        'success' => false,
+                        'code'    => 'save_not_verified',
+                        'message' => __( 'WordPress did not retain the exact reviewed change. Nothing has been marked as saved.', 'aeo-god-mode' ),
+                    );
+                }
+
+                delete_transient( self::IMPROVEMENT_PREVIEW_PREFIX . $preview_id );
+                self::invalidate_cached_results();
+
+                return array(
+                    'success'      => true,
+                    'status'       => 'saved',
+                    'operation'    => 'mutation',
+                    'persisted'    => true,
+                    'saved'        => true,
+                    'resolved'     => true,
+                    'fix_type'     => $fix_type,
+                    'post_id'      => $post_id,
+                    'revision_id'  => is_wp_error( $revision_id ) ? 0 : (int) $revision_id,
+                    'saved_at'     => current_time( 'mysql' ),
+                    'content_hash' => md5( $new_content ),
+                    'summary'      => $summary,
+                    'post_modified_gmt' => get_post_field( 'post_modified_gmt', $post_id, 'raw' ),
+                    'edit_url'     => get_edit_post_link( $post_id, 'raw' ),
+                    'message'      => __( 'The change was saved to WordPress.', 'aeo-god-mode' ),
                 );
 
             case 'generate_speakable_summary':

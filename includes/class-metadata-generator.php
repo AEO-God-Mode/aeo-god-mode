@@ -692,7 +692,7 @@ class MetadataGenerator {
      * @param string $heading              The question-shaped heading text.
      * @param string $original_paragraph   First ~200 words under the heading.
      * @param string $buried_opener        The current first sentence.
-     * @param string $classification       setup | hedge | filler | no_answer.
+     * @param string $classification       setup | hedge | filler | indirect | no_answer.
      * @return array{success:bool,rewrite?:string,answer_sentence?:string,error?:string}
      */
     public static function rewrite_opener( $post_id, $heading, $original_paragraph, $buried_opener, $classification, $extra_context = '', $use_kb = null ) {
@@ -704,7 +704,7 @@ class MetadataGenerator {
         $heading            = trim( wp_strip_all_tags( $heading ) );
         $original_paragraph = trim( wp_strip_all_tags( $original_paragraph ) );
         $buried_opener      = trim( wp_strip_all_tags( $buried_opener ) );
-        $classification     = preg_match( '/^(setup|hedge|filler|no_answer)$/', $classification ) ? $classification : 'setup';
+        $classification     = preg_match( '/^(setup|hedge|filler|indirect|no_answer)$/', $classification ) ? $classification : 'setup';
 
         if ( $heading === '' || $original_paragraph === '' ) {
             return array( 'success' => false, 'error' => 'Missing heading or paragraph context.' );
@@ -729,31 +729,33 @@ class MetadataGenerator {
             $extra_block = "\nEXTRA_CONTEXT (writer-supplied — must not invent facts beyond ORIGINAL_PARAGRAPH; use to clarify angle, audience, or constraints): " . substr( $extra_context, 0, 500 );
         }
 
-        // The opener IS NOT a summary. It's the answer. Everything in BODY_CONTEXT
-        // already gets read by the visitor and the AI engine. The opener's job is
-        // to commit a thesis in sentence 1 that the body then expands on. If the
-        // opener restates body facts, it adds nothing and the post stays buried.
-        $prompt = "You rewrite the opening paragraph under a question-shaped heading so the first sentence DIRECTLY answers the question and does NOT repeat content that already appears in the body below it.\n\n"
-            . "WHY:\n"
-            . "AI engines retrieve and synthesise chunks. Self-contained, answer-first chunks under clear question-headings get retrieved and cited more often than the same content with the answer buried. Lead with the answer; follow with context (BLUF / inverted pyramid). The opener should add a clear thesis the BODY_CONTEXT then supports, not summarise the body.\n\n"
+        // Sentence one is the product. Previous wording over-emphasised
+        // novelty versus the body, which encouraged process-led openers such as
+        // "We reviewed the tools..." even when the heading asked which tool to
+        // choose. Directness wins: repeat a necessary grounded fact before
+        // inventing a fresh but indirect framing.
+        $prompt = "Rewrite the opening paragraph under a question-shaped heading. Sentence 1 must give the actual answer immediately.\n\n"
+            . "PRIORITY:\n"
+            . "Directness is more important than novelty. Use the BODY_CONTEXT as evidence. It is fine to compress or reuse a necessary fact from it. Never replace the answer with a description of the article, the research process, the scoring method, or what the section will cover unless the HEADING itself asks about that method.\n\n"
             . "INPUTS (below):\n"
             . "- HEADING: a question-shaped H2 or H3.\n"
             . "- BURIED_OPENER: the current first sentence (do not reuse this verbatim).\n"
-            . "- BODY_CONTEXT: up to 500 words of the section that follows the opener. Read this carefully. DO NOT restate facts that already appear here. Your sentence 1 must commit a thesis that the body then explains.\n"
-            . "- CLASSIFICATION: one of setup, hedge, filler, no_answer (tells you why the existing opener fails).\n"
+            . "- BODY_CONTEXT: up to 500 words from the section. It is the only factual evidence you may use.\n"
+            . "- CLASSIFICATION: one of setup, hedge, filler, indirect, no_answer (tells you why the existing opener fails).\n"
             . "- EXTRA_CONTEXT (optional): writer-supplied angle, audience, or constraints.\n\n"
             . "REQUIREMENTS:\n"
-            . "1. Sentence 1 must begin with [subject of the HEADING] + [predicate that answers it]. No framing clause before the subject. The subject must be in the first 6 words. Example shape: \"X is Y because Z.\" or \"X works by doing Y.\" NOT \"To understand X, you must first...\".\n"
+            . "1. Sentence 1 must name the real subject from the HEADING in its first 6 words, then state the answer with a concrete verb. Do not replace that subject with this, it, these, they, the tools, the options, or a similar pointer. Example shapes: \"X is Y because Z.\", \"X works by doing Y.\", \"Choose X when Y.\", or \"Use X to do Y.\"\n"
             . "2. Sentence 1 must stand alone as a citation. If a search engine showed only the HEADING and your sentence 1 in a citation card, the reader must understand the answer without seeing the body. Self-contained.\n"
             . "3. WRITE AT GRADE 4 TO 5 READING LEVEL. Plain English. Short sentences (15 to 20 words each). One idea per sentence. No jargon, no acronyms unless the heading already uses them, no marketing voice. If you would not say it out loud to a non-expert, do not write it.\n"
             . "4. Use only facts present in BODY_CONTEXT or EXTRA_CONTEXT. Do NOT invent statistics, names, dates, or claims.\n"
-            . "5. CRITICAL: do NOT restate sentences or phrases that already appear in BODY_CONTEXT. The opener adds a thesis above the body, it does not summarise it. If the body already answers the heading, your opener should compress that answer into one new sentence using fresh wording, not paraphrase a body sentence.\n"
-            . "6. After sentence 1, add at most 1 sentence of essential framing. Keep it tight. 50 words MAX overall (was 60: tighter is better at this reading level).\n"
+            . "5. Answer the HEADING, not a nearby question. For a best/alternatives heading, name the recommended choices or the rule for choosing. For a why heading, state the cause. For a how heading, state the action or method. For a yes/no heading, begin Yes or No when the evidence supports it.\n"
+            . "6. Keep sentence 1 to 24 words or fewer. You may add one short evidence sentence after it. Keep the whole rewrite under 45 words.\n"
             . "7. Plain prose. No markdown, no bullets, no headings, no quote marks around the answer.\n"
-            . "8. Do not begin with: Before, To understand, In order to, It depends, There are, Let's, In today, Picture this, Imagine, Welcome, This means, This is.\n"
+            . "8. Do not begin with: Before, To understand, In order to, It depends, There are, Let's, In today, Picture this, Imagine, Welcome, This means, This is, We reviewed, We researched, We compared, We scored. The last four are allowed only when the HEADING explicitly asks how the review, research, comparison, or scoring was done.\n"
             . "9. NEVER use em dashes, en dashes, or hyphenated parentheticals. Use commas, semicolons, or full stops. Em dashes are an AI tell.\n\n"
             . "BANNED words/phrases (never use): comprehensive, crucial, delve, dive into, unlock, leverage, harness, empower, seamlessly, robust, transformative, valuable insights, in today's, navigate, landscape, realm, pivotal, myriad, multifaceted, foster, encompass, facilitate, beacon, testament, journey.\n\n"
-            . "Return JSON only: {\"rewrite\": \"the rewritten paragraph as a single string\", \"answer_sentence\": \"just the first sentence on its own\"}\n\n"
+            . "FINAL SILENT CHECK: Read only HEADING + sentence 1. If sentence 1 does not answer that exact heading, rewrite it before returning. The answer_sentence value must exactly match sentence 1 of rewrite.\n\n"
+            . "Return JSON only: {\"rewrite\": \"the rewritten paragraph as a single string\", \"answer_sentence\": \"the exact first sentence of rewrite\"}\n\n"
             . "---\n"
             . "HEADING: {$heading}\n"
             . "BURIED_OPENER: {$buried_opener}\n"
@@ -779,6 +781,12 @@ class MetadataGenerator {
             'content'     => '',
             'title'       => $context['title'],
             'post_type'   => $context['post_type'],
+            // The licensing proxy must be able to judge whether the paid
+            // result actually passes Answer Density before it charges. Keep
+            // these bounded, plain-text fields separate from the prompt so a
+            // malformed but valid JSON response cannot consume a credit.
+            'rewrite_heading'      => mb_substr( $heading, 0, 300 ),
+            'rewrite_body_context' => mb_substr( $original_paragraph, 0, 4000 ),
             'request_id'  => $request_id,
             'site_url'    => home_url(),
         );
@@ -849,29 +857,25 @@ class MetadataGenerator {
         $subject_token    = '';
         if ( class_exists( __NAMESPACE__ . '\\Answer_Density' ) ) {
             $faux_body = '<p>' . esc_html( $final_rewrite ) . '</p>';
-            $verdict   = Answer_Density::classify_answer( $faux_body );
+            $verdict   = Answer_Density::classify_answer( $faux_body, $heading );
             $overlap          = Answer_Density::trigram_overlap_containment( $final_rewrite, $original_paragraph );
             $subject_token    = Answer_Density::find_heading_subject( $heading );
             $subject_position = Answer_Density::subject_position_in( $final_rewrite, $subject_token );
         }
 
-        // Derived state. The reviewer flagged this loophole: a rewrite can be
-        // "direct" by structure but uselessly paraphrase the body. We surface
-        // it as a separate verdict so the UI can prompt for a regen instead
-        // of letting the user apply a worse summary of the paragraph below.
-        // Threshold (0.4) is provisional. Logging the raw `overlap_score` in
-        // the response so we can tune from real data instead of guessing.
+        // A grounded answer-first opener will often compress a fact that also
+        // appears in the section below. That is desirable, not a reason to ask
+        // the user to buy another generation. Keep the overlap score as a
+        // diagnostic only; the directness and heading-relevance gates decide
+        // whether the paid result is usable.
         $final_classification = $verdict['classification'];
-        if ( 'direct' === $final_classification && $overlap >= 0.4 ) {
-            $final_classification = 'direct_but_derivative';
-        }
 
         return array(
             'success'             => true,
             'post_id'             => $post_id,
             'rewrite'             => $final_rewrite,
             'answer_sentence'     => trim( (string) ( $parsed['answer_sentence'] ?? '' ) ),
-            'classification'      => $final_classification,         // 'direct' | 'direct_but_derivative' | 'buried' | 'no_answer' | 'unknown'
+            'classification'      => $final_classification,         // 'direct' | 'buried' | 'no_answer' | 'unknown'
             'words_before_answer' => $verdict['words_before_answer'],
             'overlap_score'       => $overlap,                      // 0..1 trigram containment of opener in body. Hidden in UI for now; surfaced for tuning.
             'subject_position'    => $subject_position,             // word index of the heading subject inside the rewrite. -1 if not found.

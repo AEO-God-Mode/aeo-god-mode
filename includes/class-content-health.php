@@ -613,13 +613,12 @@ class Content_Health {
     /**
      * The description this page actually publishes.
      *
-     * Only the ACTIVE SEO plugin's key counts. Yoast does not read
-     * rank_math_description and Rank Math does not read _yoast_wpseo_metadesc,
-     * and our own native key is only rendered when neither of them is running
-     * (see MetadataWriter::render_native_meta). So a value under an inactive
-     * plugin's key is a leftover from a migration, not a description: treating
-     * it as one told people a page was fine while the rendered page emitted no
-     * description at all.
+     * An explicit value under the active SEO plugin's key counts first. When
+     * that is empty, the active plugin's supported presentation/template API is
+     * checked because Rank Math and Yoast can still render a description. A
+     * value under an inactive plugin's key remains a migration leftover: Yoast
+     * does not read rank_math_description and Rank Math does not read
+     * _yoast_wpseo_metadesc.
      *
      * The leftover is still worth naming, because "Rank Math has one stored"
      * turns a rewrite into a copy and paste. It is returned as context only and
@@ -638,6 +637,17 @@ class Content_Health {
             }
         }
 
+        // SEO plugins can publish a description even when the post has no
+        // explicit description meta. Rank Math expands the post-type template
+        // from Titles & Meta, while Yoast exposes its final indexable value via
+        // the Meta Surface. Content Health must judge the tag visitors and
+        // search engines receive, otherwise a perfectly covered page is sold
+        // another AI rewrite and remains stuck in "Fix now" after every scan.
+        $generated = self::seo_plugin_generated_description( $active, $post_id );
+        if ( '' !== $generated ) {
+            return array( 'text' => $generated, 'stale_label' => '' );
+        }
+
         foreach ( MetadataWriter::META_KEYS as $plugin => $keys ) {
             if ( $plugin === $active || empty( $keys['desc'] ) ) {
                 continue;
@@ -649,6 +659,76 @@ class Content_Health {
         }
 
         return array( 'text' => '', 'stale_label' => '' );
+    }
+
+    /**
+     * Resolve the description an active SEO plugin generates from its defaults.
+     *
+     * This is deliberately limited to public plugin APIs. It does not render a
+     * page, run the_content filters, or make an HTTP request for every scanned
+     * post.
+     *
+     * @param string $plugin  Active MetadataWriter plugin identifier.
+     * @param int    $post_id Post ID being inspected.
+     * @return string Final generated description, or an empty string.
+     */
+    private static function seo_plugin_generated_description( $plugin, $post_id ) {
+        $post = get_post( $post_id );
+        if ( ! $post ) {
+            return '';
+        }
+
+        if (
+            MetadataWriter::SEO_RANKMATH === $plugin
+            && class_exists( '\\RankMath\\Helper' )
+            && is_callable( array( '\\RankMath\\Helper', 'get_settings' ) )
+            && is_callable( array( '\\RankMath\\Helper', 'replace_vars' ) )
+        ) {
+            try {
+                // Current Rank Math versions expose the same complete resolver
+                // used for frontend SEO metadata. It covers custom meta,
+                // excerpts, templates and content fallbacks, and is preferable
+                // to maintaining a second copy of that decision tree here.
+                if ( class_exists( '\\RankMath\\Paper\\Singular' ) ) {
+                    $paper = new \RankMath\Paper\Singular();
+                    if ( is_callable( array( $paper, 'get_seo_meta' ) ) ) {
+                        $meta = $paper->get_seo_meta( (int) $post_id );
+                        $text = self::trim_text( (string) ( $meta['description'] ?? '' ) );
+                        if ( '' !== $text ) {
+                            return $text;
+                        }
+                    }
+                }
+
+                // Rank Math's Singular paper resolves a saved excerpt before
+                // its Titles & Meta template. This is the source used by the
+                // live Docs, Downloads and Glossary pages on aeogodmode.io.
+                if ( '' !== self::trim_text( (string) $post->post_excerpt ) ) {
+                    return self::trim_text( wp_strip_all_tags( stripslashes( (string) $post->post_excerpt ), true ) );
+                }
+
+                $template = \RankMath\Helper::get_settings( 'titles.pt_' . $post->post_type . '_description' );
+                if ( is_string( $template ) && '' !== trim( $template ) ) {
+                    return self::trim_text( (string) \RankMath\Helper::replace_vars( $template, $post ) );
+                }
+            } catch ( \Throwable $error ) {
+                // A third-party resolver failure must never abort a site scan.
+            }
+        }
+
+        if ( MetadataWriter::SEO_YOAST === $plugin && function_exists( 'YoastSEO' ) ) {
+            try {
+                $yoast = YoastSEO();
+                if ( isset( $yoast->meta ) && is_callable( array( $yoast->meta, 'for_post' ) ) ) {
+                    $presentation = $yoast->meta->for_post( $post_id );
+                    return self::trim_text( (string) ( $presentation->description ?? '' ) );
+                }
+            } catch ( \Throwable $error ) {
+                // Yoast can be active while its indexables are still building.
+            }
+        }
+
+        return '';
     }
 
     /** Human name for an SEO plugin identifier. */
@@ -1648,6 +1728,28 @@ class Content_Health {
                 $alt = sanitize_text_field( (string) ( $image['alt_text'] ?? '' ) );
                 if ( '' !== $src && '' !== self::trim_text( $alt ) ) {
                     $alts[ $src ] = $alt;
+                }
+            }
+            if ( ! $mark_decorative ) {
+                $current_images = (array) ( self::repair_context( $key, $post_id )['images'] ?? array() );
+                $unresolved     = array_values( array_filter( $current_images, static function ( $image ) use ( $alts ) {
+                    $src = esc_url_raw( (string) ( $image['src'] ?? '' ) );
+                    return '' !== $src && ! isset( $alts[ $src ] );
+                } ) );
+                if ( ! empty( $unresolved ) ) {
+                    $remaining = count( $unresolved );
+                    $written[] = array(
+                        'post_id' => $post_id,
+                        'success' => false,
+                        'error'   => sprintf(
+                            '%d selected %s still %s alt text%s. Review every image on this page before saving.',
+                            $remaining,
+                            1 === $remaining ? 'image' : 'images',
+                            1 === $remaining ? 'needs' : 'need',
+                            'alt_empty' === $key ? ' or a decorative decision' : ''
+                        ),
+                    );
+                    continue;
                 }
             }
             if ( empty( $alts ) && ! $mark_decorative ) {

@@ -321,10 +321,10 @@ class Validator {
                     __( 'HowTo schema needs at least 2 complete steps; %d found.', 'aeo-god-mode' ),
                     $complete_steps
                 );
-            } elseif ( $complete_steps < 5 ) {
+            } elseif ( $complete_steps < 3 ) {
                 $warnings[] = sprintf(
                     /* translators: %d: complete HowTo step count */
-                    __( 'HowTo schema has %d complete steps; 5 or more is the quality target.', 'aeo-god-mode' ),
+                    __( 'HowTo schema has %d complete steps; 3 or more is the quality target.', 'aeo-god-mode' ),
                     $complete_steps
                 );
             }

@@ -79,34 +79,46 @@ class API {
         register_rest_route( self::NAMESPACE, '/answer-density/(?P<post_id>\d+)', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'get_answer_density_for_post' ),
-            'permission_callback' => array( $this, 'admin_permission' ),
+            'permission_callback' => array( $this, 'edit_post_permission' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/answer-density/rescan/(?P<post_id>\d+)', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'rescan_answer_density' ),
-            'permission_callback' => array( $this, 'admin_permission' ),
+            'permission_callback' => array( $this, 'edit_post_permission' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/answer-density/rewrite-opener', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'rewrite_opener' ),
-            'permission_callback' => array( $this, 'admin_permission' ),
+            'permission_callback' => array( $this, 'edit_post_permission' ),
             'args'                => array(
                 'post_id'        => array( 'required' => true ),
                 'heading'        => array( 'required' => true ),
                 'classification' => array( 'required' => true ),
+                'editor_content' => array(
+                    'required' => false,
+                    'type'     => 'string',
+                ),
             ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/answer-density/apply-rewrite', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'apply_rewrite' ),
-            'permission_callback' => array( $this, 'admin_permission' ),
+            'permission_callback' => array( $this, 'edit_post_permission' ),
             'args'                => array(
-                'post_id'  => array( 'required' => true ),
-                'heading'  => array( 'required' => true ),
-                'rewrite'  => array( 'required' => true ),
+                'post_id'        => array( 'required' => true ),
+                'heading'        => array( 'required' => true ),
+                'rewrite'        => array( 'required' => true ),
+                // Gutenberg sends its current serialized document so an
+                // Answer Density fix cannot discard unrelated unsaved edits.
+                // When omitted (Dashboard flow), the endpoint persists the
+                // transformed saved post directly as before.
+                'editor_content' => array(
+                    'required' => false,
+                    'type'     => 'string',
+                ),
             ),
         ) );
 
@@ -119,7 +131,7 @@ class API {
         register_rest_route( self::NAMESPACE, '/answer-density/(?P<post_id>\d+)/dismiss', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'dismiss_answer_density' ),
-            'permission_callback' => array( $this, 'admin_permission' ),
+            'permission_callback' => array( $this, 'edit_post_permission' ),
             'args'                => array(
                 'heading' => array( 'required' => true ),
             ),
@@ -128,7 +140,7 @@ class API {
         register_rest_route( self::NAMESPACE, '/answer-density/(?P<post_id>\d+)/undismiss', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'undismiss_answer_density' ),
-            'permission_callback' => array( $this, 'admin_permission' ),
+            'permission_callback' => array( $this, 'edit_post_permission' ),
             'args'                => array(
                 'heading' => array( 'required' => true ),
             ),
@@ -1002,6 +1014,28 @@ class API {
             return new \WP_Error(
                 'rest_forbidden',
                 __( 'You do not have permission to access this endpoint.', 'aeo-god-mode' ),
+                array( 'status' => 403 )
+            );
+        }
+        return true;
+    }
+
+    /**
+     * Check that the current user may edit the requested post.
+     *
+     * The Answer Density panel appears for Authors and Editors as well as site
+     * administrators. Its per-post routes must follow WordPress's own post
+     * capability checks instead of requiring manage_options.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return bool|\WP_Error
+     */
+    public function edit_post_permission( $request ) {
+        $post_id = absint( $request->get_param( 'post_id' ) );
+        if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+            return new \WP_Error(
+                'rest_forbidden',
+                __( 'You do not have permission to edit this post.', 'aeo-god-mode' ),
                 array( 'status' => 403 )
             );
         }
@@ -1961,10 +1995,22 @@ class API {
         $classification = (string) $request->get_param( 'classification' );
         $extra_context  = (string) $request->get_param( 'context' );
 
-        $scan = Answer_Density::get_for_post( $post_id );
-        if ( ! is_array( $scan ) || empty( $scan['issues'] ) ) {
-            // Trigger a fresh scan in case the cache is stale.
-            $scan = Answer_Density::scan_post( $post_id );
+        $editor_content = $request->has_param( 'editor_content' )
+            ? (string) $request->get_param( 'editor_content' )
+            : '';
+        if ( '' !== trim( $editor_content ) ) {
+            // Generate from the live Gutenberg document, including unrelated
+            // unsaved edits, rather than stale postmeta or database content.
+            $scan = Answer_Density::scan_html(
+                $editor_content,
+                array( 'dismissed' => Answer_Density::get_dismissed( $post_id ) )
+            );
+        } else {
+            $scan = Answer_Density::get_for_post( $post_id );
+            if ( ! is_array( $scan ) || empty( $scan['issues'] ) ) {
+                // Trigger a fresh scan in case the cache is stale.
+                $scan = Answer_Density::scan_post( $post_id );
+            }
         }
 
         $target = null;
@@ -1975,7 +2021,6 @@ class API {
                     break;
                 }
             }
-            if ( ! $target ) { $target = $scan['issues'][0]; }
         }
 
         if ( ! $target || empty( $target['first_paragraph'] ) ) {
@@ -1996,9 +2041,15 @@ class API {
     }
 
     /**
-     * Apply an AI rewrite to the saved post content. Replaces the FIRST
-     * paragraph after the named heading, persists through WordPress so its
-     * normal revision hooks run, then re-scores the saved result immediately.
+     * Apply an AI rewrite after a named heading.
+     *
+     * Dashboard requests transform and persist the saved post immediately.
+     * Gutenberg requests include `editor_content`; those transform the live
+     * serialized editor document and return it without touching the database,
+     * allowing the normal editor Save/Update action to create the revision.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response|\WP_Error
      */
     public function apply_rewrite( $request ) {
         if ( ! \AISEOGodMode\License::is_pro() ) {
@@ -2021,7 +2072,14 @@ class API {
             return new \WP_Error( 'forbidden', 'You cannot edit this post.', array( 'status' => 403 ) );
         }
 
-        $content = (string) $post->post_content;
+        $editor_mode = $request->has_param( 'editor_content' );
+        $content     = $editor_mode
+            ? (string) $request->get_param( 'editor_content' )
+            : (string) $post->post_content;
+
+        if ( $editor_mode && '' === trim( $content ) ) {
+            return new \WP_Error( 'empty_editor_content', 'The editor content is empty. Reload the editor and try again.', array( 'status' => 422 ) );
+        }
 
         // Find the matching heading (h2/h3) by NORMALIZED text match. The
         // scanner reads the rendered content, where wptexturize has curled
@@ -2078,10 +2136,13 @@ class API {
 
         $is_blocks = ( false !== strpos( $content, '<!-- wp:' ) );
 
-        if ( preg_match( '#^<p\b[^>]*>(.*?)</p>#is', $tail_trim, $pm ) ) {
+        if ( preg_match( '#^(<p\b[^>]*>)(.*?)</p>#is', $tail_trim, $pm ) ) {
             // Opener is an explicit <p>...</p>: swap it.
             $p_full_length = strlen( $pm[0] );
-            $new_p         = '<p>' . esc_html( $rewrite ) . '</p>';
+            // Keep class, style, anchor and other attributes on the paragraph.
+            // Stripping them can invalidate a Gutenberg block whose comment
+            // attributes still describe the original HTML wrapper.
+            $new_p         = $pm[1] . esc_html( $rewrite ) . '</p>';
         } elseif ( ! preg_match( '#^(?:<(?:ul|ol|h[1-6]|table|blockquote|figure|div|pre|hr|section|aside|dl|details)\b|<!--\s*wp:)#i', $tail_trim )
                    && preg_match( '#^(.+?)(?=\R\s*\R|\R?\s*<(?:ul|ol|h[1-6]|p|table|blockquote|figure|div|pre|hr)\b|\R?\s*<!--\s*wp:|$)#isu', $tail_trim, $pm )
                    && trim( wp_strip_all_tags( $pm[1] ) ) !== '' ) {
@@ -2102,10 +2163,22 @@ class API {
 
         $new_content = substr( $content, 0, $cursor ) . $new_p . substr( $content, $cursor + $p_full_length );
 
-        // This action lives on the Dashboard, not inside the block editor.
-        // Returning content without saving made the button report success while
-        // changing nothing. Persist through core so revisions, caches and normal
-        // save hooks behave exactly like any other WordPress content update.
+        // In the block editor, return the transformed CURRENT document and
+        // let Gutenberg own the dirty/save lifecycle. Saving here would update
+        // the database behind Gutenberg's back; its stale in-memory blocks
+        // would then overwrite the rewrite when the user pressed Save.
+        if ( $editor_mode ) {
+            return rest_ensure_response( array(
+                'success' => true,
+                'post_id' => $post_id,
+                'saved'   => false,
+                'changed' => $new_content !== $content,
+                'content' => $new_content,
+            ) );
+        }
+
+        // Dashboard actions do not have an editor document to save later, so
+        // persist through core and run revisions, cache invalidation and scans.
         $updated = wp_update_post( wp_slash( array(
             'ID'           => $post_id,
             'post_content' => $new_content,
@@ -2346,8 +2419,17 @@ class API {
         $gaps     = new ContentGaps();
         $result   = $gaps->apply_fix( $post_id, $fix_type, $request->get_params() );
         if ( is_array( $result ) && ! empty( $result['success'] ) ) {
-            update_option( 'asgm_content_gap_fixes_applied', (int) get_option( 'asgm_content_gap_fixes_applied', 0 ) + 1, false );
-            $this->log_activity( 'content_gap_fix', __( 'Content gap fix applied.', 'aeo-god-mode' ) );
+            $operation = (string) ( $result['operation'] ?? '' );
+            if ( 'analysis' === $operation ) {
+                $this->log_activity( 'content_gap_analysis', __( 'Content gap analysis ready.', 'aeo-god-mode' ) );
+            } elseif ( 'preview' === $operation ) {
+                $this->log_activity( 'content_gap_preview', __( 'Content improvement preview ready; nothing saved.', 'aeo-god-mode' ) );
+            } elseif ( 'draft' === $operation ) {
+                $this->log_activity( 'content_gap_draft', __( 'Content gap draft options ready; nothing saved.', 'aeo-god-mode' ) );
+            } else {
+                update_option( 'asgm_content_gap_fixes_applied', (int) get_option( 'asgm_content_gap_fixes_applied', 0 ) + 1, false );
+                $this->log_activity( 'content_gap_fix', __( 'Content gap fix saved.', 'aeo-god-mode' ) );
+            }
         }
         return rest_ensure_response( $result );
     }
@@ -4934,11 +5016,34 @@ HARD RULES
         return true;
     }
 
+    /** Return a supported content-recipe override, null for auto, or a request error. */
+    private function topical_map_recipe( $request ) {
+        if ( ! $request->has_param( 'recipe' ) ) {
+            return null;
+        }
+        $recipe = sanitize_key( (string) $request->get_param( 'recipe' ) );
+        if ( '' === $recipe ) {
+            return null;
+        }
+        if ( ! in_array( $recipe, array( 'vs', 'alternatives', 'best_x', 'switch', 'walkthrough', 'guide' ), true ) ) {
+            return new \WP_Error(
+                'invalid_recipe',
+                __( 'Choose a supported content type before generating.', 'aeo-god-mode' ),
+                array( 'status' => 400 )
+            );
+        }
+        return $recipe;
+    }
+
     /** Normalise Topical_Map results into REST responses. */
     private function topical_map_respond( $result ) {
         if ( is_wp_error( $result ) ) {
             $data    = $result->get_error_data();
-            $payload = array( 'success' => false, 'error' => $result->get_error_message() );
+            $payload = array(
+                'success'    => false,
+                'error'      => $result->get_error_message(),
+                'error_code' => $result->get_error_code(),
+            );
             if ( is_array( $data ) && isset( $data['credits'] ) ) {
                 $payload['credits'] = $data['credits'];
             }
@@ -4971,8 +5076,12 @@ HARD RULES
         $length   = sanitize_key( $request->get_param( 'length' ) ?? 'standard' );
         $guidance = sanitize_textarea_field( (string) ( $request->get_param( 'guidance' ) ?? '' ) );
         $use_kb   = $request->has_param( 'use_kb' ) ? rest_sanitize_boolean( $request->get_param( 'use_kb' ) ) : null;
+        $recipe   = $this->topical_map_recipe( $request );
+        if ( is_wp_error( $recipe ) ) {
+            return $this->topical_map_respond( $recipe );
+        }
         return $this->topical_map_respond(
-            \AISEOGodMode\Topical_Map::generate( (int) $request['id'], $length, $guidance, $use_kb )
+            \AISEOGodMode\Topical_Map::generate( (int) $request['id'], $length, $guidance, $use_kb, $recipe )
         );
     }
 
@@ -4983,8 +5092,12 @@ HARD RULES
         }
         $guidance = sanitize_textarea_field( (string) ( $request->get_param( 'guidance' ) ?? '' ) );
         $use_kb   = $request->has_param( 'use_kb' ) ? rest_sanitize_boolean( $request->get_param( 'use_kb' ) ) : null;
+        $recipe   = $this->topical_map_recipe( $request );
+        if ( is_wp_error( $recipe ) ) {
+            return $this->topical_map_respond( $recipe );
+        }
         return $this->topical_map_respond(
-            \AISEOGodMode\Topical_Map::outline( (int) $request['id'], $guidance, $use_kb )
+            \AISEOGodMode\Topical_Map::outline( (int) $request['id'], $guidance, $use_kb, $recipe )
         );
     }
 
@@ -4993,7 +5106,11 @@ HARD RULES
         if ( true !== $guard ) {
             return $guard;
         }
-        return $this->topical_map_respond( \AISEOGodMode\Topical_Map::titles( (int) $request['id'] ) );
+        $recipe = $this->topical_map_recipe( $request );
+        if ( is_wp_error( $recipe ) ) {
+            return $this->topical_map_respond( $recipe );
+        }
+        return $this->topical_map_respond( \AISEOGodMode\Topical_Map::titles( (int) $request['id'], $recipe ) );
     }
 
     public function dismiss_topical_map_item( $request ) {

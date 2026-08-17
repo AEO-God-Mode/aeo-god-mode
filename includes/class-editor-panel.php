@@ -60,8 +60,12 @@ class EditorPanel {
                 return current_user_can( 'edit_post', absint( $request['post_id'] ) );
             },
             'args'                => array(
-                'post_id'  => array( 'required' => true ),
-                'fix_type' => array( 'required' => true ),
+                'post_id'        => array( 'required' => true ),
+                'fix_type'       => array( 'required' => true ),
+                'editor_content' => array(
+                    'required' => false,
+                    'type'     => 'string',
+                ),
             ),
         ) );
     }
@@ -185,7 +189,7 @@ class EditorPanel {
         wp_enqueue_script(
             'asgm-editor-panel',
             $base_url . $entry['file'],
-            array( 'wp-plugins', 'wp-edit-post', 'wp-element', 'wp-components', 'wp-data', 'wp-api-fetch' ),
+            array( 'wp-plugins', 'wp-edit-post', 'wp-element', 'wp-components', 'wp-data', 'wp-blocks', 'wp-api-fetch' ),
             $asset_ver( $entry['file'] ),
             true
         );
