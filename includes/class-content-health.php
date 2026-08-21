@@ -155,6 +155,11 @@ class Content_Health {
         update_option( self::OPT, $state, false );
     }
 
+    /** Clear stale scan rows when the owner changes the shared content scope. */
+    public static function invalidate_for_scope_change() {
+        delete_option( self::OPT );
+    }
+
     /**
      * Start a scan: queue every eligible published content item, drop prior results.
      *
@@ -173,16 +178,21 @@ class Content_Health {
             'order'            => 'ASC',
             'suppress_filters' => true,
         ) );
-        $ids   = array_map( 'intval', (array) $ids );
+        $ids = array_map( 'intval', (array) $ids );
+        if ( class_exists( __NAMESPACE__ . '\\Answer_Density' ) ) {
+            $ids = array_values( array_filter( $ids, static function ( $post_id ) {
+                return '' === Answer_Density::exclusion_reason( (int) $post_id );
+            } ) );
+        }
         $state = array(
             'status'          => empty( $ids ) ? 'done' : 'scanning',
             'queue'           => $ids,
             'checked'         => 0,
             'total'           => count( $ids ),
-            // What the site actually publishes, as opposed to what this scan
-            // will reach. The client needs both to tell the truth about a site
-            // bigger than MAX_POSTS.
-            'published_total' => self::published_total(),
+            // Only eligible search-facing content belongs in this denominator.
+            // Transactional/noindex items are intentionally outside the work
+            // queue, even when their post type is selected.
+            'published_total' => count( $ids ),
             'post_types'      => $post_types,
             'pages'           => array(),
             'desc_index'      => array(),
@@ -199,26 +209,19 @@ class Content_Health {
     /**
      * Public, editor-visible content types Content Health can inspect.
      *
-     * Posts and pages always belong. Other types must expose an editor or a
-     * featured image, which includes WooCommerce products, EDD downloads and
-     * ordinary public custom post types while excluding attachments, menus,
-     * patterns and other internal records.
+     * The saved list comes from WordPress' public, editor-visible post types,
+     * so it includes site-specific products, courses, listings, downloads and
+     * other custom types while excluding internal records.
      */
     private static function scannable_post_types() {
-        $types = get_post_types(
-            array(
-                'public'  => true,
-                'show_ui' => true,
-            ),
-            'names'
-        );
+        $types = class_exists( __NAMESPACE__ . '\\Answer_Density' )
+            ? Answer_Density::selected_post_types()
+            : array( 'post', 'page' );
         $types = array_values( array_filter( array_map( 'sanitize_key', (array) $types ), static function ( $type ) {
             if ( in_array( $type, array( 'attachment', 'nav_menu_item', 'revision', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation' ), true ) ) {
                 return false;
             }
-            return in_array( $type, array( 'post', 'page' ), true )
-                || post_type_supports( $type, 'editor' )
-                || post_type_supports( $type, 'thumbnail' );
+            return post_type_exists( $type );
         } ) );
 
         /** Filter the public content types included in a full Content Health scan. */
@@ -226,22 +229,6 @@ class Content_Health {
         $types = array_values( array_unique( array_filter( array_map( 'sanitize_key', (array) $types ), 'post_type_exists' ) ) );
 
         return ! empty( $types ) ? $types : array( 'post', 'page' );
-    }
-
-    /**
-     * Published eligible content items on the whole site.
-     *
-     * wp_count_posts() is cached per post type and reads the same statuses the
-     * queue query asks for, so this is a cheap honest denominator rather than a
-     * second unbounded ID query.
-     */
-    private static function published_total() {
-        $total = 0;
-        foreach ( self::scannable_post_types() as $type ) {
-            $counts = wp_count_posts( $type );
-            $total += isset( $counts->publish ) ? (int) $counts->publish : 0;
-        }
-        return $total;
     }
 
     /** Parse the next batch of queued posts. */

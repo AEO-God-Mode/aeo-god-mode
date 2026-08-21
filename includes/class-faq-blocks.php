@@ -1,6 +1,6 @@
 <?php
 /**
- * FAQ accordion + TL;DR shortcodes.
+ * Portable content-block shortcodes.
  *
  * Theme-agnostic content blocks that render on any site, any theme, any
  * editor, with zero JavaScript:
@@ -11,6 +11,13 @@
  *   [/aeogm_faqs]
  *
  *   [aeogm_tldr title="TL;DR"]Two or three sentence direct answer.[/aeogm_tldr]
+ *
+ *   [aeogm_pro_tip title="Pro tip"]Useful practical advice.[/aeogm_pro_tip]
+ *
+ *   [aeogm_pros_cons]
+ *     [aeogm_pros]- First advantage\n- Second advantage[/aeogm_pros]
+ *     [aeogm_cons]- First limitation\n- Second limitation[/aeogm_cons]
+ *   [/aeogm_pros_cons]
  *
  * The accordion uses native <details>/<summary>, so it is accessible and
  * needs no scripts. Styling is a small CSS block printed once per page and
@@ -44,6 +51,10 @@ class FaqBlocks {
         add_shortcode( 'aeogm_faqs', array( $this, 'render_wrap' ) );
         add_shortcode( 'aeogm_faq', array( $this, 'render_item' ) );
         add_shortcode( 'aeogm_tldr', array( $this, 'render_tldr' ) );
+        add_shortcode( 'aeogm_pro_tip', array( $this, 'render_pro_tip' ) );
+        add_shortcode( 'aeogm_pros_cons', array( $this, 'render_pros_cons' ) );
+        add_shortcode( 'aeogm_pros', array( $this, 'render_pros' ) );
+        add_shortcode( 'aeogm_cons', array( $this, 'render_cons' ) );
         // Before block rendering (do_blocks runs at 9): drop an author-written
         // FAQ heading that sits immediately before the wrapper, because the
         // wrapper renders its own heading and the pair reads as a stutter
@@ -138,10 +149,107 @@ class FaqBlocks {
         }
 
         return self::css()
-            . '<div class="aeogm-tldr aeogm-speakable">'
-            . ( '' !== trim( (string) $atts['title'] ) ? '<p class="aeogm-tldr__label">' . esc_html( $atts['title'] ) . '</p>' : '' )
+            . '<aside class="aeogm-content-block aeogm-tldr aeogm-speakable" aria-label="' . esc_attr( $atts['title'] ) . '">'
+            . '<span class="aeogm-content-block__icon" aria-hidden="true">' . self::icon( 'summary' ) . '</span>'
+            . '<div class="aeogm-content-block__body">'
+            . ( '' !== trim( (string) $atts['title'] ) ? '<p class="aeogm-content-block__label">' . esc_html( $atts['title'] ) . '</p>' : '' )
             . wp_kses_post( $body )
-            . '</div>';
+            . '</div></aside>';
+    }
+
+    /** Render a practical callout without claiming that the advice is expert-certified. */
+    public function render_pro_tip( $atts, $content = '' ) {
+        $atts = shortcode_atts( array(
+            'title' => __( 'Pro tip', 'aeo-god-mode' ),
+        ), $atts, 'aeogm_pro_tip' );
+
+        $body = trim( do_shortcode( wpautop( (string) $content ) ) );
+        if ( '' === $body ) {
+            return '';
+        }
+
+        return self::css()
+            . '<aside class="aeogm-content-block aeogm-pro-tip" aria-label="' . esc_attr( $atts['title'] ) . '">'
+            . '<span class="aeogm-content-block__icon" aria-hidden="true">' . self::icon( 'tip' ) . '</span>'
+            . '<div class="aeogm-content-block__body">'
+            . ( '' !== trim( (string) $atts['title'] ) ? '<p class="aeogm-content-block__label">' . esc_html( $atts['title'] ) . '</p>' : '' )
+            . wp_kses_post( $body )
+            . '</div></aside>';
+    }
+
+    /** Wrapper that keeps the two comparison cards together on wide screens. */
+    public function render_pros_cons( $atts, $content = '' ) {
+        // Claim the one-time stylesheet before rendering nested cards. Nested
+        // shortcodes otherwise claim it first and their SVG/CSS can be removed
+        // when the completed inner markup is sanitised a second time.
+        $css   = self::css();
+        $inner = trim( do_shortcode( wp_kses_post( (string) $content ) ) );
+        if ( '' === $inner ) {
+            return '';
+        }
+
+        return $css . '<div class="aeogm-pros-cons">' . $inner . '</div>';
+    }
+
+    public function render_pros( $atts, $content = '' ) {
+        $atts = shortcode_atts( array(
+            'title' => __( 'Pros', 'aeo-god-mode' ),
+        ), $atts, 'aeogm_pros' );
+        return $this->render_list_card( 'pros', $atts['title'], $content );
+    }
+
+    public function render_cons( $atts, $content = '' ) {
+        $atts = shortcode_atts( array(
+            'title' => __( 'Cons', 'aeo-god-mode' ),
+        ), $atts, 'aeogm_cons' );
+        return $this->render_list_card( 'cons', $atts['title'], $content );
+    }
+
+    /** Build a safe list from either real list markup or simple dash-separated lines. */
+    private function render_list_card( $kind, $title, $content ) {
+        $raw = trim( do_shortcode( (string) $content ) );
+        if ( '' === $raw ) {
+            return '';
+        }
+
+        if ( false !== stripos( $raw, '<li' ) ) {
+            $list = wp_kses_post( $raw );
+        } else {
+            $plain = trim( wp_strip_all_tags( $raw ) );
+            $lines = preg_split( '/\r\n|\r|\n/u', $plain );
+            $items = array();
+            foreach ( (array) $lines as $line ) {
+                $line = trim( preg_replace( '/^[\s\-*+\x{2022}]+/u', '', (string) $line ) );
+                if ( '' !== $line ) {
+                    $items[] = '<li>' . esc_html( $line ) . '</li>';
+                }
+            }
+            if ( empty( $items ) ) {
+                return '';
+            }
+            $list = '<ul>' . implode( '', $items ) . '</ul>';
+        }
+
+        return self::css()
+            . '<section class="aeogm-comparison-card aeogm-comparison-card--' . esc_attr( $kind ) . '">'
+            . '<div class="aeogm-comparison-card__heading">'
+            . '<span class="aeogm-comparison-card__icon" aria-hidden="true">' . self::icon( $kind ) . '</span>'
+            . '<h3>' . esc_html( $title ) . '</h3>'
+            . '</div>'
+            . '<div class="aeogm-comparison-card__content">' . $list . '</div>'
+            . '</section>';
+    }
+
+    /** Small inline SVGs avoid external assets, font icons and front-end JavaScript. */
+    private static function icon( $name ) {
+        $paths = array(
+            'summary' => '<path d="M4 6h16M4 12h10M4 18h13"/>',
+            'tip'     => '<path d="M9 18h6M10 22h4M8.5 14.5A7 7 0 1 1 15.5 14.5C14.5 15.3 14 16.2 14 18h-4c0-1.8-.5-2.7-1.5-3.5Z"/>',
+            'pros'    => '<path d="m5 12 4 4L19 6"/>',
+            'cons'    => '<path d="m6 6 12 12M18 6 6 18"/>',
+        );
+        $path = $paths[ $name ] ?? $paths['summary'];
+        return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true">' . $path . '</svg>';
     }
 
     /* ─────────────────────────── Styles ─────────────────────────── */
@@ -156,7 +264,7 @@ class FaqBlocks {
             return '';
         }
         self::$css_done = true;
-        return '<style id="aeogm-faq-css">'
+        return '<style id="aeogm-content-block-css">'
             . '.aeogm-faqs{margin:1.5em 0}'
             . '.aeogm-faqs__title{margin:0 0 .6em}'
             . '.aeogm-faq{border:1px solid rgba(128,128,128,.35);border-radius:10px;margin:0 0 .6em;overflow:hidden}'
@@ -169,9 +277,25 @@ class FaqBlocks {
             . '.aeogm-faq__a{padding:.85em 1em}'
             . '.aeogm-faq__a>p:first-child{margin-top:0}'
             . '.aeogm-faq__a>p:last-child{margin-bottom:0}'
-            . '.aeogm-tldr{border:1px solid rgba(128,128,128,.35);border-left:4px solid currentColor;border-radius:10px;padding:1em 1.2em;margin:1.5em 0}'
-            . '.aeogm-tldr__label{font-size:.78em;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.65;margin:0 0 .4em}'
-            . '.aeogm-tldr>p:last-child{margin-bottom:0}'
+            . '.aeogm-content-block{--aeogm-accent:#2563eb;position:relative;display:flex;gap:1em;border:1px solid color-mix(in srgb,var(--aeogm-accent) 25%,transparent);border-radius:16px;padding:1.15em 1.25em;margin:1.6em 0;overflow:hidden;background:linear-gradient(135deg,color-mix(in srgb,var(--aeogm-accent) 10%,transparent),color-mix(in srgb,var(--aeogm-accent) 3%,transparent))}'
+            . '.aeogm-content-block:before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--aeogm-accent)}'
+            . '.aeogm-content-block__icon{width:2.35em;height:2.35em;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;color:var(--aeogm-accent);background:color-mix(in srgb,var(--aeogm-accent) 13%,transparent)}'
+            . '.aeogm-content-block__icon svg{width:1.25em;height:1.25em}'
+            . '.aeogm-content-block__body{min-width:0;flex:1}'
+            . '.aeogm-content-block__label{font-size:.76em;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--aeogm-accent);margin:0 0 .42em}'
+            . '.aeogm-content-block__body>p:first-of-type:not(.aeogm-content-block__label){margin-top:0}'
+            . '.aeogm-content-block__body>p:last-child{margin-bottom:0}'
+            . '.aeogm-pro-tip{--aeogm-accent:#7c3aed}'
+            . '.aeogm-pros-cons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;margin:1.6em 0}'
+            . '.aeogm-comparison-card{--aeogm-compare:#16a34a;border:1px solid color-mix(in srgb,var(--aeogm-compare) 25%,transparent);border-radius:16px;padding:1.1em 1.2em;background:color-mix(in srgb,var(--aeogm-compare) 6%,transparent)}'
+            . '.aeogm-comparison-card--cons{--aeogm-compare:#e11d48}'
+            . '.aeogm-comparison-card__heading{display:flex;align-items:center;gap:.65em;margin:0 0 .75em}'
+            . '.aeogm-comparison-card__heading h3{font-size:1em;margin:0;color:inherit}'
+            . '.aeogm-comparison-card__icon{width:1.75em;height:1.75em;border-radius:999px;display:grid;place-items:center;color:#fff;background:var(--aeogm-compare)}'
+            . '.aeogm-comparison-card__icon svg{width:1em;height:1em}'
+            . '.aeogm-comparison-card__content ul{margin:0;padding-left:1.2em}'
+            . '.aeogm-comparison-card__content li{margin:.42em 0}'
+            . '@media(max-width:640px){.aeogm-pros-cons{grid-template-columns:1fr}.aeogm-content-block{padding:1em}.aeogm-content-block__icon{width:2em;height:2em}}'
             . '</style>';
     }
 }

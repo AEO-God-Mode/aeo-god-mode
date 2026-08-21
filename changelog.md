@@ -5,6 +5,10 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.51
+
+- Fixed Growth Topical Map designer controls on mature sites
+
 ## 1.6.50
 
 - Required formatting rules in Knowledge Base

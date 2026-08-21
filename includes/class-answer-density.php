@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 class Answer_Density {
 
 	/** Version of the detector contract persisted with each scan. */
-	const SCORE_VERSION   = 4;
+	const SCORE_VERSION   = 5;
 
 	const POSTMETA_KEY    = '_asgm_answer_density';
 	const SCAN_TS_KEY     = '_asgm_ad_scanned'; // numeric post meta: unix time of last scan. Drives rotation ordering.
@@ -32,7 +32,84 @@ class Answer_Density {
 	const BATCH_SIZE      = 50; // posts refreshed per nightly rotation. NOT a cap on total coverage.
 	const ANSWER_WINDOW_W = 50; // words after a heading we look at for an answer
 	const CACHE_GROUP     = 'asgm_answer_density';
-	const ROWS_CACHE_KEY  = 'asgm_density_rows_v2'; // v2 filters out drafts, trash and non post/page scans.
+	const ROWS_CACHE_KEY  = 'asgm_density_rows_v3'; // v3 follows the saved search-facing content scope.
+
+	/**
+	 * Public content types a site owner can choose to optimise.
+	 *
+	 * @return array<int,array{name:string,label:string,count:int,builtin:bool}>
+	 */
+	public static function available_post_types() {
+		$objects = get_post_types( array( 'public' => true, 'show_ui' => true ), 'objects' );
+		$out     = array();
+		$blocked = array( 'attachment', 'nav_menu_item', 'revision', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation' );
+
+		foreach ( (array) $objects as $name => $object ) {
+			$name = sanitize_key( $name );
+			if ( in_array( $name, $blocked, true ) ) { continue; }
+			$counts = wp_count_posts( $name );
+			$out[]  = array(
+				'name'    => $name,
+				'label'   => isset( $object->labels->name ) ? (string) $object->labels->name : (string) $object->label,
+				'count'   => isset( $counts->publish ) ? (int) $counts->publish : 0,
+				'builtin' => ! empty( $object->_builtin ),
+			);
+		}
+
+		usort( $out, static function ( $a, $b ) {
+			$order = array( 'post' => 0, 'page' => 1 );
+			$ao = $order[ $a['name'] ] ?? 2;
+			$bo = $order[ $b['name'] ] ?? 2;
+			return $ao === $bo ? strcasecmp( $a['label'], $b['label'] ) : $ao - $bo;
+		} );
+
+		return $out;
+	}
+
+	/** Return the saved, valid content types used by content scoring tools. */
+	public static function selected_post_types( $settings = null ) {
+		$settings  = is_array( $settings ) ? $settings : get_option( 'asgm_settings', array() );
+		$available = wp_list_pluck( self::available_post_types(), 'name' );
+		$defaults  = array_values( array_intersect( array( 'post', 'page' ), $available ) );
+		if ( empty( $defaults ) && ! empty( $available ) ) { $defaults[] = reset( $available ); }
+		$saved = array_key_exists( 'content_scope_post_types', $settings )
+			? (array) $settings['content_scope_post_types']
+			: $defaults;
+		$selected = array_values( array_intersect( $available, array_unique( array_map( 'sanitize_key', $saved ) ) ) );
+		return ! empty( $selected ) ? $selected : $defaults;
+	}
+
+	/** Add detected-type metadata to settings returned to the admin app. */
+	public static function settings_payload( $settings ) {
+		$settings = is_array( $settings ) ? $settings : array();
+		$settings['content_scope_post_types'] = self::selected_post_types( $settings );
+		$settings['_content_scope'] = array( 'available' => self::available_post_types() );
+		return $settings;
+	}
+
+	/** Sanitize the persisted content-scope setting and remove response metadata. */
+	public static function sanitize_settings_scope( $settings ) {
+		$settings = is_array( $settings ) ? $settings : array();
+		unset( $settings['_content_scope'] );
+		$settings['content_scope_post_types'] = self::selected_post_types( $settings );
+		return $settings;
+	}
+
+	/** Invalidate the aggregate and queue the selected population for rescoring. */
+	public static function handle_scope_change() {
+		wp_cache_delete( self::ROWS_CACHE_KEY, self::CACHE_GROUP );
+		delete_option( self::SUMMARY_OPT );
+		$ids = self::all_published_ids();
+		if ( ! empty( $ids ) ) {
+			update_option( self::QUEUE_OPT, $ids, false );
+			if ( ! wp_next_scheduled( self::CONTINUE_HOOK ) ) {
+				wp_schedule_single_event( time() + 5, self::CONTINUE_HOOK );
+			}
+		} else {
+			delete_option( self::QUEUE_OPT );
+		}
+		self::refresh_summary();
+	}
 
 	/**
 	 * Containment overlap of A inside B at the trigram level.
@@ -126,6 +203,104 @@ class Answer_Density {
 	}
 
 	/**
+	 * Explain why a post should not enter the site Answer Density score.
+	 *
+	 * Answer Density measures search-facing, answer-led content. WordPress
+	 * utility screens (account, checkout, login, legal pages, and similar) are
+	 * functional destinations rather than pages written to answer a search
+	 * query. Explicitly noindexed content is also outside the search-facing
+	 * population. Scanning these pages is useful for coverage, but grading them
+	 * would make the site score less truthful.
+	 *
+	 * The result is filterable so unusual WordPress builds can add or remove a
+	 * classification without replacing the detector.
+	 *
+	 * @param \WP_Post|int|null $post Post object or ID.
+	 * @return string Empty when eligible; otherwise a stable reason key.
+	 */
+	public static function exclusion_reason( $post ) {
+		$post = is_numeric( $post ) ? get_post( (int) $post ) : $post;
+		if ( ! $post instanceof \WP_Post ) { return ''; }
+
+		$reason = in_array( $post->post_type, self::selected_post_types(), true ) ? '' : 'content_type_excluded';
+
+		// Respect explicit search-engine exclusions set by the two most common
+		// SEO plugins. Rank Math stores an array; Yoast stores a scalar flag.
+		$yoast_noindex = strtolower( trim( (string) get_post_meta( $post->ID, '_yoast_wpseo_meta-robots-noindex', true ) ) );
+		$rank_robots   = get_post_meta( $post->ID, 'rank_math_robots', true );
+		$rank_noindex  = is_array( $rank_robots )
+			? in_array( 'noindex', array_map( 'strtolower', array_map( 'strval', $rank_robots ) ), true )
+			: false !== stripos( (string) $rank_robots, 'noindex' );
+		if ( in_array( $yoast_noindex, array( '1', 'noindex' ), true ) || $rank_noindex ) {
+			$reason = 'noindex';
+		}
+
+		if ( '' === $reason && 'page' === $post->post_type ) {
+			$utility_ids = array_filter( array(
+				(int) get_option( 'wp_page_for_privacy_policy', 0 ),
+			) );
+
+			// WooCommerce assigns these pages by ID, which is more reliable than
+			// guessing from translated or customized slugs.
+			if ( function_exists( 'wc_get_page_id' ) ) {
+				foreach ( array( 'cart', 'checkout', 'myaccount', 'terms' ) as $wc_page ) {
+					$wc_id = (int) wc_get_page_id( $wc_page );
+					if ( $wc_id > 0 ) { $utility_ids[] = $wc_id; }
+				}
+			}
+
+			// Easy Digital Downloads uses configured page IDs for the same class
+			// of transactional screens.
+			if ( function_exists( 'edd_get_option' ) ) {
+				foreach ( array( 'purchase_page', 'success_page', 'failure_page', 'purchase_history_page' ) as $edd_page ) {
+					$edd_id = (int) edd_get_option( $edd_page, 0 );
+					if ( $edd_id > 0 ) { $utility_ids[] = $edd_id; }
+				}
+			}
+
+			if ( in_array( (int) $post->ID, array_unique( array_map( 'intval', $utility_ids ) ), true ) ) {
+				$reason = 'utility_page';
+			}
+
+			// Catch ordinary and custom utility pages that are not registered by a
+			// commerce plugin. Segment boundaries avoid excluding editorial pages
+			// such as /accounting-guide/.
+			if ( '' === $reason ) {
+				$utility_slug = '#(^|-)(privacy|terms|conditions|cookie|cookies|legal|disclaimer|refund|returns|checkout|cart|basket|account|my-account|login|log-in|register|signup|sign-up|thank|thanks|confirmation|receipt|order|orders|transaction|affiliate|affiliates|contact|sitemap|success|failed|password|reset-password|unsubscribe)(-|$)#i';
+				if ( preg_match( $utility_slug, (string) $post->post_name ) ) {
+					$reason = 'utility_page';
+				}
+			}
+
+			// Shortcode detection covers sites that renamed the assigned page or
+			// created the flow manually.
+			if ( '' === $reason ) {
+				$utility_shortcodes = array(
+					'woocommerce_cart', 'woocommerce_checkout', 'woocommerce_my_account',
+					'download_checkout', 'purchase_history', 'edd_receipt', 'edd_login', 'edd_register',
+				);
+				foreach ( $utility_shortcodes as $shortcode ) {
+					if ( has_shortcode( (string) $post->post_content, $shortcode ) ) {
+						$reason = 'utility_page';
+						break;
+					}
+				}
+			}
+		}
+
+		/**
+		 * Filter the Answer Density exclusion reason for one post.
+		 *
+		 * Return an empty string to include the post, or a stable reason key to
+		 * exclude it from the aggregate score and work queue.
+		 *
+		 * @param string   $reason Exclusion reason, or empty when eligible.
+		 * @param \WP_Post $post   Post being classified.
+		 */
+		return (string) apply_filters( 'asgm_answer_density_exclusion_reason', $reason, $post );
+	}
+
+	/**
 	 * Get the list of dismissed heading keys for a post.
 	 *
 	 * @param int $post_id
@@ -149,7 +324,9 @@ class Answer_Density {
 	/**
 	 * User-asserted "this answer is fine, stop flagging it." Stored per heading
 	 * (not per post) so dismissing one heading on a post doesn't silence others.
-	 * Triggers a rescan so the score immediately reflects the dismissal.
+	 * Triggers a rescan so review queues immediately reflect the dismissal. The
+	 * raw score is deliberately unchanged: hiding a suggestion must not create
+	 * a better Answer Density score without changing the page.
 	 *
 	 * @param int    $post_id
 	 * @param string $heading
@@ -167,6 +344,35 @@ class Answer_Density {
 	}
 
 	/**
+	 * Hide every currently actionable heading for a post from the dashboard.
+	 *
+	 * The dashboard presents one row per post, so its Hide action must hide the
+	 * row rather than silently advance to the post's next flagged heading. The
+	 * raw score remains unchanged; this is task-list state, not score inflation.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return array Updated scan result.
+	 */
+	public static function dismiss_all( $post_id ) {
+		$post_id = (int) $post_id;
+		$result  = get_post_meta( $post_id, self::POSTMETA_KEY, true );
+		if ( ! self::is_current_result( $result ) ) {
+			$result = self::scan_post( $post_id );
+		}
+
+		$list = self::get_dismissed( $post_id );
+		foreach ( (array) ( $result['issues'] ?? array() ) as $issue ) {
+			$key = self::normalize_heading( (string) ( $issue['heading'] ?? '' ) );
+			if ( '' !== $key && ! in_array( $key, $list, true ) ) {
+				$list[] = $key;
+			}
+		}
+
+		update_post_meta( $post_id, self::DISMISS_KEY, array_values( array_unique( $list ) ) );
+		return self::scan_post( $post_id );
+	}
+
+	/**
 	 * Reverse of dismiss(). Lets the user surface a heading again if they
 	 * change their mind.
 	 *
@@ -181,6 +387,22 @@ class Answer_Density {
 		$list = array_values( array_filter( $list, function ( $k ) use ( $key ) { return $k !== $key; } ) );
 		update_post_meta( (int) $post_id, self::DISMISS_KEY, $list );
 		return self::scan_post( (int) $post_id );
+	}
+
+	/**
+	 * Restore every hidden Answer Density suggestion for a post.
+	 *
+	 * Dashboard rows are hidden as a whole, so restoring them must also be a
+	 * post-level action. Deleting the preference does not alter content; the
+	 * following scan simply makes the original suggestions actionable again.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return array Updated scan result.
+	 */
+	public static function undismiss_all( $post_id ) {
+		$post_id = (int) $post_id;
+		delete_post_meta( $post_id, self::DISMISS_KEY );
+		return self::scan_post( $post_id );
 	}
 
 	/**
@@ -303,9 +525,11 @@ class Answer_Density {
 			return array( 'classification' => 'no_answer', 'words_before_answer' => 0, 'first_sentence' => '' );
 		}
 
-		// Numbered/bulleted list immediately after the heading (≤ 60 visible
-		// chars of leading prose) is itself the answer.
-		if ( preg_match( '/^[^.<\n]{0,60}<(ol|ul)\b/i', $body_html ) ) {
+		// A numbered/bulleted list immediately after the heading is itself the
+		// answer. Gutenberg serializer comments sit between the heading and the
+		// actual <ul>/<ol>; testing the raw HTML directly made those lists look
+		// like one long, unanswered paragraph and offered to rewrite them.
+		if ( 'list' === self::opener_structure( $body_html ) ) {
 			return array(
 				'classification'      => 'direct',
 				'words_before_answer' => 0,
@@ -347,6 +571,42 @@ class Answer_Density {
 			'words_before_answer' => $word_cursor,
 			'first_sentence'      => $sentences[0] ?? '',
 		);
+	}
+
+	/**
+	 * Identify the first real content structure after a question heading.
+	 *
+	 * Gutenberg comments are metadata, not visible content, so skip them when
+	 * deciding whether the answer begins with prose, a list, a table, or another
+	 * block. This value is also sent to the UI so it never presents a flattened
+	 * list as though it were a paragraph that will be replaced.
+	 *
+	 * @param string $body_html HTML immediately following a heading.
+	 * @return string list|table|paragraph|block|text|empty
+	 */
+	public static function opener_structure( $body_html ) {
+		$probe = ltrim( (string) $body_html );
+
+		// Skip block serializer comments until the first visible node. Opening
+		// list/table comments describe that visible node, so retain their type.
+		for ( $i = 0; $i < 8 && preg_match( '#^<!--\s*(/)?wp:([a-z0-9_-]+)\b[^>]*-->\s*#i', $probe, $comment ); $i++ ) {
+			$is_closing = ! empty( $comment[1] );
+			$type       = strtolower( (string) $comment[2] );
+			if ( ! $is_closing ) {
+				if ( 'list' === $type ) { return 'list'; }
+				if ( 'table' === $type ) { return 'table'; }
+				if ( 'paragraph' === $type ) { return 'paragraph'; }
+				return 'block';
+			}
+			$probe = ltrim( substr( $probe, strlen( $comment[0] ) ) );
+		}
+
+		if ( '' === $probe ) { return 'empty'; }
+		if ( preg_match( '#^<(?:ul|ol)\b#i', $probe ) ) { return 'list'; }
+		if ( preg_match( '#^<table\b#i', $probe ) ) { return 'table'; }
+		if ( preg_match( '#^<p\b#i', $probe ) ) { return 'paragraph'; }
+		if ( preg_match( '#^<(?:li|h[1-6]|blockquote|figure|div|pre|hr|section|aside|dl|details)\b#i', $probe ) ) { return 'block'; }
+		return 'text';
 	}
 
 	/**
@@ -593,6 +853,11 @@ class Answer_Density {
 			$is_dismissed = ! empty( $dismissed ) && in_array( self::normalize_heading( $h['text'] ), $dismissed, true );
 			$body  = self::extract_after_heading( $content, $h['end'], $h['level'] );
 			$class = self::classify_answer( $body, $h['text'] );
+			$opener_structure = self::opener_structure( $body );
+			$list_items = 0;
+			if ( 'list' === $opener_structure ) {
+				$list_items = preg_match_all( '#<li\b#i', $body, $unused_matches );
+			}
 
 			// Capture the first ~200 words of the body as plain text. The
 			// AI-rewrite flow needs this as context: far more grounding than
@@ -629,6 +894,8 @@ class Answer_Density {
 					'words_before_answer'  => $class['words_before_answer'],
 					'first_sentence'       => $class['first_sentence'],
 					'first_paragraph'      => $first_paragraph,
+					'opener_structure'     => $opener_structure,
+					'list_items'           => (int) $list_items,
 				);
 				if ( $is_dismissed ) {
 					$dismissed_issue_count++;
@@ -648,6 +915,8 @@ class Answer_Density {
 					'words_before_answer'  => $class['words_before_answer'],
 					'first_sentence'       => $class['first_sentence'],
 					'first_paragraph'      => $first_paragraph,
+					'opener_structure'     => $opener_structure,
+					'list_items'           => (int) $list_items,
 				);
 				if ( $is_dismissed ) {
 					$dismissed_issue_count++;
@@ -740,6 +1009,32 @@ class Answer_Density {
 			);
 		}
 
+		$exclusion_reason = self::exclusion_reason( $post );
+		if ( '' !== $exclusion_reason ) {
+			$result = array(
+				'post_id'              => (int) $post_id,
+				'score_version'         => self::SCORE_VERSION,
+				'scanned_at'           => gmdate( 'c' ),
+				'word_count'           => str_word_count( wp_strip_all_tags( (string) $post->post_content ) ),
+				'question_headings'    => 0,
+				'direct_answers'       => 0,
+				'buried_answers'       => 0,
+				'unanswered_answers'   => 0,
+				'dismissed_issues'     => 0,
+				'answer_density_score' => 0,
+				'applicable'           => false,
+				'excluded'             => true,
+				'exclusion_reason'     => $exclusion_reason,
+				'issues'               => array(),
+				'above_fold_ratio'     => 0,
+			);
+			update_post_meta( $post_id, self::POSTMETA_KEY, $result );
+			update_post_meta( $post_id, self::SCAN_TS_KEY, time() );
+			wp_cache_delete( self::ROWS_CACHE_KEY, self::CACHE_GROUP );
+			delete_option( self::SUMMARY_OPT );
+			return $result;
+		}
+
 		// "the_content" is a core WordPress filter; we are intentionally invoking
 		// it so shortcodes / blocks render before the pure analyzer sees them.
 		$content = null === $content
@@ -822,6 +1117,16 @@ class Answer_Density {
 		if ( ! self::is_current_result( $saved ) ) {
 			self::invalidate_persisted_result( (int) $post_id, $saved );
 			return null;
+		}
+
+		// Eligibility can change without the content changing (for example when
+		// a page is assigned as WooCommerce My Account, or an SEO plugin toggles
+		// noindex). Reconcile that state on read so the editor never shows an old
+		// score for a newly excluded utility page.
+		$reason       = self::exclusion_reason( (int) $post_id );
+		$was_excluded = ! empty( $saved['excluded'] );
+		if ( ( '' !== $reason ) !== $was_excluded ) {
+			return self::scan_post( (int) $post_id );
 		}
 
 		return $saved;
@@ -925,7 +1230,7 @@ class Answer_Density {
 	 */
 	private static function all_published_ids() {
 		$ids = get_posts( array(
-			'post_type'           => array( 'post', 'page' ),
+			'post_type'           => self::selected_post_types(),
 			'post_status'         => 'publish',
 			'posts_per_page'      => -1,
 			'orderby'             => 'modified',
@@ -948,10 +1253,11 @@ class Answer_Density {
 	 */
 	private static function rotation_targets( $limit ) {
 		$limit = max( 1, (int) $limit );
+		$post_types = self::selected_post_types();
 
 		// 1) Never-scanned posts (no rotation stamp) take priority.
 		$never = get_posts( array(
-			'post_type'        => array( 'post', 'page' ),
+			'post_type'        => $post_types,
 			'post_status'      => 'publish',
 			'posts_per_page'   => $limit,
 			'orderby'          => 'modified',
@@ -973,7 +1279,7 @@ class Answer_Density {
 		// meta_value_num orderby inner-joins on the stamp, so this returns only
 		// already-scanned posts — no overlap with step 1.
 		$old = get_posts( array(
-			'post_type'        => array( 'post', 'page' ),
+			'post_type'        => $post_types,
 			'post_status'      => 'publish',
 			'posts_per_page'   => $limit - count( $never ),
 			'orderby'          => 'meta_value_num',
@@ -1008,6 +1314,7 @@ class Answer_Density {
 	 */
 	public static function refresh_summary() {
 		global $wpdb;
+		$post_types = self::selected_post_types();
 
 		// Cache the postmeta scan for 5 minutes. The dashboard hits this
 		// repeatedly on render; the underlying data only changes when a post
@@ -1015,18 +1322,17 @@ class Answer_Density {
 		$cache_key = self::ROWS_CACHE_KEY;
 		$rows      = wp_cache_get( $cache_key, self::CACHE_GROUP );
 		if ( false === $rows ) {
+			$type_placeholders = implode( ', ', array_fill( 0, count( $post_types ), '%s' ) );
+			$sql_args = array_merge( array( self::POSTMETA_KEY, 'publish' ), $post_types );
 			$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				$wpdb->prepare(
+				$wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 					"SELECT pm.post_id, pm.meta_value
 					FROM {$wpdb->postmeta} pm
 					INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
 					WHERE pm.meta_key = %s
 						AND p.post_status = %s
-						AND p.post_type IN ( %s, %s )",
-					self::POSTMETA_KEY,
-					'publish',
-					'post',
-					'page'
+						AND p.post_type IN ( {$type_placeholders} )",
+					...$sql_args
 				)
 			);
 			wp_cache_set( $cache_key, $rows, self::CACHE_GROUP, 5 * MINUTE_IN_SECONDS );
@@ -1034,10 +1340,16 @@ class Answer_Density {
 
 		$total_scanned    = 0;
 		$applicable_posts = 0;   // posts that have at least 1 question heading
-		$na_posts         = 0;   // posts with no question headings (not graded)
+		$na_posts         = 0;   // eligible posts with no question headings (not graded)
+		$excluded_posts   = 0;   // utility/noindex pages deliberately outside the score
 		$sum_score        = 0;
 		$weak             = 0;
 		$weakest          = array();
+		$hidden_rows      = array();
+		$perfect          = 0;
+		$needs_improvement = 0;
+		$actionable       = 0;
+		$hidden           = 0;
 		$last_scan        = '';
 
 		foreach ( (array) $rows as $r ) {
@@ -1059,6 +1371,14 @@ class Answer_Density {
 				$last_scan = $data['scanned_at'];
 			}
 
+			// Re-evaluate the live page classification as well as the stored flag.
+			// This removes a newly assigned My Account/Checkout/noindex page from
+			// the average immediately, without requiring a full-content rescan.
+			if ( ! empty( $data['excluded'] ) || '' !== self::exclusion_reason( (int) $r->post_id ) ) {
+				$excluded_posts++;
+				continue;
+			}
+
 			$Q = isset( $data['question_headings'] ) ? (int) $data['question_headings'] : 0;
 			$score = isset( $data['answer_density_score'] ) ? (int) $data['answer_density_score'] : 0;
 
@@ -1070,7 +1390,21 @@ class Answer_Density {
 
 			$applicable_posts++;
 			$sum_score += $score;
-			if ( $score < 50 ) { $weak++; }
+			$has_open_issue = ! empty( $data['issues'] ) && is_array( $data['issues'] );
+			if ( $score >= 100 ) {
+				$perfect++;
+			} else {
+				$needs_improvement++;
+				if ( $has_open_issue ) {
+					$actionable++;
+				} else {
+					$hidden++;
+				}
+			}
+			// A dismissed issue is no longer an actionable weak post. Keep its raw
+			// score in the site average, but do not immediately put it back into the
+			// dashboard task list the user just dismissed.
+			if ( $score < 50 && $has_open_issue ) { $weak++; }
 
 			$direct = isset( $data['direct_answers'] ) ? (int) $data['direct_answers'] : 0;
 			$buried = isset( $data['buried_answers'] ) ? (int) $data['buried_answers'] : 0;
@@ -1086,7 +1420,7 @@ class Answer_Density {
 			// the specific heading + buried opener + classification
 			// without an extra round trip per row.
 			$first_issue = null;
-			if ( ! empty( $data['issues'] ) && is_array( $data['issues'] ) ) {
+			if ( $has_open_issue ) {
 				$f = $data['issues'][0];
 				$first_issue = array(
 					'heading'             => isset( $f['heading'] ) ? (string) $f['heading'] : '',
@@ -1095,24 +1429,38 @@ class Answer_Density {
 					'opener_kind'         => isset( $f['opener_kind'] ) ? (string) $f['opener_kind'] : '',
 					'words_before_answer' => isset( $f['words_before_answer'] ) ? (int) $f['words_before_answer'] : 0,
 					'first_sentence'      => isset( $f['first_sentence'] ) ? (string) $f['first_sentence'] : '',
+					'opener_structure'    => isset( $f['opener_structure'] ) ? (string) $f['opener_structure'] : 'text',
+					'list_items'          => isset( $f['list_items'] ) ? (int) $f['list_items'] : 0,
 				);
 			}
 
-			$weakest[] = array(
-				'post_id'           => (int) $r->post_id,
-				'score'             => $score,
-				'question_headings' => $Q,
-				'direct_answers'    => $direct,
-				'buried_answers'    => $buried,
-				'missing_answers'   => $missing,
-				'summary'           => implode( ' · ', $bits ),
-				'first_issue'       => $first_issue,
-			);
+			if ( $has_open_issue ) {
+				$weakest[] = array(
+					'post_id'           => (int) $r->post_id,
+					'score'             => $score,
+					'question_headings' => $Q,
+					'direct_answers'    => $direct,
+					'buried_answers'    => $buried,
+					'missing_answers'   => $missing,
+					'summary'           => implode( ' · ', $bits ),
+					'first_issue'       => $first_issue,
+				);
+			} elseif ( $score < 100 && ! empty( $data['dismissed_issues'] ) ) {
+				$hidden_rows[] = array(
+					'post_id'          => (int) $r->post_id,
+					'score'            => $score,
+					'dismissed_issues' => (int) $data['dismissed_issues'],
+				);
+			}
 
 		}
 
 		usort( $weakest, function ( $a, $b ) { return $a['score'] - $b['score']; } );
-		$weakest = array_slice( $weakest, 0, 10 );
+		usort( $hidden_rows, function ( $a, $b ) { return $a['score'] - $b['score']; } );
+		// The dashboard must expose every page that can lower the average, not
+		// only the sub-50 pages. Keep a generous bounded list for very large sites.
+		$weakest = array_slice( $weakest, 0, 100 );
+		$hidden_rows = array_slice( $hidden_rows, 0, 100 );
 
 		// Status label so the dashboard doesn't have to invent one.
 		$avg = $applicable_posts > 0 ? (int) round( $sum_score / $applicable_posts ) : 0;
@@ -1128,10 +1476,19 @@ class Answer_Density {
 			'status'           => $status,
 			'applicable_posts' => $applicable_posts,
 			'na_posts'         => $na_posts,
+			'excluded_posts'   => $excluded_posts,
+			'eligible_scanned' => $applicable_posts + $na_posts,
 			'total_scanned'    => $total_scanned,
 			'weak_posts'       => $weak,
+			'perfect_posts'    => $perfect,
+			'needs_improvement_posts' => $needs_improvement,
+			'actionable_posts' => $actionable,
+			'hidden_posts'     => $hidden,
+			'score_shortfall'  => max( 0, ( 100 * $applicable_posts ) - $sum_score ),
 			'weakest'          => $weakest,
+			'hidden'           => $hidden_rows,
 			'last_scanned_at'  => $last_scan,
+			'post_types'       => $post_types,
 			'refreshed_at'     => gmdate( 'c' ),
 		);
 		update_option( self::SUMMARY_OPT, $summary, false );
@@ -1144,7 +1501,11 @@ class Answer_Density {
 			return array();
 		}
 
-		if ( ! isset( $s['score_version'] ) || self::SCORE_VERSION !== (int) $s['score_version'] ) {
+		if ( ! isset( $s['score_version'] )
+			|| self::SCORE_VERSION !== (int) $s['score_version']
+			|| ! array_key_exists( 'perfect_posts', $s )
+			|| ! array_key_exists( 'needs_improvement_posts', $s )
+			|| ! array_key_exists( 'excluded_posts', $s ) ) {
 			delete_option( self::SUMMARY_OPT );
 			return array();
 		}
@@ -1170,7 +1531,7 @@ class Answer_Density {
 		add_action( 'save_post', function ( $post_id, $post, $update ) {
 			if ( wp_is_post_revision( $post_id ) ) { return; }
 			if ( wp_is_post_autosave( $post_id ) ) { return; }
-			if ( ! in_array( $post->post_type, array( 'post', 'page' ), true ) ) { return; }
+			if ( ! in_array( $post->post_type, self::selected_post_types(), true ) ) { return; }
 			// Draft Quality and the editor sidebar score work-in-progress, so their
 			// persisted Answer Density input must refresh on ordinary draft,
 			// pending, private and published saves alike. Only non-content states

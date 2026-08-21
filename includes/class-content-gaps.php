@@ -209,8 +209,9 @@ class ContentGaps {
      */
     public function scan() {
         $results    = array();
-        $post_types = get_post_types( array( 'public' => true ), 'names' );
-        $post_types = array_diff( $post_types, array( 'attachment', 'download' ) );
+        $post_types = class_exists( __NAMESPACE__ . '\\Answer_Density' )
+            ? Answer_Density::selected_post_types()
+            : array( 'post', 'page' );
 
         // Exclude EDD utility pages.
         $edd_slugs    = array( 'checkout', 'purchase-confirmation', 'purchase-history', 'transaction-failed' );
@@ -251,6 +252,10 @@ class ContentGaps {
             while ( $query->have_posts() ) {
                 $query->the_post();
                 $post = get_post();
+                if ( class_exists( __NAMESPACE__ . '\\Answer_Density' )
+                    && '' !== Answer_Density::exclusion_reason( $post ) ) {
+                    continue;
+                }
                 $gaps = $this->analyze_post( $post );
 
                 // Store every scanned page, including clean pages. Site Health

@@ -134,6 +134,10 @@ class API {
             'permission_callback' => array( $this, 'edit_post_permission' ),
             'args'                => array(
                 'heading' => array( 'required' => true ),
+                'all'     => array(
+                    'required' => false,
+                    'type'     => 'boolean',
+                ),
             ),
         ) );
 
@@ -143,6 +147,10 @@ class API {
             'permission_callback' => array( $this, 'edit_post_permission' ),
             'args'                => array(
                 'heading' => array( 'required' => true ),
+                'all'     => array(
+                    'required' => false,
+                    'type'     => 'boolean',
+                ),
             ),
         ) );
 
@@ -1634,6 +1642,9 @@ class API {
      */
     public function get_settings() {
         $settings = get_option( 'asgm_settings', array() );
+        if ( class_exists( __NAMESPACE__ . '\\Answer_Density' ) ) {
+            $settings = Answer_Density::settings_payload( $settings );
+        }
         return rest_ensure_response( $settings );
     }
 
@@ -1646,18 +1657,29 @@ class API {
     public function save_settings( $request ) {
         $body     = $request->get_json_params();
         $current  = get_option( 'asgm_settings', array() );
+		$old_scope = class_exists( __NAMESPACE__ . '\\Answer_Density' ) ? Answer_Density::selected_post_types( $current ) : array( 'post', 'page' );
         $merged   = $this->deep_merge( $current, $body );
         $merged   = $this->sanitize_affiliate_settings( $merged );
         $merged   = $this->sanitize_knowledge_base_settings( $merged );
+		if ( class_exists( __NAMESPACE__ . '\\Answer_Density' ) ) {
+			$merged = Answer_Density::sanitize_settings_scope( $merged );
+		}
 
         update_option( 'asgm_settings', $merged );
+
+		$new_scope = class_exists( __NAMESPACE__ . '\\Answer_Density' ) ? Answer_Density::selected_post_types( $merged ) : $old_scope;
+		if ( $old_scope !== $new_scope ) {
+			Answer_Density::handle_scope_change();
+			if ( class_exists( __NAMESPACE__ . '\\Content_Health' ) ) { Content_Health::invalidate_for_scope_change(); }
+			if ( class_exists( __NAMESPACE__ . '\\ContentGaps' ) ) { ContentGaps::invalidate_cached_results(); }
+		}
 
         // Log the activity.
         $this->log_activity( 'settings_updated', __( 'Plugin settings updated.', 'aeo-god-mode' ) );
 
         return rest_ensure_response( array(
             'success'  => true,
-            'settings' => $merged,
+            'settings' => class_exists( __NAMESPACE__ . '\\Answer_Density' ) ? Answer_Density::settings_payload( $merged ) : $merged,
         ) );
     }
 
@@ -1727,6 +1749,14 @@ class API {
                 sanitize_textarea_field( (string) $settings['kb_formatting_guidelines'] ),
                 0,
                 4000
+            );
+        }
+        if ( array_key_exists( 'kb_content_blocks', $settings ) ) {
+            $incoming = is_array( $settings['kb_content_blocks'] ) ? $settings['kb_content_blocks'] : array();
+            $settings['kb_content_blocks'] = array(
+                'tldr'      => ! empty( $incoming['tldr'] ),
+                'pro_tip'   => ! empty( $incoming['pro_tip'] ),
+                'pros_cons' => ! empty( $incoming['pros_cons'] ),
             );
         }
         return $settings;
@@ -1925,6 +1955,15 @@ class API {
             unset( $row );
         }
 
+        if ( ! empty( $summary['hidden'] ) && is_array( $summary['hidden'] ) ) {
+            foreach ( $summary['hidden'] as &$row ) {
+                $pid = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
+                $row['title']    = $pid ? get_the_title( $pid ) : '';
+                $row['edit_url'] = $pid ? get_edit_post_link( $pid, 'raw' ) : '';
+            }
+            unset( $row );
+        }
+
         return rest_ensure_response( $summary );
     }
 
@@ -1986,7 +2025,10 @@ class API {
     public function dismiss_answer_density( $request ) {
         $post_id = absint( $request->get_param( 'post_id' ) );
         $heading = (string) $request->get_param( 'heading' );
-        $data    = Answer_Density::dismiss( $post_id, $heading );
+        $all     = filter_var( $request->get_param( 'all' ), FILTER_VALIDATE_BOOLEAN );
+        $data    = $all
+            ? Answer_Density::dismiss_all( $post_id )
+            : Answer_Density::dismiss( $post_id, $heading );
         Answer_Density::refresh_summary();
         return rest_ensure_response( $data );
     }
@@ -1997,7 +2039,10 @@ class API {
     public function undismiss_answer_density( $request ) {
         $post_id = absint( $request->get_param( 'post_id' ) );
         $heading = (string) $request->get_param( 'heading' );
-        $data    = Answer_Density::undismiss( $post_id, $heading );
+        $all     = filter_var( $request->get_param( 'all' ), FILTER_VALIDATE_BOOLEAN );
+        $data    = $all
+            ? Answer_Density::undismiss_all( $post_id )
+            : Answer_Density::undismiss( $post_id, $heading );
         Answer_Density::refresh_summary();
         return rest_ensure_response( $data );
     }
@@ -2148,6 +2193,7 @@ class API {
         $ws        = strlen( $tail ) - strlen( ltrim( $tail, " \t\r\n" ) );
         $cursor   += $ws;
         $tail_trim = substr( $tail, $ws );
+		$target_structure = Answer_Density::opener_structure( $tail_trim );
 
         // Block-editor paragraph opener: skip the wp:paragraph comment so the
         // replacement swaps only the <p> and the serializer comments survive.
@@ -2165,12 +2211,14 @@ class API {
             // Stripping them can invalidate a Gutenberg block whose comment
             // attributes still describe the original HTML wrapper.
             $new_p         = $pm[1] . esc_html( $rewrite ) . '</p>';
-        } elseif ( ! preg_match( '#^(?:<(?:ul|ol|h[1-6]|table|blockquote|figure|div|pre|hr|section|aside|dl|details)\b|<!--\s*wp:)#i', $tail_trim )
+			$operation     = 'replaced_opener';
+		} elseif ( ! preg_match( '#^(?:<(?:ul|ol|li|h[1-6]|table|blockquote|figure|div|pre|hr|section|aside|dl|details)\b|<!--\s*wp:)#i', $tail_trim )
                    && preg_match( '#^(.+?)(?=\R\s*\R|\R?\s*<(?:ul|ol|h[1-6]|p|table|blockquote|figure|div|pre|hr)\b|\R?\s*<!--\s*wp:|$)#isu', $tail_trim, $pm )
                    && trim( wp_strip_all_tags( $pm[1] ) ) !== '' ) {
             // Opener is bare text (wpautop style): replace the text run.
             $p_full_length = strlen( $pm[1] );
             $new_p         = esc_html( $rewrite );
+			$operation     = 'replaced_opener';
         } else {
             // No opener exists: the heading is followed directly by a list,
             // table, or other block (checklist-style sections do this). The
@@ -2181,6 +2229,7 @@ class API {
             $new_p         = $is_blocks
                 ? "<!-- wp:paragraph -->\n<p>" . esc_html( $rewrite ) . "</p>\n<!-- /wp:paragraph -->\n\n"
                 : '<p>' . esc_html( $rewrite ) . "</p>\n\n";
+			$operation     = 'inserted_before_' . ( in_array( $target_structure, array( 'list', 'table', 'block' ), true ) ? $target_structure : 'content' );
         }
 
         $new_content = substr( $content, 0, $cursor ) . $new_p . substr( $content, $cursor + $p_full_length );
@@ -2196,6 +2245,8 @@ class API {
                 'saved'   => false,
                 'changed' => $new_content !== $content,
                 'content' => $new_content,
+				'operation' => $operation,
+				'preserved_structure' => 0 === $p_full_length,
             ) );
         }
 
@@ -2218,6 +2269,8 @@ class API {
             'saved'   => true,
             'scan'    => $scan,
             'summary' => $summary,
+			'operation' => $operation,
+			'preserved_structure' => 0 === $p_full_length,
         ) );
     }
 
@@ -3024,10 +3077,11 @@ HARD RULES
     }
 
     /**
-     * Apply a drafted FAQ to the target page. Handles three page types:
+     * Apply a drafted FAQ to the target page. Handles four page types:
      *   1. Pages using feature_faqs meta (marketing /plugin/* pages)
-     *   2. Posts containing a [faq] shortcode — append [q]/[a] block
-     *   3. Posts without an FAQ block — append a new [faq] block at the end
+     *   2. Posts containing a portable [aeogm_faqs] block
+     *   3. Posts containing a valid legacy [faq] block
+     *   4. Posts without an FAQ block — append a portable block at the end
      *
      * Records to asgm_query_gap_applied for audit + idempotence.
      *
@@ -3087,13 +3141,41 @@ HARD RULES
             }
         }
 
-        // ── Path 2 + 3: post_content with or without existing [faq] block ──
+        // ── Paths 2–4: post_content with or without an existing FAQ block ──
         if ( 'unknown' === $mode ) {
             $content = $post->post_content;
-            $faq_q_block = '[q]' . $question . '[/q]' . "\n" . '[a]' . $answer . '[/a]';
+            $portable_question = strtr( $question, array( '"' => "'", ']' => ')' ) );
+            $portable_item     = '[aeogm_faq q="' . $portable_question . '"]' . $answer . '[/aeogm_faq]';
+            $legacy_item       = '[q]' . $question . '[/q]' . "\n" . '[a]' . $answer . '[/a]';
 
-            if ( false !== strpos( $content, '[faq]' ) ) {
-                // Idempotence — bail if the EXACT question already appears.
+            // One parser owns idempotence across both portable and legacy formats.
+            if ( class_exists( '\\AISEOGodMode\\FaqParser' ) ) {
+                $parsed = \AISEOGodMode\FaqParser::parse_aeogm( $content );
+                foreach ( $parsed['pairs'] as $pair ) {
+                    if ( strtolower( trim( $pair['question'] ) ) === strtolower( $question ) ) {
+                        return rest_ensure_response( array(
+                            'success' => false,
+                            'error'   => 'This question is already in the page FAQ.',
+                            'mode'    => 'faq_shortcode',
+                        ) );
+                    }
+                }
+            }
+
+            if ( preg_match( '/\[aeogm_faqs\b[^\]]*\]/i', $content ) ) {
+                // Add to the first portable wrapper. The callback prevents $-style
+                // replacement tokens inside an AI-written answer being interpreted.
+                $new_content = preg_replace_callback(
+                    '/\[\/aeogm_faqs\]/i',
+                    function ( $match ) use ( $portable_item ) {
+                        return $portable_item . "\n" . $match[0];
+                    },
+                    $content,
+                    1
+                );
+                $mode = 'faq_shortcode';
+            } elseif ( preg_match( '/\[faq\b[^\]]*\]/i', $content ) ) {
+                // Preserve a valid legacy wrapper already owned by the active theme.
                 if ( false !== stripos( $content, '[q]' . $question . '[/q]' ) ) {
                     return rest_ensure_response( array(
                         'success' => false,
@@ -3101,17 +3183,23 @@ HARD RULES
                         'mode'    => 'faq_shortcode',
                     ) );
                 }
-                // Inject the new pair just before [/faq].
-                $new_content = preg_replace(
-                    '#\[/faq\]#',
-                    $faq_q_block . "\n" . '[/faq]',
+                $new_content = preg_replace_callback(
+                    '/\[\/faq\]/i',
+                    function ( $match ) use ( $legacy_item ) {
+                        return $legacy_item . "\n" . $match[0];
+                    },
                     $content,
-                    1 // only the first occurrence
+                    1
                 );
                 $mode = 'faq_shortcode';
             } else {
-                // Append a new [faq] block at the end.
-                $new_content = $content . "\n\n" . '<h2>Frequently asked questions</h2>' . "\n" . '[faq]' . "\n" . $faq_q_block . "\n" . '[/faq]';
+                // New content always gets the theme-independent, native-details block.
+                $new_content = $content . "\n\n"
+                    . '<!-- wp:shortcode -->' . "\n"
+                    . '[aeogm_faqs title="Frequently Asked Questions" open="first" style="boxed"]' . "\n"
+                    . $portable_item . "\n"
+                    . '[/aeogm_faqs]' . "\n"
+                    . '<!-- /wp:shortcode -->';
                 $mode = 'new_faq_block';
             }
 

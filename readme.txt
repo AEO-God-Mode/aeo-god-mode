@@ -4,11 +4,11 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.50
+Stable tag: 1.6.51
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Improve WordPress content for AI search with crawler controls, schema, llms.txt, content health checks, and citation tracking.
+Improve WordPress content for AI search with crawler controls, llms.txt, content health checks, and citation tracking.
 
 
 == Description ==
@@ -155,6 +155,9 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.51 =
+* Fixed Growth Topical Map designer controls on mature sites
 
 = 1.6.50 =
 * Required formatting rules in Knowledge Base
