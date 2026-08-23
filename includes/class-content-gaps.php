@@ -861,6 +861,69 @@ class ContentGaps {
      * @param \WP_Post $post_obj Post to render.
      * @return string Rendered content snapshot.
      */
+    /**
+     * Ask a page builder for its own rendered output.
+     *
+     * Builders do not keep the page in post_content. Elementor stores a JSON
+     * tree in post meta and takes over template rendering entirely, so
+     * applying the_content to post_content returns nothing and the page looks
+     * empty to every scanner we have. We advertise Elementor compatibility, so
+     * "we cannot see it" is not an acceptable answer: ask the builder to
+     * render, exactly as the front end does.
+     *
+     * Each branch is guarded on the builder's own classes, so this is inert
+     * when the builder is not installed. Renderers are third-party code that
+     * can throw, and a scan must never take down a nightly cron, so failures
+     * fall back to the normal path.
+     *
+     * @param \WP_Post $post_obj Post to render.
+     * @return string Rendered HTML, or an empty string when no builder applies.
+     */
+    public static function builder_rendered_content( $post_obj ) {
+        $post_id = (int) $post_obj->ID;
+
+        try {
+            // Elementor.
+            if ( class_exists( '\Elementor\Plugin' )
+                && 'builder' === get_post_meta( $post_id, '_elementor_edit_mode', true ) ) {
+                $elementor = \Elementor\Plugin::$instance;
+                if ( isset( $elementor->frontend ) && method_exists( $elementor->frontend, 'get_builder_content_for_display' ) ) {
+                    $html = (string) $elementor->frontend->get_builder_content_for_display( $post_id, false );
+                    if ( '' !== trim( wp_strip_all_tags( $html ) ) ) {
+                        return $html;
+                    }
+                }
+            }
+
+            // Beaver Builder.
+            if ( class_exists( 'FLBuilderModel' ) && class_exists( 'FLBuilder' )
+                && method_exists( 'FLBuilderModel', 'is_builder_enabled' )
+                && \FLBuilderModel::is_builder_enabled( $post_id )
+                && method_exists( 'FLBuilder', 'render_content_by_id' ) ) {
+                $html = (string) \FLBuilder::render_content_by_id( $post_id );
+                if ( '' !== trim( wp_strip_all_tags( $html ) ) ) {
+                    return $html;
+                }
+            }
+
+            // Bricks.
+            if ( class_exists( '\Bricks\Frontend' ) && method_exists( '\Bricks\Frontend', 'render_data' ) ) {
+                $bricks = get_post_meta( $post_id, '_bricks_page_content_2', true );
+                if ( is_array( $bricks ) && ! empty( $bricks ) ) {
+                    $html = (string) \Bricks\Frontend::render_data( $bricks );
+                    if ( '' !== trim( wp_strip_all_tags( $html ) ) ) {
+                        return $html;
+                    }
+                }
+            }
+        } catch ( \Throwable $e ) {
+            // A builder that cannot render is not a reason to fail the scan.
+            return '';
+        }
+
+        return '';
+    }
+
     public static function render_post_snapshot( $post_obj ) {
         global $post;
 
@@ -869,7 +932,10 @@ class ContentGaps {
         setup_postdata( $post_obj );
 
         try {
-            $rendered = (string) apply_filters( 'the_content', (string) $post_obj->post_content ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+            $rendered = self::builder_rendered_content( $post_obj );
+            if ( '' === $rendered ) {
+                $rendered = (string) apply_filters( 'the_content', (string) $post_obj->post_content ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+            }
         } finally {
             if ( $previous_post instanceof \WP_Post ) {
                 $post = $previous_post; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited

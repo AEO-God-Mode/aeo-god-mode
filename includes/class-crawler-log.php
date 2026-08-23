@@ -79,6 +79,11 @@ class CrawlerLog {
 	 */
 	private function flush_cache() {
 		wp_cache_flush_group( self::CACHE_GROUP );
+		// The dashboard widget caches its own aggregates in a transient, so a
+		// new visit or a purge has to clear that too or the "last visit"
+		// heartbeat keeps reporting a stale bot.
+		delete_transient( 'asgm_dw_crawl' );
+		delete_transient( 'asgm_dw_priority' );
 	}
 
 	/**

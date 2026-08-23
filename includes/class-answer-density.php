@@ -42,7 +42,33 @@ class Answer_Density {
 	public static function available_post_types() {
 		$objects = get_post_types( array( 'public' => true, 'show_ui' => true ), 'objects' );
 		$out     = array();
-		$blocked = array( 'attachment', 'nav_menu_item', 'revision', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation' );
+		/*
+		 * Scaffolding, not content. WordPress and the page builders register
+		 * public post types for reusable parts, saved templates and widgets.
+		 * A saved template is rendered INTO a real page, so scoring it on its
+		 * own would double count the same words and hand the owner a list of
+		 * fragments to "improve" that nobody ever reads directly. Elementor
+		 * pages are ordinary pages and are already covered by 'page'.
+		 */
+		$blocked = array(
+			// WordPress core.
+			'attachment', 'nav_menu_item', 'revision', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation',
+			'wp_global_styles', 'wp_font_family', 'wp_font_face',
+			// Elementor.
+			'elementor_library', 'e-floating-buttons', 'e-landing-page',
+			// Beaver Builder, Bricks, Divi, WPBakery, Oxygen, Brizy.
+			'fl-builder-template', 'fl-theme-layout', 'bricks_template', 'et_pb_layout',
+			'vc_grid_item', 'ct_template', 'brizy_template',
+			// Commerce and forms scaffolding that carries no answerable prose.
+			'product_variation', 'shop_order', 'shop_coupon', 'wpforms', 'wpcf7_contact_form',
+		);
+
+		/**
+		 * Filter the post types hidden from the content scope picker.
+		 *
+		 * @param array $blocked Post type names treated as scaffolding.
+		 */
+		$blocked = (array) apply_filters( 'asgm_content_scope_blocked_types', $blocked );
 
 		foreach ( (array) $objects as $name => $object ) {
 			$name = sanitize_key( $name );
@@ -1042,6 +1068,21 @@ class Answer_Density {
 				? ContentGaps::render_post_snapshot( $post )
 				: (string) apply_filters( 'the_content', $post->post_content ) ) // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
 			: (string) $content;
+
+		/*
+		 * Page builders keep the page outside post_content, so a builder page
+		 * would otherwise score zero for answering nothing while the live page
+		 * is full of headings and answers. Ask the builder directly before
+		 * concluding the page is empty.
+		 */
+		if ( '' === trim( wp_strip_all_tags( (string) $content ) )
+			&& class_exists( __NAMESPACE__ . '\\ContentGaps' )
+			&& method_exists( __NAMESPACE__ . '\\ContentGaps', 'builder_rendered_content' ) ) {
+			$builder = ContentGaps::builder_rendered_content( $post );
+			if ( '' !== $builder ) {
+				$content = $builder;
+			}
+		}
 		$result  = self::scan_html(
 			$content,
 			array( 'dismissed' => self::get_dismissed( $post_id ) )

@@ -5,6 +5,35 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.57
+
+- Pros and Cons blocks now sit side by side however the shortcodes are spaced in the editor
+
+## 1.6.56
+
+- ChatGPT citation checks using your own API key now work again after OpenAI retired the previous model
+
+## 1.6.55
+
+- Page builder templates and widget areas no longer appear as content types to optimise
+
+## 1.6.54
+
+- Pages built with Elementor
+- Beaver Builder or Bricks are now read and scored properly instead of appearing empty
+
+## 1.6.53
+
+- Dashboard widget no longer flags pages whose content is built by a theme template or page builder
+
+## 1.6.52
+
+- New Content Blocks settings tab with four front-end designs
+- TL;DR blocks now use bullet points with a choice of bullet style
+- FAQ blocks can be added to new drafts automatically
+- New dashboard widget showing which AI bots read your site
+- Gemini citation checks can now run on your plan credits without an API key
+
 ## 1.6.51
 
 - Fixed Growth Topical Map designer controls on mature sites

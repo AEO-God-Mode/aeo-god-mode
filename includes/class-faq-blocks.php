@@ -10,7 +10,7 @@
  *     ...
  *   [/aeogm_faqs]
  *
- *   [aeogm_tldr title="TL;DR"]Two or three sentence direct answer.[/aeogm_tldr]
+ *   [aeogm_tldr title="TL;DR"]- Bullet takeaway\n- Bullet takeaway[/aeogm_tldr]
  *
  *   [aeogm_pro_tip title="Pro tip"]Useful practical advice.[/aeogm_pro_tip]
  *
@@ -143,7 +143,12 @@ class FaqBlocks {
             'title' => 'TL;DR',
         ), $atts, 'aeogm_tldr' );
 
-        $body = trim( do_shortcode( wpautop( (string) $content ) ) );
+        // New drafts write the TL;DR as "- " bullet lines; render those as a
+        // real list. Prose from already-published posts keeps its paragraph.
+        $body = self::lines_to_list( (string) $content );
+        if ( '' === $body ) {
+            $body = trim( do_shortcode( wpautop( (string) $content ) ) );
+        }
         if ( '' === $body ) {
             return '';
         }
@@ -184,7 +189,26 @@ class FaqBlocks {
         // when the completed inner markup is sanitised a second time.
         $css   = self::css();
         $inner = trim( do_shortcode( wp_kses_post( (string) $content ) ) );
-        if ( '' === $inner ) {
+
+        /*
+         * The wrapper is a two column grid, so every direct child takes a
+         * cell. wpautop runs before shortcodes, so the newlines an author
+         * naturally puts between the nested tags come back as markup: <br>
+         * when the lines are adjacent, and <p> wrappers around the cards
+         * when a blank line separates them. Either way the extra nodes claim
+         * cells and knock the two cards out of line.
+         *
+         * Matching each variation in turn is a losing game, so rebuild the
+         * children from the cards themselves. Whatever wpautop produced in
+         * between is discarded, and the grid always receives exactly the
+         * cards. Anything unexpected falls back to the original markup
+         * rather than rendering nothing.
+         */
+        if ( preg_match_all( '#<section class="aeogm-comparison-card.*?</section>#s', $inner, $cards ) ) {
+            $inner = implode( '', $cards[0] );
+        }
+
+        if ( '' === trim( $inner ) ) {
             return '';
         }
 
@@ -215,11 +239,13 @@ class FaqBlocks {
         if ( false !== stripos( $raw, '<li' ) ) {
             $list = wp_kses_post( $raw );
         } else {
-            $plain = trim( wp_strip_all_tags( $raw ) );
+            // Decode entities first: wptexturize turns "- " into an &#8211;
+            // entity, which the marker strip below could never match as text.
+            $plain = trim( html_entity_decode( wp_strip_all_tags( $raw ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
             $lines = preg_split( '/\r\n|\r|\n/u', $plain );
             $items = array();
             foreach ( (array) $lines as $line ) {
-                $line = trim( preg_replace( '/^[\s\-*+\x{2022}]+/u', '', (string) $line ) );
+                $line = trim( preg_replace( '/^[\s\-*+\x{2022}\x{2013}\x{2014}]+/u', '', (string) $line ) );
                 if ( '' !== $line ) {
                     $items[] = '<li>' . esc_html( $line ) . '</li>';
                 }
@@ -240,6 +266,39 @@ class FaqBlocks {
             . '</section>';
     }
 
+    /**
+     * Convert marker-prefixed lines ("- ", "* ", bullets, texturized dashes)
+     * into a <ul>. Returns '' when the content is not list-shaped, so callers
+     * can fall back to paragraph rendering for legacy prose.
+     */
+    private static function lines_to_list( $raw ) {
+        $raw = trim( do_shortcode( $raw ) );
+        if ( '' === $raw ) {
+            return '';
+        }
+        if ( false !== stripos( $raw, '<li' ) ) {
+            return wp_kses_post( $raw );
+        }
+        $plain = trim( html_entity_decode( wp_strip_all_tags( $raw ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
+        $lines = preg_split( '/\r\n|\r|\n/u', $plain );
+        $items = array();
+        foreach ( (array) $lines as $line ) {
+            $line = trim( (string) $line );
+            if ( '' === $line ) {
+                continue;
+            }
+            // Every line must carry a list marker; one prose line means "not a list".
+            if ( ! preg_match( '/^[\-*+\x{2022}\x{2013}\x{2014}]\s*/u', $line ) ) {
+                return '';
+            }
+            $line = trim( preg_replace( '/^[\s\-*+\x{2022}\x{2013}\x{2014}]+/u', '', $line ) );
+            if ( '' !== $line ) {
+                $items[] = '<li>' . esc_html( $line ) . '</li>';
+            }
+        }
+        return count( $items ) >= 2 ? '<ul>' . implode( '', $items ) . '</ul>' : '';
+    }
+
     /** Small inline SVGs avoid external assets, font icons and front-end JavaScript. */
     private static function icon( $name ) {
         $paths = array(
@@ -255,39 +314,64 @@ class FaqBlocks {
     /* ─────────────────────────── Styles ─────────────────────────── */
 
     /**
+     * Site-wide design choices for the rendered blocks, picked in
+     * Settings > Content Blocks. Always returns a complete, valid set.
+     */
+    public static function design() {
+        $settings = get_option( 'asgm_settings', array() );
+        $saved    = isset( $settings['content_block_design'] ) && is_array( $settings['content_block_design'] )
+            ? $settings['content_block_design']
+            : array();
+        $style  = in_array( $saved['style'] ?? '', array( 'boxed', 'minimal', 'outline', 'bold' ), true ) ? $saved['style'] : 'boxed';
+        $radius = in_array( $saved['radius'] ?? '', array( 'rounded', 'square' ), true ) ? $saved['radius'] : 'rounded';
+        $marker = in_array( $saved['tldr_marker'] ?? '', array( 'bullet', 'hollow', 'arrow', 'check', 'star' ), true ) ? $saved['tldr_marker'] : 'bullet';
+        $accent = (string) ( $saved['accent'] ?? '' );
+        if ( '' !== $accent && ! preg_match( '/^#[0-9a-fA-F]{6}$/', $accent ) ) {
+            $accent = '';
+        }
+        return array( 'style' => $style, 'accent' => $accent, 'radius' => $radius, 'tldr_marker' => $marker );
+    }
+
+    /**
      * Small, theme-neutral CSS printed once per page, only on pages that
      * actually use a block. currentColor + transparent tints inherit the
      * theme, so the blocks look native in light and dark themes alike.
+     * The design() choices only swap presentation; markup never changes,
+     * so published posts restyle site-wide without edits.
      */
     private static function css() {
         if ( self::$css_done ) {
             return '';
         }
         self::$css_done = true;
-        return '<style id="aeogm-content-block-css">'
-            . '.aeogm-faqs{margin:1.5em 0}'
+
+        $design = self::design();
+        $style  = $design['style'];
+
+        // FAQ mechanics, shared by every style.
+        $css = '.aeogm-faqs{margin:1.5em 0}'
             . '.aeogm-faqs__title{margin:0 0 .6em}'
-            . '.aeogm-faq{border:1px solid rgba(128,128,128,.35);border-radius:10px;margin:0 0 .6em;overflow:hidden}'
-            . '.aeogm-faqs--minimal .aeogm-faq{border:0;border-bottom:1px solid rgba(128,128,128,.3);border-radius:0;margin:0}'
             . '.aeogm-faq__q{cursor:pointer;padding:.85em 1em;font-weight:600;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:.75em}'
             . '.aeogm-faq__q::-webkit-details-marker{display:none}'
             . '.aeogm-faq__q::after{content:"+";font-weight:700;opacity:.55;flex-shrink:0;transition:transform .18s ease}'
             . '.aeogm-faq[open]>.aeogm-faq__q::after{transform:rotate(45deg)}'
-            . '.aeogm-faq[open]>.aeogm-faq__q{border-bottom:1px solid rgba(128,128,128,.25)}'
             . '.aeogm-faq__a{padding:.85em 1em}'
             . '.aeogm-faq__a>p:first-child{margin-top:0}'
             . '.aeogm-faq__a>p:last-child{margin-bottom:0}'
-            . '.aeogm-content-block{--aeogm-accent:#2563eb;position:relative;display:flex;gap:1em;border:1px solid color-mix(in srgb,var(--aeogm-accent) 25%,transparent);border-radius:16px;padding:1.15em 1.25em;margin:1.6em 0;overflow:hidden;background:linear-gradient(135deg,color-mix(in srgb,var(--aeogm-accent) 10%,transparent),color-mix(in srgb,var(--aeogm-accent) 3%,transparent))}'
-            . '.aeogm-content-block:before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--aeogm-accent)}'
-            . '.aeogm-content-block__icon{width:2.35em;height:2.35em;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;color:var(--aeogm-accent);background:color-mix(in srgb,var(--aeogm-accent) 13%,transparent)}'
+            // Callout skeleton, shared by every style.
+            . '.aeogm-content-block{--aeogm-accent:#2563eb;position:relative;display:flex;gap:1em;padding:1.15em 1.25em;margin:1.6em 0;overflow:hidden}'
+            . '.aeogm-content-block__icon{width:2.35em;height:2.35em;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;color:var(--aeogm-accent)}'
             . '.aeogm-content-block__icon svg{width:1.25em;height:1.25em}'
             . '.aeogm-content-block__body{min-width:0;flex:1}'
             . '.aeogm-content-block__label{font-size:.76em;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--aeogm-accent);margin:0 0 .42em}'
             . '.aeogm-content-block__body>p:first-of-type:not(.aeogm-content-block__label){margin-top:0}'
             . '.aeogm-content-block__body>p:last-child{margin-bottom:0}'
+            . '.aeogm-content-block__body ul{margin:.1em 0 0;padding-left:1.15em}'
+            . '.aeogm-content-block__body li{margin:.35em 0}'
             . '.aeogm-pro-tip{--aeogm-accent:#7c3aed}'
+            // Pros and cons skeleton. The two colours are semantic, never themed.
             . '.aeogm-pros-cons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;margin:1.6em 0}'
-            . '.aeogm-comparison-card{--aeogm-compare:#16a34a;border:1px solid color-mix(in srgb,var(--aeogm-compare) 25%,transparent);border-radius:16px;padding:1.1em 1.2em;background:color-mix(in srgb,var(--aeogm-compare) 6%,transparent)}'
+            . '.aeogm-comparison-card{--aeogm-compare:#16a34a;padding:1.1em 1.2em}'
             . '.aeogm-comparison-card--cons{--aeogm-compare:#e11d48}'
             . '.aeogm-comparison-card__heading{display:flex;align-items:center;gap:.65em;margin:0 0 .75em}'
             . '.aeogm-comparison-card__heading h3{font-size:1em;margin:0;color:inherit}'
@@ -295,7 +379,78 @@ class FaqBlocks {
             . '.aeogm-comparison-card__icon svg{width:1em;height:1em}'
             . '.aeogm-comparison-card__content ul{margin:0;padding-left:1.2em}'
             . '.aeogm-comparison-card__content li{margin:.42em 0}'
-            . '@media(max-width:640px){.aeogm-pros-cons{grid-template-columns:1fr}.aeogm-content-block{padding:1em}.aeogm-content-block__icon{width:2em;height:2em}}'
-            . '</style>';
+            . '@media(max-width:640px){.aeogm-pros-cons{grid-template-columns:1fr}.aeogm-content-block{padding:1em}.aeogm-content-block__icon{width:2em;height:2em}}';
+
+        if ( 'boxed' === $style ) {
+            $css .= '.aeogm-faq{border:1px solid rgba(128,128,128,.35);border-radius:10px;margin:0 0 .6em;overflow:hidden}'
+                . '.aeogm-faqs--minimal .aeogm-faq{border:0;border-bottom:1px solid rgba(128,128,128,.3);border-radius:0;margin:0}'
+                . '.aeogm-faq[open]>.aeogm-faq__q{border-bottom:1px solid rgba(128,128,128,.25)}'
+                . '.aeogm-content-block{border:1px solid color-mix(in srgb,var(--aeogm-accent) 25%,transparent);border-radius:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--aeogm-accent) 10%,transparent),color-mix(in srgb,var(--aeogm-accent) 3%,transparent))}'
+                . '.aeogm-content-block:before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--aeogm-accent)}'
+                . '.aeogm-content-block__icon{background:color-mix(in srgb,var(--aeogm-accent) 13%,transparent)}'
+                . '.aeogm-comparison-card{border:1px solid color-mix(in srgb,var(--aeogm-compare) 25%,transparent);border-radius:16px;background:color-mix(in srgb,var(--aeogm-compare) 6%,transparent)}';
+        } elseif ( 'minimal' === $style ) {
+            $css .= '.aeogm-faq{border-bottom:1px solid rgba(128,128,128,.3);margin:0}'
+                . '.aeogm-faq__q{padding:.85em .25em}'
+                . '.aeogm-faq__a{padding:.1em .25em 1em}'
+                . '.aeogm-content-block{border-left:3px solid var(--aeogm-accent);padding:.35em 0 .35em 1.15em}'
+                . '.aeogm-content-block__icon{display:none}'
+                . '.aeogm-comparison-card{border-top:3px solid var(--aeogm-compare);padding:.8em .25em 0}'
+                . '.aeogm-comparison-card__icon{width:1.35em;height:1.35em}'
+                . '.aeogm-comparison-card__icon svg{width:.8em;height:.8em}';
+        } elseif ( 'outline' === $style ) {
+            $css .= '.aeogm-faq{border:1px solid rgba(128,128,128,.4);border-radius:10px;margin:0 0 .6em;overflow:hidden}'
+                . '.aeogm-faq[open]>.aeogm-faq__q{border-bottom:1px solid rgba(128,128,128,.25)}'
+                . '.aeogm-content-block{border:1px solid rgba(128,128,128,.4);border-radius:14px}'
+                . '.aeogm-content-block__icon{border:1.5px solid color-mix(in srgb,var(--aeogm-accent) 45%,transparent)}'
+                . '.aeogm-comparison-card{border:1px solid rgba(128,128,128,.4);border-radius:14px}'
+                . '.aeogm-comparison-card__heading h3{color:var(--aeogm-compare)}'
+                . '.aeogm-comparison-card__icon{color:var(--aeogm-compare);background:transparent;border:1.5px solid var(--aeogm-compare)}';
+        } else { // bold
+            $css .= '.aeogm-faq{border:1px solid color-mix(in srgb,var(--aeogm-faq-accent,#2563eb) 35%,transparent);border-radius:10px;margin:0 0 .6em;overflow:hidden}'
+                . '.aeogm-faq{--aeogm-faq-accent:#2563eb}'
+                . '.aeogm-faq__q{background:color-mix(in srgb,var(--aeogm-faq-accent,#2563eb) 12%,transparent)}'
+                . '.aeogm-faq[open]>.aeogm-faq__q{border-bottom:1px solid color-mix(in srgb,var(--aeogm-faq-accent,#2563eb) 25%,transparent)}'
+                . '.aeogm-content-block{flex-direction:column;gap:0;padding:0;border:1px solid color-mix(in srgb,var(--aeogm-accent) 35%,transparent);border-radius:14px}'
+                . '.aeogm-content-block__icon{position:absolute;top:.55em;right:.8em;width:1.7em;height:1.7em;color:#fff;background:transparent}'
+                . '.aeogm-content-block__icon svg{width:1.05em;height:1.05em}'
+                . '.aeogm-content-block__body{padding:0}'
+                . '.aeogm-content-block__label{display:block;background:var(--aeogm-accent);color:#fff;padding:.6em 1.2em;margin:0;border-radius:0}'
+                . '.aeogm-content-block__body>*:not(.aeogm-content-block__label){margin-left:1.2em;margin-right:1.2em}'
+                . '.aeogm-content-block__body>p:first-of-type:not(.aeogm-content-block__label){margin-top:.9em}'
+                . '.aeogm-content-block__body>p:last-child{margin-bottom:.9em}'
+                . '.aeogm-content-block__body>ul{margin:.9em 1.2em;padding-left:1.15em}'
+                . '.aeogm-comparison-card{padding:0;border:1px solid color-mix(in srgb,var(--aeogm-compare) 35%,transparent);border-radius:14px;overflow:hidden}'
+                . '.aeogm-comparison-card__heading{background:var(--aeogm-compare);color:#fff;padding:.6em 1.2em;margin:0}'
+                . '.aeogm-comparison-card__icon{background:transparent;width:1.35em;height:1.35em}'
+                . '.aeogm-comparison-card__content{padding:.9em 1.2em}';
+        }
+
+        // Owner-chosen TL;DR list marker. The default keeps the browser disc;
+        // the rest swap in a glyph coloured by the block accent.
+        $markers = array(
+            'hollow' => '\\25E6',
+            'arrow'  => '\\2192',
+            'check'  => '\\2713',
+            'star'   => '\\2605',
+        );
+        if ( isset( $markers[ $design['tldr_marker'] ] ) ) {
+            $css .= '.aeogm-tldr .aeogm-content-block__body ul{list-style:none;padding-left:.2em}'
+                . '.aeogm-tldr .aeogm-content-block__body li{position:relative;padding-left:1.35em}'
+                . '.aeogm-tldr .aeogm-content-block__body li::before{content:"' . $markers[ $design['tldr_marker'] ] . '";position:absolute;left:0;top:0;color:var(--aeogm-accent);font-weight:700;line-height:inherit}';
+        }
+
+        if ( 'square' === $design['radius'] ) {
+            $css .= '.aeogm-faq,.aeogm-content-block,.aeogm-comparison-card,.aeogm-content-block__icon{border-radius:0}';
+        }
+
+        // One owner-chosen accent recolours the informational blocks. The
+        // pros and cons pair keeps its semantic green and red regardless.
+        if ( '' !== $design['accent'] ) {
+            $css .= '.aeogm-content-block,.aeogm-pro-tip{--aeogm-accent:' . $design['accent'] . '}'
+                . '.aeogm-faq{--aeogm-faq-accent:' . $design['accent'] . '}';
+        }
+
+        return '<style id="aeogm-content-block-css">' . $css . '</style>';
     }
 }

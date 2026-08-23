@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.51
+Stable tag: 1.6.57
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -75,44 +75,47 @@ The plugin can also be installed by uploading the `aeo-god-mode` folder to `/wp-
 
 Answer Engine Optimization, or AEO, is the work of making content easier for search and AI systems to discover, understand, and quote accurately. It complements traditional SEO rather than replacing it.
 
-= Does AEO God Mode guarantee citations or Google AI Overview placement? =
+= What does AEO God Mode actually do? =
 
-No. No plugin can guarantee a citation, ranking, or inclusion in an AI-generated answer. AEO God Mode helps you find technical and content issues, publish structured context, and measure supported outcomes.
+Three things. It controls which AI crawlers may read your site and records every visit they make, so you can see whether ChatGPT, Claude, Perplexity and Google are reading you at all. It scores your pages on how directly they answer real questions, and shows you which ones to fix first. And it publishes machine readable context about your site, including llms.txt and structured data.
 
 = Does it replace Yoast SEO, Rank Math, SEOPress, or All in One SEO? =
 
-No. It runs alongside them and checks for overlapping schema. It does not silently replace titles, descriptions, canonicals, or sitemaps.
+No, and it is built to sit alongside them. AEO God Mode detects the SEO plugin you already run and steps back from anything it already handles, so you do not get duplicate titles, descriptions or schema. Keep your SEO plugin for search rankings and use this for AI answer visibility.
 
-If you explicitly approve an AI metadata result, AEO God Mode writes it to the compatible SEO field used by your active plugin. You can review generated text before saving.
+= Does AEO God Mode guarantee citations or Google AI Overview placement? =
 
-= What does “No rule” mean for an AI crawler? =
+No. No plugin can guarantee a citation, ranking, or inclusion in an AI-generated answer. Anyone who promises that is guessing. What this does is find the technical and content problems that keep you out, publish the context AI systems can read, and measure what actually happens.
 
-It means robots.txt contains no crawler-specific allow or disallow directive. It does not mean the crawler is blocked, and it does not prove that the crawler has visited the site.
+= Is the plugin free, and what does Pro add? =
 
-= Why can a working link show 403 or “not tested”? =
+The free plugin is a working product, not a trial. You get AI crawler controls, the crawler visit log, Answer Density scoring, content gap scanning, llms.txt, structured data, the setup guide, and monthly AI credits.
 
-Some sites allow normal visitors but reject automated requests. Link Health separates refused or inconclusive checks from confirmed broken links. Open the URL yourself, then choose Ignore if you do not want it counted or shown again.
+Pro adds the measurement and production side: checking whether ChatGPT, Perplexity, Gemini and Claude actually quote you, Google Search Console data, author credibility markup, topical planning, and higher AI credit limits.
 
-= Does Link Health follow redirects? =
+= Will it slow my site down? =
 
-Yes. A working 301 or 302 redirect is not treated as a broken destination. Confirmed replacement pages may be offered as a safer update than unlinking.
+The visitor-facing footprint is small by design. The content blocks render as plain HTML with no JavaScript, their styling is printed once per page, and the scoring and scanning work all happens in your admin area rather than on page loads. Crawler logging records bot visits only, never your human visitors.
+
+= Do I need to be technical to use it? =
+
+No. The setup guide walks you through the first configuration, and the dashboard tells you which page to improve next and why. Nothing requires editing code, robots.txt or template files by hand.
+
+= Is my content sent to AI companies? =
+
+Only when you choose to use an AI feature, such as generating a draft or checking citations, and then only the content that feature needs. Crawler logging, scoring, schema and llms.txt all run entirely on your own server. Documents you upload to the Knowledge Base are stored as text on your site and never leave it.
+
+= How soon will I see a difference? =
+
+Crawler data appears as soon as a bot visits, often within days. Content scores appear as soon as your first scan finishes. Getting quoted by an AI system depends on your content and your competition, so treat it as ongoing work rather than a switch you flip.
 
 = Is llms.txt required by AI companies? =
 
-No. It is a proposed convention. The plugin can publish a clear file at `/llms.txt`, but you should treat it as low-cost supporting context, not as proof that an AI crawler will read or use it.
+No. llms.txt is a proposed convention, not an adopted standard, and no AI company has committed to reading it. It costs nothing to publish and the plugin keeps yours current automatically, but treat it as a courtesy to machine readers rather than a ranking lever.
 
-= What happens when I use an AI action? =
+= Does it work with my theme, page builder, and WooCommerce? =
 
-Only after you click a Generate, Analyze, or Fix action does the plugin send the relevant title and content text for processing. The result is returned for review. Credit costs are shown before generation, and failed requests are not presented as successful edits.
-
-= Is the plugin free? =
-
-The crawler controls, health checks, schema tools, llms.txt, crawler log, setup guide, and monthly free AI credits are available in the free plugin. Pro adds citation measurement, Search Console data, author enrichment, planning tools, and higher AI credit limits.
-
-= Does it support WooCommerce and Easy Digital Downloads? =
-
-Yes. Product and download post types can use the supported metadata and schema workflows when those plugins are active.
-
+Yes. The plugin works with any correctly built theme and does not depend on a page builder. Product and download post types are supported when WooCommerce or Easy Digital Downloads is active.
 
 == Screenshots ==
 
@@ -155,6 +158,29 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.57 =
+* Pros and Cons blocks now sit side by side however the shortcodes are spaced in the editor
+
+= 1.6.56 =
+* ChatGPT citation checks using your own API key now work again after OpenAI retired the previous model
+
+= 1.6.55 =
+* Page builder templates and widget areas no longer appear as content types to optimise
+
+= 1.6.54 =
+* Pages built with Elementor
+* Beaver Builder or Bricks are now read and scored properly instead of appearing empty
+
+= 1.6.53 =
+* Dashboard widget no longer flags pages whose content is built by a theme template or page builder
+
+= 1.6.52 =
+* New Content Blocks settings tab with four front-end designs
+* TL;DR blocks now use bullet points with a choice of bullet style
+* FAQ blocks can be added to new drafts automatically
+* New dashboard widget showing which AI bots read your site
+* Gemini citation checks can now run on your plan credits without an API key
 
 = 1.6.51 =
 * Fixed Growth Topical Map designer controls on mature sites

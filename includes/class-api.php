@@ -1751,10 +1751,21 @@ class API {
                 4000
             );
         }
+        if ( array_key_exists( 'content_block_design', $settings ) ) {
+            $incoming = is_array( $settings['content_block_design'] ) ? $settings['content_block_design'] : array();
+            $accent   = (string) ( $incoming['accent'] ?? '' );
+            $settings['content_block_design'] = array(
+                'style'       => in_array( $incoming['style'] ?? '', array( 'boxed', 'minimal', 'outline', 'bold' ), true ) ? $incoming['style'] : 'boxed',
+                'accent'      => preg_match( '/^#[0-9a-fA-F]{6}$/', $accent ) ? strtolower( $accent ) : '',
+                'radius'      => in_array( $incoming['radius'] ?? '', array( 'rounded', 'square' ), true ) ? $incoming['radius'] : 'rounded',
+                'tldr_marker' => in_array( $incoming['tldr_marker'] ?? '', array( 'bullet', 'hollow', 'arrow', 'check', 'star' ), true ) ? $incoming['tldr_marker'] : 'bullet',
+            );
+        }
         if ( array_key_exists( 'kb_content_blocks', $settings ) ) {
             $incoming = is_array( $settings['kb_content_blocks'] ) ? $settings['kb_content_blocks'] : array();
             $settings['kb_content_blocks'] = array(
                 'tldr'      => ! empty( $incoming['tldr'] ),
+                'faq'       => ! empty( $incoming['faq'] ),
                 'pro_tip'   => ! empty( $incoming['pro_tip'] ),
                 'pros_cons' => ! empty( $incoming['pros_cons'] ),
             );
@@ -3850,8 +3861,14 @@ HARD RULES
      */
     public function save_citation_engine_source( $request ) {
         $source = 'plan' === $request->get_param( 'source' ) ? 'plan' : 'key';
-        update_option( 'asgm_citation_openai_source', $source, false );
-        return rest_ensure_response( array( 'success' => true, 'source' => $source ) );
+        // Defaults to openai so an older admin bundle keeps working.
+        $engine = sanitize_key( (string) ( $request->get_param( 'engine' ) ?: 'openai' ) );
+        if ( ! in_array( $engine, array( 'openai', 'gemini' ), true ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'That engine cannot run on plan credits.' ), 400 );
+        }
+        $option = 'openai' === $engine ? 'asgm_citation_openai_source' : 'asgm_citation_' . $engine . '_source';
+        update_option( $option, $source, false );
+        return rest_ensure_response( array( 'success' => true, 'engine' => $engine, 'source' => $source ) );
     }
 
     // -----------------------------------------------------------------------

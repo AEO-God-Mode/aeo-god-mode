@@ -73,6 +73,7 @@ class Main {
         require_once $includes . 'class-ai-crawlers.php';
         require_once $includes . 'class-llms.php';
         require_once $includes . 'class-crawler-log.php';
+        require_once $includes . 'class-dashboard-widget.php';
         require_once $includes . 'class-content-gaps.php';
         require_once $includes . 'class-validator.php';
         require_once $includes . 'class-conflict.php';
@@ -549,6 +550,8 @@ class Main {
         $this->modules['ai_crawlers']  = new AICrawlers();
         $this->modules['llms']         = new LLMS();
         $this->modules['crawler_log']  = new CrawlerLog();
+        // Always on: the dashboard widget is the daily surface for the whole plugin.
+        new Dashboard_Widget();
         $this->modules['content_gaps'] = new ContentGaps();
         $this->modules['validator']    = new Validator();
         $this->modules['conflict']     = new Conflict();
