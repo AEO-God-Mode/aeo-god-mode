@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.57
+Stable tag: 1.6.71
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -158,6 +158,61 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.71 =
+* Social copy now keeps your article's full answer instead of shortening it to a bare yes or no
+
+= 1.6.70 =
+* Social copy now leads with the question your article answers and keeps product names consistent across platforms
+
+= 1.6.69 =
+* Choose how long a video script should be
+* clearer script structure
+* and the copy buttons now confirm the copy
+
+= 1.6.68 =
+* Rewritten social copy instructions for stronger angles
+* platform-native writing and stricter source fidelity
+
+= 1.6.67 =
+* Social copy keeps the requested number of posts and variations
+* and always uses natural contractions
+
+= 1.6.66 =
+* Social copy now follows the AEO God Mode writing style
+* with human cadence and hooks that are not generic
+
+= 1.6.65 =
+* A LinkedIn post now always comes back as one post
+* never split in two
+
+= 1.6.64 =
+* Fixes the social copy panel so the latest controls and character counts load correctly
+
+= 1.6.63 =
+* A single X post now always comes back as one post
+* never split across two
+
+= 1.6.62 =
+* X character count now matches how X counts links
+* so posts ending in a link are no longer flagged as too long
+
+= 1.6.61 =
+* X copy can now be a single post as well as a thread
+
+= 1.6.60 =
+* Repurpose now shows the real reason when a generation cannot run
+* instead of a generic message
+
+= 1.6.59 =
+* Repurpose any post into an X thread
+* LinkedIn post or video script
+* built from the post's own key points
+
+= 1.6.58 =
+* Topical Map now works on new sites before Search Console has data
+* Search Console messages say when a property is simply too new
+* Affiliate badge stays on without an affiliate ID and links to AEO God Mode
 
 = 1.6.57 =
 * Pros and Cons blocks now sit side by side however the shortcodes are spaced in the editor

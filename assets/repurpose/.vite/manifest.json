@@ -1,0 +1,12 @@
+{
+  "src/repurpose-list.tsx": {
+    "file": "js/repurpose.js",
+    "name": "repurpose-list",
+    "src": "src/repurpose-list.tsx",
+    "isEntry": true
+  },
+  "style.css": {
+    "file": "css/repurpose.css",
+    "src": "style.css"
+  }
+}

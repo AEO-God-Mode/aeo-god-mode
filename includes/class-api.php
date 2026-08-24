@@ -403,6 +403,23 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
+            // ---- Repurpose (Pro): social copy from a post ----
+            register_rest_route( self::NAMESPACE, '/repurpose', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_repurpose' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+            register_rest_route( self::NAMESPACE, '/repurpose/generate', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'generate_repurpose' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+            register_rest_route( self::NAMESPACE, '/repurpose/save', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_repurpose' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
             // ---- Knowledge Base (RAG) ----
             register_rest_route( self::NAMESPACE, '/kb', array(
                 'methods'             => 'GET',
@@ -1722,10 +1739,14 @@ class API {
             if ( isset( $b['label'] ) ) {
                 $b['label'] = substr( sanitize_text_field( (string) $b['label'] ), 0, 80 );
             }
-            // A badge can never be enabled without a connected affiliate ID.
-            if ( empty( $aff['id'] ) ) {
-                $b['enabled'] = false;
-            }
+            /*
+             * The badge does not need an affiliate ID. Without one the anchor
+             * points at the plain homepage, which is still a real link back;
+             * with one it routes through the referral path and also earns
+             * commission. Forcing it off here silently overrode the owner's
+             * own choice on every save, and contradicted both the settings
+             * screen and the renderer, which already handle the no-ID case.
+             */
             $aff['badge'] = $b;
         }
 
@@ -5362,6 +5383,79 @@ HARD RULES
             'score'   => $result['data'],
             'credits' => $result['credits'] ?? null,
         ) );
+    }
+
+    /* ─── Repurpose (Pro) ─── */
+
+    /**
+     * Editing a post the current user cannot edit must never be possible,
+     * even though the route itself sits behind an admin capability.
+     */
+    private function repurpose_guard( $post_id ) {
+        if ( ! class_exists( '\AISEOGodMode\Repurpose' ) || ! \AISEOGodMode\Repurpose::is_available() ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Repurposing is a Pro feature.', 'message' => 'Repurposing is a Pro feature.' ), 403 );
+        }
+        $post_id = (int) $post_id;
+        if ( $post_id < 1 || ! get_post( $post_id ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'Post not found.', 'message' => 'Post not found.' ), 404 );
+        }
+        if ( ! current_user_can( 'edit_post', $post_id ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => 'You cannot edit that post.', 'message' => 'You cannot edit that post.' ), 403 );
+        }
+        return true;
+    }
+
+    public function get_repurpose( $request ) {
+        $post_id = (int) $request->get_param( 'post_id' );
+        $guard   = $this->repurpose_guard( $post_id );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return rest_ensure_response( array(
+            'success'   => true,
+            'platforms' => \AISEOGodMode\Repurpose::get_for_post( $post_id ),
+            'specs'     => \AISEOGodMode\Repurpose::platforms(),
+            'credits'   => \AISEOGodMode\Repurpose::CREDITS,
+        ) );
+    }
+
+    public function generate_repurpose( $request ) {
+        $post_id = (int) $request->get_param( 'post_id' );
+        $guard   = $this->repurpose_guard( $post_id );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $result = \AISEOGodMode\Repurpose::generate(
+            $post_id,
+            (string) $request->get_param( 'platform' ),
+            (string) $request->get_param( 'format' ),
+            (int) $request->get_param( 'thread_len' ),
+            (int) $request->get_param( 'variations' ),
+            (int) $request->get_param( 'duration' )
+        );
+        if ( is_wp_error( $result ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => $result->get_error_message(), 'message' => $result->get_error_message() ), 400 );
+        }
+        $this->log_activity( 'repurpose_generated', __( 'Social copy generated from a post.', 'aeo-god-mode' ) );
+        return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
+    }
+
+    public function save_repurpose( $request ) {
+        $post_id = (int) $request->get_param( 'post_id' );
+        $guard   = $this->repurpose_guard( $post_id );
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $result = \AISEOGodMode\Repurpose::save_for_post(
+            $post_id,
+            (string) $request->get_param( 'platform' ),
+            (array) $request->get_param( 'content' ),
+            (string) $request->get_param( 'format' )
+        );
+        if ( is_wp_error( $result ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => $result->get_error_message(), 'message' => $result->get_error_message() ), 400 );
+        }
+        return rest_ensure_response( array( 'success' => true, 'platforms' => $result ) );
     }
 
     /* ─── Knowledge Base (Pro) ─── */

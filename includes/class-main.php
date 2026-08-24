@@ -74,6 +74,7 @@ class Main {
         require_once $includes . 'class-llms.php';
         require_once $includes . 'class-crawler-log.php';
         require_once $includes . 'class-dashboard-widget.php';
+        require_once $includes . 'class-repurpose-ui.php';
         require_once $includes . 'class-content-gaps.php';
         require_once $includes . 'class-validator.php';
         require_once $includes . 'class-conflict.php';
@@ -552,6 +553,8 @@ class Main {
         $this->modules['crawler_log']  = new CrawlerLog();
         // Always on: the dashboard widget is the daily surface for the whole plugin.
         new Dashboard_Widget();
+        // Admin surfaces for repurposing. The generator itself is Pro.
+        new Repurpose_UI();
         $this->modules['content_gaps'] = new ContentGaps();
         $this->modules['validator']    = new Validator();
         $this->modules['conflict']     = new Conflict();
