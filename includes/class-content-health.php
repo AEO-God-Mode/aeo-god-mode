@@ -1567,11 +1567,16 @@ class Content_Health {
             return new \WP_Error( 'asgm_image_alt_empty', 'The AI did not return usable alt text. Nothing was saved.', array( 'status' => 502 ) );
         }
 
-        if ( empty( $license_key ) ) {
-            MetadataGenerator::use_free_credits( self::FEATURED_ALT_CREDITS );
-            $credits = MetadataGenerator::get_credits();
+        // The proxy meters free installs per site now and returns the real
+        // balance either way, so mirror what it said rather than adding our
+        // own guess on top of the server's count.
+        if ( is_array( $body['credits'] ?? null ) ) {
+            if ( empty( $license_key ) ) {
+                MetadataGenerator::remember_credits( $body['credits'] );
+            }
+            $credits = $body['credits'];
         } else {
-            $credits = is_array( $body['credits'] ?? null ) ? $body['credits'] : MetadataGenerator::get_credits();
+            $credits = MetadataGenerator::get_credits();
         }
 
         return array( 'alt_text' => $alt, 'credits' => $credits );

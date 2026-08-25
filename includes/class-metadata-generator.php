@@ -120,12 +120,15 @@ class MetadataGenerator {
         $usage = get_option( 'asgm_free_metadata_usage', array() );
         $month = gmdate( 'Y-m' );
 
+        // A new month resets the local mirror. The server resets on the same
+        // calendar boundary, so the two agree without a call.
         if ( ! isset( $usage['month'] ) || $usage['month'] !== $month ) {
             $usage = array( 'month' => $month, 'used' => 0 );
             update_option( 'asgm_free_metadata_usage', $usage );
         }
 
-        $limit = self::FREE_TIER_MONTHLY;
+        $limit = isset( $usage['monthly_limit'] ) ? (int) $usage['monthly_limit'] : self::FREE_TIER_MONTHLY;
+
         return array(
             'success'       => true,
             'monthly_limit' => $limit,
@@ -137,18 +140,79 @@ class MetadataGenerator {
         );
     }
 
-    /** Increment local free-tier usage by the server-defined task cost. */
-    public static function use_free_credits( $amount = 1 ) {
-        $usage = get_option( 'asgm_free_metadata_usage', array() );
-        $month = gmdate( 'Y-m' );
-
-        if ( ! isset( $usage['month'] ) || $usage['month'] !== $month ) {
-            $usage = array( 'month' => $month, 'used' => 0 );
+    /**
+     * Mirror the balance the proxy just reported.
+     *
+     * The server meters the free tier per site and returns the real figure with
+     * every response, so the plugin's job is to remember what it was told, not
+     * to keep its own tally. The old local counter guessed one credit per call
+     * while a combined Title + Meta actually costs two, so the number a free
+     * user saw drifted further from the truth with every generation.
+     *
+     * @param array|null $credits Credits payload from the proxy, if any.
+     */
+    public static function remember_credits( $credits ) {
+        if ( ! is_array( $credits ) || ! isset( $credits['used'] ) ) {
+            return;
         }
 
-        $amount        = max( 1, min( self::FREE_TIER_MONTHLY, absint( $amount ) ) );
-        $usage['used'] = min( self::FREE_TIER_MONTHLY, (int) $usage['used'] + $amount );
-        update_option( 'asgm_free_metadata_usage', $usage );
+        update_option( 'asgm_free_metadata_usage', array(
+            'month'         => gmdate( 'Y-m' ),
+            'used'          => max( 0, (int) $credits['used'] ),
+            'monthly_limit' => max( 1, (int) ( $credits['monthly_limit'] ?? self::FREE_TIER_MONTHLY ) ),
+        ), false );
+    }
+
+    /**
+     * Whether a free site can afford a task, without calling the proxy.
+     *
+     * Lets every caller refuse cleanly instead of firing a request the server
+     * will reject. The server remains the authority; this is only so the
+     * customer is told before anything happens rather than after.
+     *
+     * @param int $cost Credits the task will cost.
+     * @return array|null Error payload when it cannot be afforded, else null.
+     */
+    public static function free_shortfall( $cost ) {
+        if ( License::is_pro_build() && '' !== License::get_key() ) {
+            return null;
+        }
+
+        $credits = self::get_free_tier_credits();
+        if ( $credits['remaining'] >= $cost ) {
+            return null;
+        }
+
+        return array(
+            'success'   => false,
+            'error'     => sprintf(
+                /* translators: 1: credits needed, 2: credits remaining. */
+                __( 'This needs %1$d credits and you have %2$d left this month. Nothing was generated or charged. Your free credits reset on the 1st.', 'aeo-god-mode' ),
+                (int) $cost,
+                (int) $credits['remaining']
+            ),
+            'remaining' => (int) $credits['remaining'],
+            'credits'   => $credits,
+        );
+    }
+
+    /**
+     * Credits a content-gap fix type costs, mirroring the server's cost map.
+     *
+     * @param string $fix_type Fix type.
+     * @return int
+     */
+    public static function fix_cost( $fix_type ) {
+        $costs = array(
+            'generate_meta_description' => 2,
+            'generate_aeo_titles'       => 1,
+            'generate_aeo_metadata'     => 2,
+            'featured_image_alt'        => 2,
+            'rewrite_opener'            => 1,
+            'keyword_optimize'          => 5,
+        );
+
+        return $costs[ $fix_type ] ?? 1;
     }
 
     /**
@@ -177,6 +241,14 @@ class MetadataGenerator {
         }
 
         $key = License::is_pro_build() ? License::get_key() : '';
+
+        // Refuse before spending anything. The server enforces this too, but a
+        // customer should be told what will happen before it happens, not
+        // watch five of eleven succeed and the rest fail.
+        $short = self::free_shortfall( self::fix_cost( 'generate_aeo_metadata' ) );
+        if ( null !== $short ) {
+            return $short;
+        }
 
         // Build the AI prompt.
         $prompt = self::build_prompt( $context, $style );
@@ -223,11 +295,10 @@ class MetadataGenerator {
             );
         }
 
-        // Free tier still tracks its own local 10/month allowance (see
-        // self::FREE_TIER_MONTHLY). Pro credit charging happens server-side
-        // inside the proxy.
+        // The proxy meters the free tier per site and reports the real
+        // balance back, so mirror it rather than keeping a separate tally.
         if ( empty( $key ) ) {
-            self::use_free_credits();
+            self::remember_credits( $body['credits'] ?? null );
         }
 
         return array(
@@ -307,11 +378,10 @@ class MetadataGenerator {
             );
         }
 
-        // Free tier still tracks its own local 10/month allowance (see
-        // self::FREE_TIER_MONTHLY). Pro credit charging happens server-side
-        // inside the proxy.
+        // The proxy meters the free tier per site and reports the real
+        // balance back, so mirror it rather than keeping a separate tally.
         if ( empty( $key ) ) {
-            self::use_free_credits();
+            self::remember_credits( $body['credits'] ?? null );
         }
 
         // Extract the suggested titles from the response.
@@ -392,7 +462,7 @@ class MetadataGenerator {
         }
 
         if ( empty( $key ) ) {
-            self::use_free_credits();
+            self::remember_credits( $body['credits'] ?? null );
         }
 
         return array(

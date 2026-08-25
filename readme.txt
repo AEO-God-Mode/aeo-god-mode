@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.71
+Stable tag: 1.6.76
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -158,6 +158,24 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.76 =
+* Separate Google Search Console consent from free site connection
+
+= 1.6.75 =
+* Fix the Wrong Match answer-page chooser in dark mode
+
+= 1.6.74 =
+* Show source favicons immediately while the local cache fills
+
+= 1.6.73 =
+* Show earned-source favicons automatically after Citation Tracker checks
+* Restore the Pro Citation Tracker first-run demo
+
+= 1.6.72 =
+* Secure Google Search Console connection
+* Restore Pro Citation Tracker first-run demo
+* Fail-closed paid entitlements
 
 = 1.6.71 =
 * Social copy now keeps your article's full answer instead of shortening it to a bare yes or no

@@ -1,0 +1,21 @@
+[
+  {"kind":"visual","attrs":{"contentType":"metric","content":{"value":"3.4x","label":"more AI citations","supporting_text":"Observed in the internal test.","source":"Internal test, August 2026"}}},
+  {"kind":"visual","attrs":{"contentType":"metric","content":{"value":"3.4x","label":"more AI citations"}}},
+  {"kind":"visual","attrs":{"contentType":"metric","content":{"value":"999999999999999999999","label":"a very long label that runs well past the ninety character budget so truncation has to happen"}}},
+  {"kind":"visual","attrs":{"contentType":"metric","content":{"value":"<script>x</script>5","label":"Tom & Jerry's \"best\" <b>run</b>"}}},
+  {"kind":"visual","attrs":{"contentType":"metric","content":{"label":"missing the value"}}},
+  {"kind":"visual","attrs":{"contentType":"takeaway","content":{"title":"What this means","body":"Keep the source paragraph."},"caption":"A caption with <em>markup</em> & an ampersand."}},
+  {"kind":"visual","attrs":{"contentType":"takeaway","content":{"body":"No title here."}}},
+  {"kind":"visual","attrs":{"contentType":"checklist","content":{"title":"Before you publish","items":["One","Two","Three","Four","Five","Six","Seven"]}}},
+  {"kind":"visual","attrs":{"contentType":"checklist","content":{"items":["  spaced   out  item  ","","   "]}}},
+  {"kind":"visual","attrs":{"contentType":"quote","content":{"text":"Structured HTML is what makes a fact quotable.","attribution":"Arielle","role":"AEO God Mode"}}},
+  {"kind":"visual","attrs":{"contentType":"quote","content":{"text":"No attribution."}}},
+  {"kind":"visual","attrs":{"contentType":"nope","content":{}}},
+  {"kind":"cta","attrs":{"layout":"card","headingLevel":"h3","destination":{"type":"post","id":42,"url":"https://site.test/audit/"},"content":{"heading":"See what is blocking you","body":"Check your site.","anchor":"Run the free audit"}}},
+  {"kind":"cta","attrs":{"layout":"link","destination":{"type":"post","id":42,"url":"https://site.test/audit/"},"content":{"heading":"Ignored","anchor":"run the audit"}}},
+  {"kind":"cta","attrs":{"layout":"button","destination":{"type":"external","url":"https://partner.test/x","new_tab":true,"rel":"sponsored"},"content":{"body":"Body text","anchor":"Visit partner"}}},
+  {"kind":"cta","attrs":{"layout":"banner","headingLevel":"h2","destination":{"type":"post","id":7,"url":"https://site.test/p/","fragment":"  #pri cing\"><b"},"content":{"heading":"Tom & Jerry","anchor":"Get a quote"}}},
+  {"kind":"cta","attrs":{"layout":"card","headingLevel":"none","destination":{"type":"post","id":7,"url":"https://site.test/p/"},"content":{"heading":"Dropped","anchor":"Book a call"}}},
+  {"kind":"cta","attrs":{"layout":"card","destination":{"type":"post","id":7,"url":""},"content":{"anchor":"No URL"}}},
+  {"kind":"cta","attrs":{"layout":"card","destination":{"type":"post","id":7,"url":"https://site.test/p/"},"content":{"anchor":""}}}
+]

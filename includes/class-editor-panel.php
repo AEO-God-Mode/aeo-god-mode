@@ -52,6 +52,31 @@ class EditorPanel {
             ),
         ) );
 
+        // Search-engine snippet: the title and description this plugin will
+        // output for this post, and the ability to edit them.
+        //
+        // Without Yoast or Rank Math installed these values live in
+        // _asgm_meta_title / _asgm_meta_description and had no interface at
+        // all. The plugin would generate a description, write it, render it in
+        // the page head, and give the author no way to see it, which reads
+        // exactly like the feature doing nothing.
+        register_rest_route( 'asgm/v1', '/editor-panel/(?P<post_id>\d+)/snippet', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_snippet' ),
+                'permission_callback' => function ( $request ) {
+                    return current_user_can( 'edit_post', absint( $request['post_id'] ) );
+                },
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_snippet' ),
+                'permission_callback' => function ( $request ) {
+                    return current_user_can( 'edit_post', absint( $request['post_id'] ) );
+                },
+            ),
+        ) );
+
         // Fix action endpoint.
         register_rest_route( 'asgm/v1', '/editor-panel/(?P<post_id>\d+)/fix', array(
             'methods'             => 'POST',
@@ -68,6 +93,75 @@ class EditorPanel {
                 ),
             ),
         ) );
+    }
+
+    /**
+     * The search snippet for a post: what is stored, who owns it, and what a
+     * search engine would fall back to if nothing is stored.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_snippet( $request ) {
+        $post_id   = absint( $request['post_id'] );
+        $detection = MetadataWriter::get_detection_info();
+
+        $title = (string) get_post_meta( $post_id, $detection['title_key'], true );
+        $desc  = (string) get_post_meta( $post_id, $detection['desc_key'], true );
+
+        return new \WP_REST_Response( array(
+            'owner'       => $detection['plugin'],
+            'owner_label' => $detection['label'],
+            // Editable here only when nothing else owns these fields. Writing
+            // into Yoast's or Rank Math's meta from a second box in the same
+            // sidebar is how two plugins end up fighting over one value.
+            'editable'    => MetadataWriter::SEO_NATIVE === $detection['plugin'],
+            'title'       => $title,
+            'description' => $desc,
+            'fallback'    => array(
+                'title'       => get_the_title( $post_id ),
+                'description' => wp_strip_all_tags( (string) get_the_excerpt( $post_id ) ),
+            ),
+            'url'         => get_permalink( $post_id ),
+        ), 200 );
+    }
+
+    /**
+     * Save an edited snippet.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function save_snippet( $request ) {
+        $post_id   = absint( $request['post_id'] );
+        $detection = MetadataWriter::get_detection_info();
+
+        if ( MetadataWriter::SEO_NATIVE !== $detection['plugin'] ) {
+            return new \WP_REST_Response( array(
+                'success' => false,
+                'error'   => sprintf(
+                    /* translators: %s: name of the SEO plugin that owns these fields. */
+                    __( '%s owns these fields on this site, so edit them there instead.', 'aeo-god-mode' ),
+                    $detection['label']
+                ),
+            ), 200 );
+        }
+
+        $body  = $request->get_json_params();
+        $title = sanitize_text_field( (string) ( $body['title'] ?? '' ) );
+        $desc  = sanitize_text_field( (string) ( $body['description'] ?? '' ) );
+
+        // An emptied field means "go back to the theme default", so delete the
+        // row rather than storing an empty string that would render as one.
+        foreach ( array( $detection['title_key'] => $title, $detection['desc_key'] => $desc ) as $key => $value ) {
+            if ( '' === $value ) {
+                delete_post_meta( $post_id, $key );
+            } else {
+                update_post_meta( $post_id, $key, $value );
+            }
+        }
+
+        return new \WP_REST_Response( array( 'success' => true, 'title' => $title, 'description' => $desc ), 200 );
     }
 
     /**
@@ -189,7 +283,7 @@ class EditorPanel {
         wp_enqueue_script(
             'asgm-editor-panel',
             $base_url . $entry['file'],
-            array( 'wp-plugins', 'wp-edit-post', 'wp-element', 'wp-components', 'wp-data', 'wp-blocks', 'wp-api-fetch' ),
+            array( 'wp-plugins', 'wp-edit-post', 'wp-element', 'wp-components', 'wp-data', 'wp-blocks', 'wp-block-editor', 'wp-rich-text', 'wp-i18n', 'wp-api-fetch' ),
             $asset_ver( $entry['file'] ),
             true
         );

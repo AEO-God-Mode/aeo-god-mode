@@ -92,6 +92,12 @@ class Main {
         require_once $includes . 'class-okf.php';
         require_once $includes . 'class-affiliate-badge.php';
         require_once $includes . 'class-faq-blocks.php';
+        require_once $includes . 'class-brand-kit.php';
+        require_once $includes . 'class-visual-icons.php';
+        require_once $includes . 'class-visual-templates.php';
+        require_once $includes . 'class-cta-renderer.php';
+        require_once $includes . 'class-visual-blocks.php';
+        require_once $includes . 'class-visual-ai.php';
         require_once $includes . 'class-draft-quality.php';
         require_once $includes . 'class-earned-source-api.php';
 
@@ -565,6 +571,8 @@ class Main {
     $this->modules['okf']          = new OKF();
         $this->modules['affiliate_badge'] = new AffiliateBadge();
         $this->modules['faq_blocks']      = new FaqBlocks();
+        $this->modules['visual_blocks']   = new VisualBlocks();
+        $this->modules['visual_ai']       = new VisualAI();
 
         // Pro modules — only boot with an active license AND class exists.
         // class_exists() guards protect against Free builds where pro/ is stripped

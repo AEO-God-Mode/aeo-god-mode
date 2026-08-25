@@ -5,6 +5,29 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.76
+
+- Separate Google Search Console consent from free site connection
+
+## 1.6.75
+
+- Fix the Wrong Match answer-page chooser in dark mode
+
+## 1.6.74
+
+- Show source favicons immediately while the local cache fills
+
+## 1.6.73
+
+- Show earned-source favicons automatically after Citation Tracker checks
+- Restore the Pro Citation Tracker first-run demo
+
+## 1.6.72
+
+- Secure Google Search Console connection
+- Restore Pro Citation Tracker first-run demo
+- Fail-closed paid entitlements
+
 ## 1.6.71
 
 - Social copy now keeps your article's full answer instead of shortening it to a bare yes or no

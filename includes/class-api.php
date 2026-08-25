@@ -455,19 +455,19 @@ class API {
             register_rest_route( self::NAMESPACE, '/gsc/connect', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'connect_gsc' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/pages', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_pages' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/alerts', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_alerts' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/callback', array(
@@ -476,13 +476,36 @@ class API {
                 // Public on purpose. OAuth redirects from Google can arrive
                 // without the user's WP session cookie (Safari ITP, SameSite,
                 // incognito, separate admin/front domains, ...). Security is
-                // enforced inside handle_callback() via the CSRF state token
-                // (wp_create_nonce stored as a 10-min transient before we
-                // bounce the user to Google). Anyone hitting this URL without
-                // a valid state token gets rejected with "Invalid OAuth state."
+                // enforced via the one-time CSRF state token (a nonce stored
+                // as a 10-min transient before we bounce the user to Google).
+                // GSC consumes it for successful callbacks; the API consumes
+                // it before reflecting an OAuth error into the admin redirect.
                 // Previously this was admin_permission, which 403'd a real
                 // chunk of customers (reported 2026-05-29 by Christian @ IC).
                 'permission_callback' => '__return_true',
+                'args'                => array(
+                    'code'  => array(
+                        'required'          => false,
+                        'type'              => 'string',
+                        'minLength'         => 1,
+                        'maxLength'         => 2048,
+                        'validate_callback' => array( $this, 'validate_gsc_oauth_callback_param' ),
+                    ),
+                    'state' => array(
+                        'required'          => false,
+                        'type'              => 'string',
+                        'minLength'         => 8,
+                        'maxLength'         => 128,
+                        'validate_callback' => array( $this, 'validate_gsc_oauth_callback_param' ),
+                    ),
+                    'error' => array(
+                        'required'          => false,
+                        'type'              => 'string',
+                        'minLength'         => 1,
+                        'maxLength'         => 128,
+                        'validate_callback' => array( $this, 'validate_gsc_oauth_callback_param' ),
+                    ),
+                ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/disconnect', array(
@@ -494,49 +517,49 @@ class API {
             register_rest_route( self::NAMESPACE, '/gsc/sync', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'sync_gsc' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/sync-progress', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_sync_progress' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/queries', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_queries' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/ai-summary', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_ai_summary' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/daily-series', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_daily_series' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/recommendations', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_recommendations' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/extended', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_gsc_extended' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/ai-visibility/import', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'import_gsc_ai_visibility' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
                 'args'                => array(
                     'csv' => array( 'required' => true, 'type' => 'string' ),
                     'filename' => array( 'required' => false, 'type' => 'string' ),
@@ -546,75 +569,75 @@ class API {
             register_rest_route( self::NAMESPACE, '/gsc/keyword-optimize', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'gsc_keyword_optimize' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             // ---- Query Gap Detector ----
             register_rest_route( self::NAMESPACE, '/query-gap/scan', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'query_gap_scan' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/query-gap/draft-answer', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'query_gap_draft_answer' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/query-gap/apply-faq', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'query_gap_apply_faq' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/query-gap/draft-heading', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'query_gap_draft_heading' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/query-gap/apply-heading', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'query_gap_apply_heading' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/index-now', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'gsc_index_now' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             // ---- Internal Link Builder ----
             register_rest_route( self::NAMESPACE, '/gsc/build-links', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'gsc_build_links' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/apply-link', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'gsc_apply_link' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/section-index', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'gsc_build_section_index' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/section-index/stats', array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'gsc_section_index_stats' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/gsc/section-index/backfill', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'gsc_backfill_best_sentences' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             // ---- Citation Tracker ----
@@ -1042,6 +1065,32 @@ class API {
                 array( 'status' => 403 )
             );
         }
+        return true;
+    }
+
+    /**
+     * Check that the user is an admin with an active Pro entitlement.
+     *
+     * Route registration is based on the installed build, not the current
+     * entitlement. Paid operations therefore need this request-time check as
+     * a second boundary so a present-but-inactive Pro build cannot serve them.
+     *
+     * @return bool|\WP_Error
+     */
+    public function pro_admin_permission() {
+        $admin_permission = $this->admin_permission();
+        if ( true !== $admin_permission ) {
+            return $admin_permission;
+        }
+
+        if ( ! License::is_pro() ) {
+            return new \WP_Error(
+                'rest_forbidden',
+                __( 'An active Pro license is required to access this endpoint.', 'aeo-god-mode' ),
+                array( 'status' => 403 )
+            );
+        }
+
         return true;
     }
 
@@ -1781,6 +1830,15 @@ class API {
                 'radius'      => in_array( $incoming['radius'] ?? '', array( 'rounded', 'square' ), true ) ? $incoming['radius'] : 'rounded',
                 'tldr_marker' => in_array( $incoming['tldr_marker'] ?? '', array( 'bullet', 'hollow', 'arrow', 'check', 'star' ), true ) ? $incoming['tldr_marker'] : 'bullet',
             );
+        }
+        if ( array_key_exists( 'brand', $settings ) ) {
+            // BrandKit owns its own validation so the renderers, the REST layer
+            // and the setup wizard can never disagree about what a valid brand
+            // value is. Partial mode keeps an unset colour unset, which is what
+            // lets resolve() keep inheriting from the theme instead of pinning
+            // our default the first time someone saves any other field.
+            $settings['brand'] = BrandKit::sanitize( $settings['brand'], false );
+            BrandKit::flush();
         }
         if ( array_key_exists( 'kb_content_blocks', $settings ) ) {
             $incoming = is_array( $settings['kb_content_blocks'] ) ? $settings['kb_content_blocks'] : array();
@@ -2525,6 +2583,14 @@ class API {
         $fix_type = sanitize_text_field( $request->get_param( 'fix_type' ) );
         $gaps     = new ContentGaps();
         $result   = $gaps->apply_fix( $post_id, $fix_type, $request->get_params() );
+        // Return the current balance with every fix so the credits chip can
+        // update in place. Without it the sidebar kept showing the figure it
+        // read on page load, which is how a run of eleven fixes could finish
+        // with the counter still reading zero used.
+        if ( is_array( $result ) && ! isset( $result['credits'] ) ) {
+            $result['credits'] = MetadataGenerator::get_credits();
+        }
+
         if ( is_array( $result ) && ! empty( $result['success'] ) ) {
             $operation = (string) ( $result['operation'] ?? '' );
             if ( 'analysis' === $operation ) {
@@ -2718,6 +2784,84 @@ class API {
     // -----------------------------------------------------------------------
 
     /**
+     * Validate one public self-managed GSC OAuth callback parameter.
+     *
+     * OAuth callbacks cannot rely on an authenticated WordPress session, so
+     * the route is public. Keep its input surface to small scalar values and
+     * preserve code/state bytes exactly for Google's exchange and the CSRF
+     * comparison.
+     *
+     * @param mixed            $value   Submitted value.
+     * @param \WP_REST_Request $request Request object.
+     * @param string           $param   Parameter name.
+     * @return true|\WP_Error
+     */
+    public function validate_gsc_oauth_callback_param( $value, $request, $param ) {
+        unset( $request );
+
+        $max_lengths = array(
+            'code'  => 2048,
+            'state' => 128,
+            'error' => 128,
+        );
+
+        if ( ! isset( $max_lengths[ $param ] ) || ! is_string( $value ) ) {
+            return new \WP_Error(
+                'rest_invalid_param',
+                __( 'Invalid OAuth callback parameter.', 'aeo-god-mode' ),
+                array( 'status' => 400 )
+            );
+        }
+
+        $length = strlen( $value );
+        if ( 0 === $length || $length > $max_lengths[ $param ] || preg_match( '/[\x00-\x1F\x7F]/', $value ) ) {
+            return new \WP_Error(
+                'rest_invalid_param',
+                __( 'Invalid OAuth callback parameter.', 'aeo-god-mode' ),
+                array( 'status' => 400 )
+            );
+        }
+
+        // Current releases use a WordPress nonce; the next protocol uses a
+        // longer base64url state. This accepts both without accepting syntax
+        // that could be interpreted by a redirect or log sink.
+        if ( 'state' === $param && ! preg_match( '/\A[A-Za-z0-9_-]{8,128}\z/D', $value ) ) {
+            return new \WP_Error(
+                'rest_invalid_param',
+                __( 'Invalid OAuth callback parameter.', 'aeo-god-mode' ),
+                array( 'status' => 400 )
+            );
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate and consume the state for an OAuth error callback.
+     *
+     * Successful callbacks remain verified and consumed by GSC itself. Error
+     * callbacks must do the same before reflecting any Google-supplied error
+     * into the admin redirect.
+     *
+     * @param string $state Submitted OAuth state.
+     * @return bool
+     */
+    private function consume_gsc_oauth_error_state( $state ) {
+        $stored_state = get_transient( 'asgm_gsc_oauth_state' );
+        if (
+            ! is_string( $stored_state )
+            || '' === $stored_state
+            || ! is_string( $state )
+            || ! hash_equals( $stored_state, $state )
+        ) {
+            return false;
+        }
+
+        delete_transient( 'asgm_gsc_oauth_state' );
+        return true;
+    }
+
+    /**
      * Get GSC connection status.
      *
      * @return \WP_REST_Response
@@ -2764,20 +2908,23 @@ class API {
      * @return \WP_REST_Response|\WP_Error
      */
     public function gsc_oauth_callback( $request ) {
-        $code         = $request->get_param( 'code' );
-        $state        = $request->get_param( 'state' );
-        $error        = $request->get_param( 'error' );
-        $proxy_tokens = $request->get_param( 'proxy_tokens' );
-        $proxy_error  = $request->get_param( 'proxy_error' );
+        $code  = (string) ( $request->get_param( 'code' ) ?? '' );
+        $state = (string) ( $request->get_param( 'state' ) ?? '' );
+        $error = (string) ( $request->get_param( 'error' ) ?? '' );
 
         // If Google returned an error (user denied access etc).
         if ( ! empty( $error ) ) {
+            if ( ! $this->consume_gsc_oauth_error_state( $state ) ) {
+                $error = __( 'Invalid OAuth state. Please try connecting again.', 'aeo-god-mode' );
+            } else {
+                $error = sanitize_text_field( $error );
+            }
             wp_safe_redirect( admin_url( 'admin.php?page=aeo-god-mode&gsc_error=' . rawurlencode( $error ) ) );
             exit;
         }
 
         $gsc    = new GSC();
-        $result = $gsc->handle_callback( $code, $state, $proxy_tokens, $proxy_error );
+        $result = $gsc->handle_callback( $code, $state );
 
         if ( $result['success'] ) {
             wp_safe_redirect( admin_url( 'admin.php?page=aeo-god-mode&gsc_connected=1' ) );
@@ -4986,6 +5133,18 @@ HARD RULES
     public function get_metadata_credits() {
         $credits = MetadataGenerator::get_credits();
         $credits['styles'] = MetadataGenerator::STYLES;
+
+        // What each fix actually costs, so the editor can total a batch up
+        // honestly instead of assuming one credit per item. A combined
+        // Title + Meta is two, and telling someone eleven fixes cost "about
+        // eleven" when they cost twenty-two is how a run dies half way.
+        $credits['fix_costs'] = array(
+            'generate_meta_description' => MetadataGenerator::fix_cost( 'generate_meta_description' ),
+            'generate_aeo_titles'       => MetadataGenerator::fix_cost( 'generate_aeo_titles' ),
+            'featured_image_alt'        => MetadataGenerator::fix_cost( 'featured_image_alt' ),
+            'rewrite_opener'            => MetadataGenerator::fix_cost( 'rewrite_opener' ),
+            'keyword_optimize'          => MetadataGenerator::fix_cost( 'keyword_optimize' ),
+        );
 
         return rest_ensure_response( $credits );
     }
