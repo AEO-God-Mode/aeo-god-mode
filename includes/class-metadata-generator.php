@@ -78,6 +78,10 @@ class MetadataGenerator {
         $key = License::get_key();
 
         if ( empty( $key ) || ! License::is_pro_build() ) {
+            $connected = Account_Connection::get_credit_status();
+            if ( is_array( $connected ) ) {
+                return $connected;
+            }
             // Free tier: check local usage.
             return self::get_free_tier_credits();
         }
@@ -258,6 +262,8 @@ class MetadataGenerator {
         $request_id = self::new_request_id();
         $payload = array(
             'license_key' => $key,
+            'installation_token' => License::is_pro_build() ? '' : Account_Connection::get_token(),
+            'install_id'  => License::is_pro_build() ? '' : Account_Connection::get_install_id(),
             'task'        => 'generate_aeo_metadata',
             'mode'        => 'combined', // Title + Meta in one call → 2 credits.
             'content'     => $clean_content,
@@ -345,6 +351,8 @@ class MetadataGenerator {
         $request_id = self::new_request_id();
         $payload = array(
             'license_key' => $key,
+            'installation_token' => License::is_pro_build() ? '' : Account_Connection::get_token(),
+            'install_id'  => License::is_pro_build() ? '' : Account_Connection::get_install_id(),
             'task'        => 'generate_aeo_metadata', // Routes custom encoded prompt to the dynamic AI agent.
             'mode'        => 'titles_only', // Title output only → 1 credit.
             'content'     => $clean_content,
@@ -428,6 +436,8 @@ class MetadataGenerator {
         $request_id = self::new_request_id();
         $payload = array(
             'license_key' => $key,
+            'installation_token' => License::is_pro_build() ? '' : Account_Connection::get_token(),
+            'install_id'  => License::is_pro_build() ? '' : Account_Connection::get_install_id(),
             'task'        => 'generate_aeo_metadata',
             'mode'        => 'meta_only', // Meta description only → 1 credit.
             'content'     => $clean_content,
@@ -846,6 +856,8 @@ class MetadataGenerator {
         $request_id = self::new_request_id();
         $payload = array(
             'license_key' => $key,
+            'installation_token' => License::is_pro_build() ? '' : Account_Connection::get_token(),
+            'install_id'  => License::is_pro_build() ? '' : Account_Connection::get_install_id(),
             'task'        => 'rewrite_opener',
             'prompt'      => base64_encode( $prompt ),
             'content'     => '',

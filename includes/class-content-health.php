@@ -1537,6 +1537,8 @@ class Content_Health {
         $response = wp_remote_post( MetadataGenerator::API_URL, array(
             'body'    => wp_json_encode( array(
                 'license_key' => $license_key,
+                'installation_token' => License::is_pro_build() ? '' : Account_Connection::get_token(),
+                'install_id'  => License::is_pro_build() ? '' : Account_Connection::get_install_id(),
                 'task'        => 'featured_image_alt',
                 'title'       => sanitize_text_field( (string) $title ),
                 'content'     => sanitize_textarea_field( (string) $context ),

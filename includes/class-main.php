@@ -62,6 +62,7 @@ class Main {
         // When Pro is not installed, this stub is the only License class and
         // returns false for everything.
         require_once $includes . 'class-license-stub.php';
+        require_once $includes . 'class-account-connection.php';
 
         // Free classes — always loaded.
         require_once $includes . 'class-api.php';
@@ -113,6 +114,7 @@ class Main {
      */
     private function init_hooks() {
         add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
+        Account_Connection::init();
         // Reassert the public product identity after third-party/older add-ons
         // have registered their menu filters. This protects mixed-version
         // updates without knowing anything about a paid tier.

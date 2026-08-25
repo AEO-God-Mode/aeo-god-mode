@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.76
+Stable tag: 1.6.79
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -158,6 +158,17 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.79 =
+* Block AI actions when credits are exhausted
+* Show Pro and Growth credit top-up screen
+* Make credit charging atomic and fail closed
+
+= 1.6.78 =
+* Free account connection with secure installation tokens and 20 monthly credits
+
+= 1.6.77 =
+* Fixed URL Inspection for verified domain properties
 
 = 1.6.76 =
 * Separate Google Search Console consent from free site connection

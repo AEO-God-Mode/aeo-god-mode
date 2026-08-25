@@ -5,6 +5,20 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.79
+
+- Block AI actions when credits are exhausted
+- Show Pro and Growth credit top-up screen
+- Make credit charging atomic and fail closed
+
+## 1.6.78
+
+- Free account connection with secure installation tokens and 20 monthly credits
+
+## 1.6.77
+
+- Fixed URL Inspection for verified domain properties
+
 ## 1.6.76
 
 - Separate Google Search Console consent from free site connection
