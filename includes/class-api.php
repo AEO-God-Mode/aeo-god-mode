@@ -650,7 +650,13 @@ class API {
             register_rest_route( self::NAMESPACE, '/citations/run', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'run_citation_check' ),
-                'permission_callback' => array( $this, 'admin_permission' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/citations/run-preflight', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_citation_run_preflight' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
             register_rest_route( self::NAMESPACE, '/citations/api-key', array(
@@ -659,8 +665,8 @@ class API {
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
-            // Which ChatGPT account citation checks run on: the customer's
-            // own key, or the plan's account at a credit cost per question.
+            // Which ChatGPT/Gemini account citation checks run on: the
+            // customer's own key, or the plan account at a cost per question.
             register_rest_route( self::NAMESPACE, '/citations/engine-source', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'save_citation_engine_source' ),
@@ -3881,14 +3887,55 @@ HARD RULES
     }
 
     /**
-     * Run a manual citation check.
+     * Get a fresh credit/source plan before a manual citation check.
      *
      * @return \WP_REST_Response
      */
-    public function run_citation_check() {
+    public function get_citation_run_preflight() {
+        if ( ! class_exists( '\AISEOGodMode\CitationTracker' ) ) {
+            return new \WP_REST_Response( array(
+                'success' => false,
+                'code'    => 'citation_tracker_unavailable',
+                'error'   => __( 'Citation Tracker is temporarily unavailable while the Free and Pro plugins finish updating. Update both plugins, then try again.', 'aeo-god-mode' ),
+            ), 503 );
+        }
         $tracker = new CitationTracker();
-        $result  = $tracker->run_check();
-        $this->log_activity( 'citation_check', __( 'Citation check completed.', 'aeo-god-mode' ) );
+        return rest_ensure_response( $tracker->get_run_preflight() );
+    }
+
+    /**
+     * Run a manual citation check.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return \WP_REST_Response
+     */
+    public function run_citation_check( \WP_REST_Request $request ) {
+        if ( ! class_exists( '\AISEOGodMode\CitationTracker' ) ) {
+            return new \WP_REST_Response( array(
+                'success' => false,
+                'code'    => 'citation_tracker_unavailable',
+                'error'   => __( 'Citation Tracker is temporarily unavailable while the Free and Pro plugins finish updating. Update both plugins, then try again.', 'aeo-god-mode' ),
+            ), 503 );
+        }
+        $tracker = new CitationTracker();
+        $mode    = 'byok_only' === $request->get_param( 'mode' ) ? 'byok_only' : 'full';
+        $result  = $tracker->run_check( $mode );
+
+        if ( empty( $result['success'] ) ) {
+            $status = 'insufficient_credits' === ( $result['code'] ?? '' ) ? 429 : 400;
+            if ( 'credit_balance_unavailable' === ( $result['code'] ?? '' ) ) {
+                $status = 503;
+            }
+            if ( 'citation_run_in_progress' === ( $result['code'] ?? '' ) ) {
+                $status = 409;
+            }
+            return new \WP_REST_Response( $result, $status );
+        }
+
+        $this->log_activity( 'citation_check', ! empty( $result['partial'] )
+            ? __( 'Citation check completed with plan-funded engines skipped.', 'aeo-god-mode' )
+            : __( 'Citation check completed.', 'aeo-god-mode' )
+        );
         return rest_ensure_response( $result );
     }
 

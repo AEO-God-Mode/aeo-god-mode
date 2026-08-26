@@ -1,25 +1,27 @@
-=== AEO God Mode – AI Search and Answer Engine Optimization ===
+=== AEO God Mode – AI Search Visibility ===
 Contributors: ariellejphoenix
 Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.79
+Stable tag: 1.6.80
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Improve WordPress content for AI search with crawler controls, llms.txt, content health checks, and citation tracking.
+See and improve how AI finds and understands your site with crawler controls, content audits, schema and llms.txt. Pro adds citation tracking.
 
 
 == Description ==
 
-AEO God Mode helps you prepare WordPress content for AI search without replacing your existing SEO plugin.
+AEO God Mode is the WordPress AI visibility toolkit for teams that want evidence, not another generic AI writer.
 
-It shows what needs fixing, what needs a human check, and whether AI crawlers can reach your pages. Use it alongside Yoast SEO, Rank Math, SEOPress, or All in One SEO.
+See whether AI crawlers can reach your pages, identify content and schema gaps, and publish machine-readable context. Pro adds Citation Tracker, AI referrals, Google Search Console, topical planning, and review-first automation.
+
+Use it alongside Yoast SEO, Rank Math, SEOPress, or All in One SEO. It detects supported SEO plugins and avoids duplicating the work they already own.
 
 https://youtu.be/1wimw25YxWw
 
-= Start with the work that matters =
+= See what blocks AI visibility =
 
 **Content Health** scans published content and ranks confirmed problems separately from items that need judgement. Find duplicate or missing descriptions, heading problems, overlong titles, and images that may need alt text.
 
@@ -158,6 +160,10 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.80 =
+* Fix Citation Tracker credit preflight
+* Restore hosted Google Search Console connection
 
 = 1.6.79 =
 * Block AI actions when credits are exhausted

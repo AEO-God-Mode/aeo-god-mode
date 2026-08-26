@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name:       AEO God Mode: Answer Engine Optimization, GEO, AIO and LLM SEO
+ * Plugin Name:       AEO God Mode – AI Search Visibility
  * Plugin URI:        https://aeogodmode.io
- * Description:       The best WordPress AEO plugin. Get cited by ChatGPT, Perplexity, Gemini, and Google AI Overviews, not just ranked by Google.
- * Version:           1.6.79
+ * Description:       See and improve AI visibility with crawler controls, content audits, schema and llms.txt. Pro adds citation tracking and Search Console.
+ * Version:           1.6.80
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            Metronyx AI SEO
@@ -32,7 +32,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'ASGM_VERSION', '1.6.79' );
+define( 'ASGM_VERSION', '1.6.80' );
 define( 'ASGM_PLUGIN_FILE', __FILE__ );
 define( 'ASGM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ASGM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
