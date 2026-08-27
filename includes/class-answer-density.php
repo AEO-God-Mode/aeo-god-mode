@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 class Answer_Density {
 
 	/** Version of the detector contract persisted with each scan. */
-	const SCORE_VERSION   = 5;
+	const SCORE_VERSION   = 6;
 
 	const POSTMETA_KEY    = '_asgm_answer_density';
 	const SCAN_TS_KEY     = '_asgm_ad_scanned'; // numeric post meta: unix time of last scan. Drives rotation ordering.
@@ -509,6 +509,7 @@ class Answer_Density {
 	 */
 	public static function extract_after_heading( $html, $heading_end, $heading_lvl ) {
 		$tail = substr( $html, $heading_end );
+		$opener_structure = self::opener_structure( $tail );
 
 		// Find next same-level-or-higher heading. For an H3 question, that's
 		// next H2 OR next H3 (NOT H4/H5). For an H2 question, just next H2.
@@ -523,7 +524,14 @@ class Answer_Density {
 		// Visual breaks. Tables and images often signal the answer is over.
 		// We pick the FIRST of these or the next heading, whichever comes first.
 		$next_break = $next_heading;
-		foreach ( array( '#<table\b#i', '#<img\b#i', '#<figure\b#i' ) as $rx ) {
+		$visual_breaks = array( '#<img\b#i', '#<figure\b#i' );
+		// A table immediately beneath the heading is the answer, not the point at
+		// which the answer ends. Keep later tables as visual boundaries, but let
+		// an opening comparison/data table reach the structured-answer detector.
+		if ( 'table' !== $opener_structure ) {
+			array_unshift( $visual_breaks, '#<table\b#i' );
+		}
+		foreach ( $visual_breaks as $rx ) {
 			if ( preg_match( $rx, $tail, $bm2, PREG_OFFSET_CAPTURE ) ) {
 				$pos = (int) $bm2[0][1];
 				if ( $pos < $next_break ) { $next_break = $pos; }
@@ -555,7 +563,7 @@ class Answer_Density {
 		// answer. Gutenberg serializer comments sit between the heading and the
 		// actual <ul>/<ol>; testing the raw HTML directly made those lists look
 		// like one long, unanswered paragraph and offered to rewrite them.
-		if ( 'list' === self::opener_structure( $body_html ) ) {
+		if ( in_array( self::opener_structure( $body_html ), array( 'list', 'table' ), true ) ) {
 			return array(
 				'classification'      => 'direct',
 				'words_before_answer' => 0,
@@ -630,6 +638,16 @@ class Answer_Density {
 		if ( '' === $probe ) { return 'empty'; }
 		if ( preg_match( '#^<(?:ul|ol)\b#i', $probe ) ) { return 'list'; }
 		if ( preg_match( '#^<table\b#i', $probe ) ) { return 'table'; }
+		// Themes and article templates commonly wrap responsive tables in one or
+		// more divs. The wrapper has no readable content of its own, so preserve
+		// the semantic first node instead of downgrading the table to a generic
+		// block and then offering an impossible paragraph rewrite.
+		$inside_wrappers = $probe;
+		for ( $i = 0; $i < 4 && preg_match( '#^<(?:div|section)\b[^>]*>\s*#i', $inside_wrappers, $wrapper ); $i++ ) {
+			$inside_wrappers = ltrim( substr( $inside_wrappers, strlen( $wrapper[0] ) ) );
+			$inside_wrappers = preg_replace( '#^(?:<!--[^>]*-->\s*)+#s', '', $inside_wrappers );
+			if ( preg_match( '#^<table\b#i', $inside_wrappers ) ) { return 'table'; }
+		}
 		if ( preg_match( '#^<p\b#i', $probe ) ) { return 'paragraph'; }
 		if ( preg_match( '#^<(?:li|h[1-6]|blockquote|figure|div|pre|hr|section|aside|dl|details)\b#i', $probe ) ) { return 'block'; }
 		return 'text';

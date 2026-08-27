@@ -654,7 +654,7 @@ class API {
             ) );
 
             register_rest_route( self::NAMESPACE, '/citations/run-preflight', array(
-                'methods'             => 'GET',
+                'methods'             => array( 'GET', 'POST' ),
                 'callback'            => array( $this, 'get_citation_run_preflight' ),
                 'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
@@ -3194,10 +3194,12 @@ HARD RULES
         // ── Send to proxy ──
         $payload = wp_json_encode( array(
             'license_key' => $license_key,
-            'task'        => 'link_micro_rewrite',  // reusing the generic prompt-relay task
+            'task'        => 'query_gap_faq',
             'content'     => '',
             'title'       => '',
             'prompt'      => base64_encode( $prompt ),
+            'site_url'    => home_url(),
+            'request_id'  => wp_generate_uuid4(),
         ) );
 
         $response = wp_remote_post( 'https://aeogodmode.io/wp-json/asgm/v1/ai-assist', array(
@@ -3503,10 +3505,12 @@ HARD RULES
 
         $payload = wp_json_encode( array(
             'license_key' => $license_key,
-            'task'        => 'link_micro_rewrite',
+            'task'        => 'query_gap_heading',
             'content'     => '',
             'title'       => '',
             'prompt'      => base64_encode( $prompt ),
+            'site_url'    => home_url(),
+            'request_id'  => wp_generate_uuid4(),
         ) );
 
         $response = wp_remote_post( 'https://aeogodmode.io/wp-json/asgm/v1/ai-assist', array(
@@ -3891,7 +3895,7 @@ HARD RULES
      *
      * @return \WP_REST_Response
      */
-    public function get_citation_run_preflight() {
+    public function get_citation_run_preflight( \WP_REST_Request $request ) {
         if ( ! class_exists( '\AISEOGodMode\CitationTracker' ) ) {
             return new \WP_REST_Response( array(
                 'success' => false,
@@ -3900,7 +3904,27 @@ HARD RULES
             ), 503 );
         }
         $tracker = new CitationTracker();
-        return rest_ensure_response( $tracker->get_run_preflight() );
+        $result  = $tracker->get_run_preflight( null, $this->get_requested_citation_engines( $request ) );
+        return empty( $result['success'] )
+            ? new \WP_REST_Response( $result, 400 )
+            : rest_ensure_response( $result );
+    }
+
+    /**
+     * Read the optional per-run engine allowlist without inventing defaults.
+     * Missing means all configured engines (cron/backwards compatibility),
+     * while an explicit empty list is validated as an error by Pro.
+     *
+     * @param \WP_REST_Request $request Request object.
+     * @return array|null
+     */
+    private function get_requested_citation_engines( \WP_REST_Request $request ) {
+        if ( ! $request->has_param( 'engines' ) ) {
+            return null;
+        }
+
+        $engines = $request->get_param( 'engines' );
+        return is_array( $engines ) ? array_values( array_map( 'sanitize_key', $engines ) ) : array();
     }
 
     /**
@@ -3919,7 +3943,7 @@ HARD RULES
         }
         $tracker = new CitationTracker();
         $mode    = 'byok_only' === $request->get_param( 'mode' ) ? 'byok_only' : 'full';
-        $result  = $tracker->run_check( $mode );
+        $result  = $tracker->run_check( $mode, $this->get_requested_citation_engines( $request ) );
 
         if ( empty( $result['success'] ) ) {
             $status = 'insufficient_credits' === ( $result['code'] ?? '' ) ? 429 : 400;
