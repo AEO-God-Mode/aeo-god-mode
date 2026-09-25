@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.82
+Stable tag: 1.6.83
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,13 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.83 =
+* Citability Score now checks every published post and page, with a progress count while it scans
+* Pages that aren't articles (short pages, legal, account and checkout pages) are listed under Skipped instead of lowering your average
+* Question headings in bold or italics, and prices in dollars, pounds or euros, now count toward your score
+* Bulk description generation shows the real credit cost before it starts
+* Internal Link Builder keeps the anchor text you type
 
 = 1.6.82 =
 * Choose which AI engines run in each manual citation check

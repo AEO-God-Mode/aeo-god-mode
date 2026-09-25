@@ -4486,12 +4486,21 @@ HARD RULES
     }
 
     /**
-     * Score all published posts.
+     * Score all published posts, whole or one batch at a time.
      *
+     * With batch=1 the scan walks posts by ID after the `after` cursor so a
+     * large site never has to finish inside one request. A Pro build without
+     * batching still answers with the full result set.
+     *
+     * @param \WP_REST_Request|null $request Request.
      * @return \WP_REST_Response
      */
-    public function get_citability_all() {
+    public function get_citability_all( $request = null ) {
         $citability = new CitabilityScore();
+        if ( $request instanceof \WP_REST_Request && $request->get_param( 'batch' ) && method_exists( $citability, 'score_batch' ) ) {
+            $limit = absint( $request->get_param( 'limit' ) );
+            return rest_ensure_response( $citability->score_batch( absint( $request->get_param( 'after' ) ), $limit ? $limit : 25 ) );
+        }
         return rest_ensure_response( $citability->score_all() );
     }
 

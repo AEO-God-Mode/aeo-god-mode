@@ -5,6 +5,14 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.83
+
+- Citability Score now checks every published post and page, with a progress count while it scans
+- Pages that aren't articles (short pages, legal, account and checkout pages) are listed under Skipped instead of lowering your average
+- Question headings in bold or italics, and prices in dollars, pounds or euros, now count toward your score
+- Bulk description generation shows the real credit cost before it starts
+- Internal Link Builder keeps the anchor text you type
+
 ## 1.6.82
 
 - Choose which AI engines run in each manual citation check
