@@ -19,8 +19,11 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 class Answer_Density {
 
+	/** Which rule passed the last sentence_is_direct_answer() call. */
+	private static $last_reason = '';
+
 	/** Version of the detector contract persisted with each scan. */
-	const SCORE_VERSION   = 6;
+	const SCORE_VERSION   = 7;
 
 	const POSTMETA_KEY    = '_asgm_answer_density';
 	const SCAN_TS_KEY     = '_asgm_ad_scanned'; // numeric post meta: unix time of last scan. Drives rotation ordering.
@@ -584,8 +587,10 @@ class Answer_Density {
 			$s = trim( $sentence );
 			if ( $s === '' ) { continue; }
 
+			self::$last_reason = '';
 			$is_answer = self::sentence_is_direct_answer( $s, $heading );
 			$is_filler = self::sentence_is_filler( $s );
+			list( $is_answer, $is_filler ) = self::calibrate( $s, (string) $heading, (int) $i, $is_answer, $is_filler );
 
 			if ( $is_answer && ! $is_filler ) {
 				return array(
@@ -605,6 +610,68 @@ class Answer_Density {
 			'words_before_answer' => $word_cursor,
 			'first_sentence'      => $sentences[0] ?? '',
 		);
+	}
+
+	/**
+	 * Adjustments from the internal Jev study of 718 question headings on
+	 * aeogodmode.io (docs/research/jev-answer-first-rule-study-2026-09-25.md).
+	 * Together they lifted agreement with Jev from 60% to 76%.
+	 *
+	 * 1. "X is Y", action-verb and fact-first sentences must share a content
+	 *    word with the heading; shape alone let intro sentences pass.
+	 * 2. Hedges and signposts ("It depends", "Here is") never count.
+	 * 3. A short first sentence under a "?" heading is a real answer.
+	 * 4. Wider yes/no openers, "It is a..." under What/Who, and more
+	 *    imperative verbs count as direct.
+	 *
+	 * @return array{0:bool,1:bool} [ is_answer, is_filler ]
+	 */
+	private static function calibrate( $s, $heading, $index, $is_answer, $is_filler ) {
+		$why = self::$last_reason;
+		if ( $is_answer && in_array( $why, array( 'copula', 'action_verb', 'fact_first' ), true ) && '' !== $heading && ! self::shares_heading_word( $heading, $s ) ) {
+			$is_answer = false;
+		}
+		if ( preg_match( '/^(The\s+)?(\w+\s+){0,2}(answer|match|choice|option|right\s+\w+)\s+(depends|varies)\b|^(That|This|It)\s+depends\b|^Here\s+(is|are|.s)\b|^Use\s+this\b|^(The\s+)?(useful|important|interesting|key)\s+(part|thing|bit)\s+is\s+what\b|^(Understanding|Knowing)\b/i', $s ) ) {
+			$is_answer = false;
+			$is_filler = true;
+		}
+		$is_question = '?' === substr( trim( $heading ), -1 );
+		if ( ! $is_answer && 0 === $index && $is_question && str_word_count( $s ) <= 8 && ! $is_filler ) {
+			$is_answer = true;
+		}
+		if ( ! $is_answer && preg_match( '/^(Absolutely|Definitely|Certainly|Genuinely|Not\s+(for|if|unless|yet|by|in|on|at|much)|Only\s+(if|when)|You\s+do|Yours|Both|Neither|Either)\b/i', $s ) ) {
+			$is_answer = true;
+		}
+		if ( 0 === $index && preg_match( '/^(what|who)\s+(is|are)\b/i', $heading ) && preg_match( '/^(It|They)\s+(is|are|.s)\s+(a|an|the|\w+ing)\b/i', $s ) ) {
+			$is_answer = true;
+			$is_filler = false;
+		}
+		if ( ! $is_answer && 0 === $index && preg_match( '/^(Fix|Plan|Answer|Treat|Think|Go|Try|Look|Let|Pay|Call|Leave|Turn|Switch|Wait|Expect|Budget|Draft|Publish|Post|Link|Point|Log|Sign)\s/', $s ) ) {
+			$is_answer = true;
+		}
+		return array( $is_answer, $is_filler );
+	}
+
+	/** Whether the first 15 words of a sentence share a content word with the heading. */
+	private static function shares_heading_word( $heading, $sentence ) {
+		$words = implode( ' ', array_slice( preg_split( '/\s+/', (string) $sentence ), 0, 15 ) );
+		return (bool) array_intersect( self::content_words( $heading ), self::content_words( $words ) );
+	}
+
+	/** Content-word stems (first 5 letters) with question and stop words removed. */
+	private static function content_words( $text ) {
+		static $stop = null;
+		if ( null === $stop ) {
+			$stop = array_flip( explode( ' ', 'what how why when where who which can should is are does do will would could the a an of to for in on and or your you my i we it its this that with vs be by did not than more most really actually any there their best need get use' ) );
+		}
+		$out = array();
+		foreach ( preg_split( '/[^a-z0-9\.]+/', strtolower( (string) $text ) ) as $w ) {
+			$w = trim( $w, '.' );
+			if ( strlen( $w ) > 2 && ! isset( $stop[ $w ] ) ) {
+				$out[] = substr( $w, 0, 5 );
+			}
+		}
+		return array_unique( $out );
 	}
 
 	/**
@@ -673,7 +740,7 @@ class Answer_Density {
 
 		// Definitional copulas: "X is Y", "This means Y", "AEO refers to Y".
 		if ( preg_match( '/^' . $subject . '\s+(is|are|refers\s+to|means|stands\s+for|describes|equals|represents)\b/u', $s ) ) {
-			return true;
+			self::$last_reason = 'copula'; return true;
 		}
 
 		// Action-verb thesis statements: "X works on Y", "Y uses Z", "X
@@ -721,7 +788,7 @@ class Answer_Density {
 			'succeed','succeeds','backfire','backfires','stall','stalls','plateau','plateaus','outperform','outperforms',
 		) );
 		if ( preg_match( '/^' . $subject . '\s+(' . $action_verbs . ')\b/u', $s ) ) {
-			return true;
+			self::$last_reason = 'action_verb'; return true;
 		}
 
 		// Past-tense process language is answer-first only when the heading asks
@@ -731,7 +798,7 @@ class Answer_Density {
 		if ( '' !== trim( (string) $heading )
 			&& preg_match( '/\b(how\s+(?:did|do|does|was|were|we)|method|methodology|score|scoring|rate|rating|rank|ranking|compare|comparison|test|testing|review|measure|evaluate|assess)\b/iu', $heading )
 			&& preg_match( '/^' . $subject . '\s+(used|applied|chose|selected|evaluated|ranked|scored|rated|graded|measured|assessed|tested|reviewed|compared|calculated|checked|weighted)\b/u', $s ) ) {
-			return true;
+			self::$last_reason = 'past_method'; return true;
 		}
 
 		// Causal answer: a named subject explained with a causal connective answers a
@@ -740,12 +807,12 @@ class Answer_Density {
 		// are still vetoed by the filler classifier, which runs separately.
 		if ( preg_match( '/^' . $subject . '\b/u', $s )
 			&& preg_match( '/\b(because|due\s+to|owing\s+to|thanks\s+to|the\s+reason|caused\s+by|results?\s+from|stems?\s+from|comes?\s+down\s+to|boils?\s+down\s+to|comes\s+from)\b/iu', $s ) ) {
-			return true;
+			self::$last_reason = 'causal'; return true;
 		}
 
 		// Imperative how-to thesis: "Add X", "Use Y", "Set Z to N".
 		if ( preg_match( '/^(Add|Use|Set|Configure|Install|Enable|Disable|Place|Put|Store|Pour|Grind|Brew|Write|Include|Choose|Pick|Select|Run|Block|Allow|Open|Close|Delete|Remove|Move|Edit|Update|Replace|Track|Treat|Keep|Avoid|Check|Focus|Aim|Start|Stop|Measure|Monitor|Watch|Test|Make|Ensure|Build|Create|Connect|Enter|Upload|Download|Copy|Paste|Schedule|Contact|Ask|Give|Take|Map|Match|Filter|Score|Compare|Limit|Prioriti[sz]e|Prefer|Send|Read|Scan|Audit|Verify|Review|Count|Tag|Name|Mark|Find|Stick)\s+[A-Z]?\w/u', $s ) ) {
-			return true;
+			self::$last_reason = 'imperative'; return true;
 		}
 
 		// Affirmative, including committed qualifiers. "Partly, and badly.",
@@ -753,14 +820,14 @@ class Answer_Density {
 		// how-much heading directly, even without a literal "Yes"/"No" lead.
 		// (Hedges like "It depends" / "There are several" are vetoed later by
 		// the filler classifier, so this stays safe.)
-		if ( preg_match( '/^(Yes|No|Not\s+(really|quite|always|necessarily)|Partly|Mostly|Largely|Mainly|Sometimes|Rarely|Seldom|Usually|Often|Occasionally|Generally|Typically|Somewhat|Slightly|Almost|Barely|Hardly|Always|Never|A\s+(little|bit)|Kind\s+of|Sort\s+of)[\s,\-—:.]/i', $s ) ) { return true; }
+		if ( preg_match( '/^(Yes|No|Not\s+(really|quite|always|necessarily)|Partly|Mostly|Largely|Mainly|Sometimes|Rarely|Seldom|Usually|Often|Occasionally|Generally|Typically|Somewhat|Slightly|Almost|Barely|Hardly|Always|Never|A\s+(little|bit)|Kind\s+of|Sort\s+of)[\s,\-—:.]/i', $s ) ) { self::$last_reason = 'affirmative'; return true; }
 
 		// Fact-first. Concrete numbers, dates, multi-cap proper nouns. Short.
 		$word_count = str_word_count( $s );
 		if ( $word_count <= 35 ) {
 			$has_digit = (bool) preg_match( '/\b\d/', $s );
 			$has_capital_pair = (bool) preg_match( '/\b[A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+/', $s );
-			if ( $has_digit || $has_capital_pair ) { return true; }
+			if ( $has_digit || $has_capital_pair ) { self::$last_reason = 'fact_first'; return true; }
 		}
 
 		return false;

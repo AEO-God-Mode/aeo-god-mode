@@ -5,6 +5,18 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.84
+
+- Citability Score has a new, clearer score: 8 checks, each showing its points and exactly what to do, so every page can reach 100
+- Fix my top 10 writes direct answers for the pages with the most to gain, then lets you review each one before anything changes
+- Fix buttons show the points they add, with a before and after preview and a warning if a link would be removed
+- AI answer rewrites read the whole section and replace the old opening instead of adding a second one
+- Stricter, more accurate check for whether a heading's question is answered straight away
+- Redesigned Citability Score screen: click any grade to filter, Biggest wins first, search, and short explanations on hover
+- Content Health and the editor show the real 2-credit price for descriptions
+- Crawler Log counts every post no AI bot has visited
+- Plainer wording on several screens
+
 ## 1.6.83
 
 - Citability Score now checks every published post and page, with a progress count while it scans

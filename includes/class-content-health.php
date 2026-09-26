@@ -131,6 +131,15 @@ class Content_Health {
         'alt_featured' => 'problem',
     );
 
+    /**
+     * "N credit(s) per page", read from the charged price so the text
+     * cannot drift from what the customer pays.
+     */
+    private static function credits_per_page( $fix_type ) {
+        $cost = class_exists( __NAMESPACE__ . '\\MetadataGenerator' ) ? (int) MetadataGenerator::fix_cost( $fix_type ) : 1;
+        return $cost . ( 1 === $cost ? ' credit' : ' credits' ) . ' per page';
+    }
+
     /** Read the stored state, shaped. */
     public static function get_state() {
         $raw = get_option( self::OPT, array() );
@@ -926,7 +935,7 @@ class Content_Health {
             'Nothing stored for the description an engine quotes underneath your result. Without one it writes its own from whatever text it finds first.'
                 . ( $template ? ' ' . $template . ' has a site-wide description template set, so some of these may still output something. Open one and check before working through the list.' : '' ),
             array(
-                'text' => 'Generate, review, and save descriptions here, 1 credit per page.',
+                'text' => 'Generate, review, and save descriptions here, ' . self::credits_per_page( 'generate_meta_description' ) . '.',
                 'href' => '',
             )
         );
@@ -937,7 +946,7 @@ class Content_Health {
             'Very short meta description',
             'These pages do store a description, so something renders under the result, but a few characters is not a snippet. It is usually a placeholder somebody typed to stop an SEO plugin complaining. The stored text and its length are next to each page.',
             array(
-                'text' => 'Generate, review, and save descriptions here, 1 credit per page.',
+                'text' => 'Generate, review, and save descriptions here, ' . self::credits_per_page( 'generate_meta_description' ) . '.',
                 'href' => '',
             )
         );
@@ -948,7 +957,7 @@ class Content_Health {
             'Title longer than ' . self::TITLE_MAX . ' characters',
             'Long enough that search engines are likely to cut it off. Both Google and Bing truncate by pixel width rather than character count, so ' . self::TITLE_MAX . ' is a working rule of thumb, not a hard limit. Front-load the words that matter and it stops mattering. Lengths are counted as a reader sees them, with HTML entities decoded.',
             array(
-                'text' => 'Generate, review, and save titles here, 1 credit per page.',
+                'text' => 'Generate, review, and save titles here, ' . self::credits_per_page( 'generate_aeo_titles' ) . '.',
                 'href' => '',
             )
         );
@@ -1003,7 +1012,7 @@ class Content_Health {
                 'cluster_total'  => count( $dupes ),
                 'cluster_shown'  => count( $shown ),
                 'pro'            => array(
-                    'text' => 'Generate, review, and save a distinct description for each page here, 1 credit per page.',
+                    'text' => 'Generate, review, and save a distinct description for each page here, ' . self::credits_per_page( 'generate_meta_description' ) . '.',
                     'href' => '',
                 ),
             );

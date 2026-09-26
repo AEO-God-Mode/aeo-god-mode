@@ -2193,7 +2193,7 @@ class API {
         $result = MetadataGenerator::rewrite_opener(
             $post_id,
             $heading,
-            (string) $target['first_paragraph'],
+            self::section_text( '' !== trim( $editor_content ) ? $editor_content : (string) get_post_field( 'post_content', $post_id ), $heading, (string) $target['first_paragraph'] ),
             (string) ( $target['first_sentence'] ?? '' ),
             $classification ?: ( $target['opener_kind'] ?? 'setup' ),
             $extra_context,
@@ -2201,6 +2201,38 @@ class API {
         );
 
         return rest_ensure_response( $result );
+    }
+
+    /**
+     * The whole section under a heading, as plain text, for rewrite context.
+     *
+     * The rewrite used to see only the first paragraph, so it could not tell
+     * that a summary box or later paragraph already said the same thing.
+     * Reads from the heading to the next H2 or H3, up to 500 words. Falls
+     * back to the first paragraph when the heading cannot be found.
+     *
+     * @param string $content  Post content.
+     * @param string $heading  Heading text.
+     * @param string $fallback First paragraph from the scan.
+     * @return string
+     */
+    private static function section_text( $content, $heading, $fallback ) {
+        $want = strtolower( trim( wp_strip_all_tags( html_entity_decode( $heading ) ) ) );
+        if ( preg_match_all( '#<h([23])\b[^>]*>(.*?)</h\1>#is', $content, $m, PREG_OFFSET_CAPTURE ) ) {
+            foreach ( $m[2] as $i => $inner ) {
+                if ( strtolower( trim( wp_strip_all_tags( html_entity_decode( $inner[0] ) ) ) ) !== $want ) {
+                    continue;
+                }
+                $start = $m[0][ $i ][1] + strlen( $m[0][ $i ][0] );
+                $end   = isset( $m[0][ $i + 1 ] ) ? $m[0][ $i + 1 ][1] : strlen( $content );
+                $text  = trim( preg_replace( '/\s+/', ' ', wp_strip_all_tags( substr( $content, $start, $end - $start ) ) ) );
+                if ( '' !== $text ) {
+                    $words = explode( ' ', $text );
+                    return implode( ' ', array_slice( $words, 0, 500 ) );
+                }
+            }
+        }
+        return $fallback;
     }
 
     /**
@@ -2315,6 +2347,18 @@ class API {
             $p_full_length = strlen( $pm[1] );
             $new_p         = esc_html( $rewrite );
 			$operation     = 'replaced_opener';
+        } elseif ( ( $section_end = preg_match( '#<h[1-3]\b#i', $tail_trim, $hm, PREG_OFFSET_CAPTURE ) ? (int) $hm[0][1] : strlen( $tail_trim ) )
+                   && preg_match( '#<p\b[^>]*>(?:(?!</p>).)*\S(?:(?!</p>).)*</p>#is', substr( $tail_trim, 0, $section_end ), $pm, PREG_OFFSET_CAPTURE )
+                   && ! in_array( $target_structure, array( 'list', 'table' ), true ) ) {
+            // A summary box, image or other block sits between the heading and
+            // the section's first paragraph. Replace that paragraph rather than
+            // stacking a second opener above the box; the old intro would
+            // otherwise remain and repeat the new answer.
+            $cursor       += (int) $pm[0][1];
+            $p_full_length = strlen( $pm[0][0] );
+            preg_match( '#^<p\b[^>]*>#i', $pm[0][0], $open );
+            $new_p         = $open[0] . esc_html( $rewrite ) . '</p>';
+			$operation     = 'replaced_opener';
         } else {
             // No opener exists: the heading is followed directly by a list,
             // table, or other block (checklist-style sections do this). The
@@ -2329,6 +2373,22 @@ class API {
         }
 
         $new_content = substr( $content, 0, $cursor ) . $new_p . substr( $content, $cursor + $p_full_length );
+
+        // Dry run: say what Apply would replace, and any links that would go
+        // with it, without saving. The preview shows this before the user
+        // commits, because the replaced paragraph may carry links or quotes.
+        if ( rest_sanitize_boolean( $request->get_param( 'dry_run' ) ) ) {
+            $removed_html = substr( $content, $cursor, $p_full_length );
+            preg_match_all( '#<a\b[^>]*>(.*?)</a>#is', $removed_html, $links );
+            return rest_ensure_response( array(
+                'success'       => true,
+                'post_id'       => $post_id,
+                'saved'         => false,
+                'operation'     => $operation,
+                'replaces'      => trim( preg_replace( '/\s+/', ' ', wp_strip_all_tags( $removed_html ) ) ),
+                'removed_links' => array_values( array_filter( array_map( function( $t ) { return trim( wp_strip_all_tags( $t ) ); }, $links[1] ) ) ),
+            ) );
+        }
 
         // In the block editor, return the transformed CURRENT document and
         // let Gutenberg own the dirty/save lifecycle. Saving here would update

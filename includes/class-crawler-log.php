@@ -255,6 +255,7 @@ class CrawlerLog {
 
 		// Blind spots: published posts with zero AI bot visits.
 		$blind_spots = array();
+		$blind_spot_count = 0;
 		$crawled_urls = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Called via compute_summary() inside get_summary()->remember() cache wrapper.
 			$wpdb->prepare(
 				"SELECT DISTINCT url FROM %i WHERE url != '/robots.txt'",
@@ -276,15 +277,16 @@ class CrawlerLog {
 			foreach ( $all_posts as $pid ) {
 				$post_path = wp_make_link_relative( get_permalink( $pid ) );
 				if ( ! isset( $crawled_set[ $post_path ] ) ) {
-					$blind_spots[] = array(
-						'id'    => $pid,
-						'title' => get_the_title( $pid ),
-						'url'   => $post_path,
-						'date'  => get_the_date( 'Y-m-d', $pid ),
-					);
-				}
-				if ( count( $blind_spots ) >= 10 ) {
-					break; // Cap at 10 for performance.
+					++$blind_spot_count;
+					// List the first 10; count every uncrawled post checked.
+					if ( count( $blind_spots ) < 10 ) {
+						$blind_spots[] = array(
+							'id'    => $pid,
+							'title' => get_the_title( $pid ),
+							'url'   => $post_path,
+							'date'  => get_the_date( 'Y-m-d', $pid ),
+						);
+					}
 				}
 			}
 		}
@@ -300,7 +302,7 @@ class CrawlerLog {
 			'trend_direction'  => $trend_direction,
 			'trend_pct'        => $trend_pct,
 			'blind_spots'      => $blind_spots,
-			'blind_spot_count' => count( $blind_spots ),
+			'blind_spot_count' => $blind_spot_count,
 			'total_posts'      => count( $all_posts ),
 		);
 	}

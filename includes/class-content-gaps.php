@@ -1210,6 +1210,7 @@ class ContentGaps {
                     'post_id'         => $post_id,
                     'score'           => $rule_score ? $rule_score['score'] : ( $ai_result['score'] ?? 0 ),
                     'breakdown'       => $rule_score ? $rule_score['breakdown'] : null,
+                    'checks'          => $rule_score ? ( $rule_score['checks'] ?? null ) : null,
                     'tips'            => $rule_score ? $rule_score['tips'] : array(),
                     'top_improvement' => $ai_result['top_improvement'] ?? '',
                     'source'          => 'ai',
