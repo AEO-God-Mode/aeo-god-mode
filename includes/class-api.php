@@ -55,6 +55,20 @@ class API {
             ),
         ) );
 
+        // ---- Canonical Site Profile ----
+        register_rest_route( self::NAMESPACE, '/site-profile', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_site_profile' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_site_profile' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
         // ---- Detect SEO plugins ----
         register_rest_route( self::NAMESPACE, '/detect', array(
             'methods'             => 'GET',
@@ -355,6 +369,25 @@ class API {
             register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/(?P<id>\d+)/outline', array(
                 'methods'             => 'POST',
                 'callback'            => array( $this, 'outline_topical_map_item' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/(?P<id>\d+)/evidence', array(
+                array(
+                    'methods'             => 'GET',
+                    'callback'            => array( $this, 'get_topical_map_evidence' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+                array(
+                    'methods'             => 'POST',
+                    'callback'            => array( $this, 'save_topical_map_evidence' ),
+                    'permission_callback' => array( $this, 'admin_permission' ),
+                ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/content-gaps/topical-map/(?P<id>\d+)/evidence/research', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'research_topical_map_evidence' ),
                 'permission_callback' => array( $this, 'admin_permission' ),
             ) );
 
@@ -1720,6 +1753,44 @@ class API {
         return rest_ensure_response( $settings );
     }
 
+    /** Return the canonical reusable customer identity and market profile. */
+    public function get_site_profile() {
+        $profile = Site_Profile::get();
+        return rest_ensure_response( array(
+            'profile'      => $profile,
+            'suggestions'  => Site_Profile::suggestions(),
+            'completeness' => Site_Profile::completeness( $profile ),
+        ) );
+    }
+
+    /** Save a confirmed site profile. */
+    public function save_site_profile( $request ) {
+        $body      = $request->get_json_params();
+        $raw       = is_array( $body['profile'] ?? null ) ? $body['profile'] : $body;
+        $confirmed = array_key_exists( 'confirmed', (array) $raw ) ? rest_sanitize_boolean( $raw['confirmed'] ) : true;
+        $profile   = Site_Profile::save( $raw, false );
+        $completeness = Site_Profile::completeness( $profile );
+        if ( $confirmed && ! empty( $completeness['missing'] ) ) {
+            return new \WP_REST_Response( array(
+                'success'      => false,
+                'error'        => __( 'Complete the required Site Profile fields before confirming it.', 'aeo-god-mode' ),
+                'profile'      => $profile,
+                'completeness' => $completeness,
+            ), 422 );
+        }
+        if ( $confirmed ) {
+            $profile = Site_Profile::save( $raw, true );
+            $completeness = Site_Profile::completeness( $profile );
+        }
+        $this->log_activity( 'site_profile_updated', __( 'Site profile updated.', 'aeo-god-mode' ) );
+        return rest_ensure_response( array(
+            'success'      => true,
+            'profile'      => $profile,
+            'suggestions'  => Site_Profile::suggestions(),
+            'completeness' => $completeness,
+        ) );
+    }
+
     /**
      * Save plugin settings.
      *
@@ -1738,6 +1809,10 @@ class API {
 		}
 
         update_option( 'asgm_settings', $merged );
+
+		if ( isset( $body['business'] ) && is_array( $merged['business'] ?? null ) ) {
+			Site_Profile::merge_legacy_business( $merged['business'] );
+		}
 
 		$new_scope = class_exists( __NAMESPACE__ . '\\Answer_Density' ) ? Answer_Density::selected_post_types( $merged ) : $old_scope;
 		if ( $old_scope !== $new_scope ) {
@@ -4231,8 +4306,9 @@ HARD RULES
         }
         $queries = $request->get_param( 'queries' );
         $queries = is_array( $queries ) ? array_map( 'sanitize_text_field', $queries ) : array();
-        $loc     = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
-        $lang    = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        $market  = Site_Profile::market();
+        $loc     = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : (int) $market['location_code'];
+        $lang    = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? $market['language_code'] ) );
         return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::ai_mentions( $queries, $loc, $lang ) );
     }
 
@@ -4245,8 +4321,9 @@ HARD RULES
         $keywords = $request->get_param( 'keywords' );
         $keywords = is_array( $keywords ) ? array_map( 'sanitize_text_field', $keywords ) : array();
         $mode     = sanitize_key( (string) ( $request->get_param( 'mode' ) ?? 'pages' ) );
-        $loc      = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
-        $lang     = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        $market   = Site_Profile::market();
+        $loc      = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : (int) $market['location_code'];
+        $lang     = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? $market['language_code'] ) );
         // Only an explicit Refresh goes to the network. Everything else is
         // served from the site's own saved topics, free.
         $force    = (bool) $request->get_param( 'force' );
@@ -4294,8 +4371,9 @@ HARD RULES
             return $guard;
         }
         $question = sanitize_textarea_field( (string) ( $request->get_param( 'question' ) ?? '' ) );
-        $loc      = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
-        $lang     = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        $market   = Site_Profile::market();
+        $loc      = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : (int) $market['location_code'];
+        $lang     = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? $market['language_code'] ) );
         return $this->ai_mentions_respond( \AISEOGodMode\AI_Mentions::will_ai_quote( $question, $loc, $lang ) );
     }
 
@@ -4488,12 +4566,35 @@ HARD RULES
     // -----------------------------------------------------------------------
 
     /**
+     * AIReferrals is a Pro class that loads only with an active licence, but
+     * these routes register whenever Pro is installed. Without the class,
+     * answer plainly instead of fataling: the beacon is public, and a page
+     * cache can keep firing it after a licence lapses.
+     *
+     * @return \WP_Error|null
+     */
+    private function ai_referrals_unavailable() {
+        if ( class_exists( __NAMESPACE__ . '\\AIReferrals' ) ) {
+            return null;
+        }
+        return new \WP_Error(
+            'asgm_pro_inactive',
+            __( 'AI Referrals needs an active Pro license.', 'aeo-god-mode' ),
+            array( 'status' => 403 )
+        );
+    }
+
+    /**
      * Get AI referral stats.
      *
      * @param \WP_REST_Request $request Request.
      * @return \WP_REST_Response
      */
     public function get_ai_referrals( $request ) {
+        $unavailable = $this->ai_referrals_unavailable();
+        if ( $unavailable ) {
+            return $unavailable;
+        }
         $days      = absint( $request->get_param( 'days' ) ) ?: 30;
         $referrals = new AIReferrals();
         return rest_ensure_response( $referrals->get_stats( $days ) );
@@ -4508,7 +4609,7 @@ HARD RULES
     public function log_ai_referral_beacon( $request ) {
         $referrer = (string) $request->get_param( 'referrer' );
         $url      = (string) $request->get_param( 'url' );
-        if ( strlen( $referrer ) > 2083 || strlen( $url ) > 2083 ) {
+        if ( strlen( $referrer ) > 2083 || strlen( $url ) > 2083 || $this->ai_referrals_unavailable() ) {
             return rest_ensure_response( array( 'recorded' => false ) );
         }
         $referrals = new AIReferrals();
@@ -4523,6 +4624,10 @@ HARD RULES
      * @return \WP_REST_Response
      */
     public function get_ai_referral_entries( $request ) {
+        $unavailable = $this->ai_referrals_unavailable();
+        if ( $unavailable ) {
+            return $unavailable;
+        }
         $page     = absint( $request->get_param( 'page' ) ) ?: 1;
         $per_page = absint( $request->get_param( 'per_page' ) ) ?: 50;
         $referrals = new AIReferrals();
@@ -4542,7 +4647,15 @@ HARD RULES
     public function get_citability_score( $request ) {
         $post_id   = absint( $request->get_param( 'post_id' ) );
         $citability = new CitabilityScore();
-        return rest_ensure_response( $citability->score_post( $post_id ) );
+        if ( 'publish' !== get_post_status( $post_id ) ) {
+            return new \WP_Error( 'asgm_missing_page', 'Published page not found.', array( 'status' => 404 ) );
+        }
+        try {
+            return rest_ensure_response( $citability->score_post( $post_id ) );
+        } catch ( \Throwable $e ) {
+            update_post_meta( $post_id, '_asgm_citability_scan_error', 1 );
+            return new \WP_Error( 'asgm_render_failed', 'This page could not be rendered for scoring. Check the page builder and retry.', array( 'status' => 422 ) );
+        }
     }
 
     /**
@@ -5494,7 +5607,15 @@ HARD RULES
             if ( is_array( $data ) && isset( $data['credits'] ) ) {
                 $payload['credits'] = $data['credits'];
             }
-            return new \WP_REST_Response( $payload, 400 );
+            if ( is_array( $data ) ) {
+                foreach ( array( 'status', 'failure_stage', 'evidence_diagnostics', 'evidence_warnings', 'result', 'rows' ) as $key ) {
+                    if ( array_key_exists( $key, $data ) ) {
+                        $payload[ $key ] = $data[ $key ];
+                    }
+                }
+            }
+            $http_status = is_array( $data ) && ! empty( $data['status'] ) && is_numeric( $data['status'] ) ? (int) $data['status'] : 400;
+            return new \WP_REST_Response( $payload, $http_status );
         }
         return rest_ensure_response( array_merge( array( 'success' => true ), (array) $result ) );
     }
@@ -5548,6 +5669,37 @@ HARD RULES
         );
     }
 
+    public function get_topical_map_evidence( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        return $this->topical_map_respond( \AISEOGodMode\Topical_Map::comparison_evidence( (int) $request['id'] ) );
+    }
+
+    public function save_topical_map_evidence( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $params = $request->get_json_params();
+        $items  = is_array( $params['items'] ?? null ) ? $params['items'] : array();
+        return $this->topical_map_respond( \AISEOGodMode\Topical_Map::save_comparison_evidence( (int) $request['id'], $items ) );
+    }
+
+    public function research_topical_map_evidence( $request ) {
+        $guard = $this->topical_map_guard();
+        if ( true !== $guard ) {
+            return $guard;
+        }
+        $recipe = $this->topical_map_recipe( $request );
+        if ( is_wp_error( $recipe ) ) {
+            return $this->topical_map_respond( $recipe );
+        }
+        $force = $request->has_param( 'force' ) ? rest_sanitize_boolean( $request->get_param( 'force' ) ) : false;
+        return $this->topical_map_respond( \AISEOGodMode\Topical_Map::research_comparison_evidence( (int) $request['id'], $recipe, $force ) );
+    }
+
     public function titles_topical_map_item( $request ) {
         $guard = $this->topical_map_guard();
         if ( true !== $guard ) {
@@ -5586,8 +5738,9 @@ HARD RULES
             return new \WP_REST_Response( array( 'success' => false, 'error' => 'Full market keywords are a Growth feature.' ), 403 );
         }
         $seed = sanitize_text_field( (string) ( $request->get_param( 'seed' ) ?? '' ) );
-        $loc  = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : 2840;
-        $lang = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? 'en' ) );
+        $market = Site_Profile::market();
+        $loc  = $request->has_param( 'location_code' ) ? (int) $request->get_param( 'location_code' ) : (int) $market['location_code'];
+        $lang = sanitize_text_field( (string) ( $request->get_param( 'language_code' ) ?? $market['language_code'] ) );
         return $this->topical_map_respond(
             \AISEOGodMode\Topical_Map::market_keywords( $seed, $loc, $lang )
         );

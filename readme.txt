@@ -2,9 +2,9 @@
 Contributors: ariellejphoenix
 Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
-Tested up to: 6.9
+Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.84
+Stable tag: 1.6.85
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,16 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.85 =
+* Every plugin screen can now be translated into your language on translate.wordpress.org
+* New Site Profile in setup and Settings: confirm your business name and market once and your schema and Pro reports use them
+* llms.txt titles and descriptions are plain text and it leaves out cart and account pages plus noindex and password-protected content
+* Content Health asks for one fresh scan after updating so older results are never shown
+* Description batches show their credit price before they run
+* Link Builder keeps the anchor text you type
+* Fixed the setup Brand step and Brand Kit on sites that use plain permalinks
+* Fixed an error on sites where Pro is installed without an active license
 
 = 1.6.84 =
 * Citability Score has a new, clearer score: 8 checks, each showing its points and exactly what to do, so every page can reach 100

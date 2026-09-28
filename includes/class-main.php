@@ -63,6 +63,7 @@ class Main {
         // returns false for everything.
         require_once $includes . 'class-license-stub.php';
         require_once $includes . 'class-account-connection.php';
+        require_once $includes . 'class-site-profile.php';
 
         // Free classes — always loaded.
         require_once $includes . 'class-api.php';
@@ -399,26 +400,33 @@ class Main {
         if ( isset( $manifest['src/main.tsx'] ) ) {
             $entry = $manifest['src/main.tsx'];
 
-            // CSS.
-            if ( ! empty( $entry['css'] ) ) {
-                foreach ( $entry['css'] as $index => $css_file ) {
-                    wp_enqueue_style(
-                        'asgm-admin-css-' . $index,
-                        $asset_url . $css_file,
-                        array(),
-                        ASGM_VERSION
-                    );
-                }
+            // CSS. The IIFE build lists its one stylesheet under its own
+            // "style.css" manifest key rather than on the entry, so both
+            // shapes are read.
+            $styles = (array) ( $entry['css'] ?? array() );
+            if ( empty( $styles ) && ! empty( $manifest['style.css']['file'] ) ) {
+                $styles[] = (string) $manifest['style.css']['file'];
+            }
+            foreach ( $styles as $index => $css_file ) {
+                wp_enqueue_style(
+                    'asgm-admin-css-' . $index,
+                    $asset_url . $css_file,
+                    array(),
+                    ASGM_VERSION
+                );
             }
 
-            // JS.
+            // JS. The bundle reads its strings through WordPress's own
+            // wp.i18n, so language packs from translate.wordpress.org reach
+            // the React screens as well as the PHP ones.
             wp_enqueue_script(
                 'asgm-admin-app',
                 $asset_url . $entry['file'],
-                array(),
+                array( 'wp-i18n' ),
                 ASGM_VERSION,
                 true
             );
+            wp_set_script_translations( 'asgm-admin-app', 'aeo-god-mode', ASGM_PLUGIN_DIR . 'languages' );
 
             // Load the admin bundle as type="module" so its top-level
             // declarations are module-scoped. Without this, the Vite bundle's
@@ -432,6 +440,7 @@ class Main {
 
             // Pass data to the React app.
             $license = new License();
+            $profile = Site_Profile::get();
             wp_localize_script( 'asgm-admin-app', 'asgmData', array(
                 'restUrl'    => esc_url_raw( rest_url( 'aeo-god-mode/v1' ) ),
                 'nonce'      => wp_create_nonce( 'wp_rest' ),
@@ -439,7 +448,7 @@ class Main {
                 'pluginUrl'  => ASGM_PLUGIN_URL,
                 'version'    => ASGM_VERSION,
                 'siteUrl'    => get_site_url(),
-                'siteName'   => get_bloginfo( 'name' ),
+                'siteName'   => (string) ( $profile['identity']['business_name'] ?? get_bloginfo( 'name' ) ),
                 'isPro'      => License::is_pro(),
                 'isProBuild' => License::is_pro_build(),
                 'plan'       => $license->get_plan(),
@@ -462,11 +471,9 @@ class Main {
         if ( 'asgm-admin-app' !== $handle ) {
             return $tag;
         }
-        // Idempotent — bail if some other plugin already injected a type attr.
-        if ( false !== strpos( $tag, ' type=' ) ) {
-            return $tag;
-        }
-        return str_replace( '<script ', '<script type="module" ', $tag );
+        // $tag also carries the inline translations script WordPress prints
+        // before the bundle, so only the tag with a src is changed.
+        return preg_replace( '/<script(?![^>]*\stype=)(?=[^>]*\ssrc=)/', '<script type="module"', $tag, 1 );
     }
 
     /**

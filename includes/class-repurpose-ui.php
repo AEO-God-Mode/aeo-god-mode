@@ -257,10 +257,11 @@ class Repurpose_UI {
         wp_enqueue_script(
             'asgm-repurpose',
             $base . $entry['file'],
-            array( 'wp-element', 'wp-api-fetch' ),
+            array( 'wp-element', 'wp-api-fetch', 'wp-i18n' ),
             ASGM_VERSION,
             true
         );
+        wp_set_script_translations( 'asgm-repurpose', 'aeo-god-mode', ASGM_PLUGIN_DIR . 'languages' );
         /*
          * With cssCodeSplit off, Vite emits one stylesheet under its own
          * "style.css" manifest key rather than listing it on the entry, so

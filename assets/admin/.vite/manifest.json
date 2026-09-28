@@ -1,11 +1,12 @@
 {
   "src/main.tsx": {
-    "file": "js/main-DxHdNSvV.js",
+    "file": "js/main-Df9gb6H4.js",
     "name": "main",
     "src": "src/main.tsx",
-    "isEntry": true,
-    "css": [
-      "css/main-Co8P4onC.css"
-    ]
+    "isEntry": true
+  },
+  "style.css": {
+    "file": "css/main-DmkG8dAS.css",
+    "src": "style.css"
   }
 }

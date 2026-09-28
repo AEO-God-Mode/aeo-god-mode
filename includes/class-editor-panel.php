@@ -311,6 +311,8 @@ class EditorPanel {
             );
         }
 
+        wp_set_script_translations( 'asgm-editor-panel', 'aeo-god-mode', ASGM_PLUGIN_DIR . 'languages' );
+
         wp_localize_script( 'asgm-editor-panel', 'asgmEditorPanel', array(
             'restUrl' => rest_url( 'asgm/v1/editor-panel/' ),
             'nonce'   => wp_create_nonce( 'wp_rest' ),

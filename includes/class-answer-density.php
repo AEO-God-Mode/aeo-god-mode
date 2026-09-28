@@ -613,9 +613,9 @@ class Answer_Density {
 	}
 
 	/**
-	 * Adjustments from the internal Jev study of 718 question headings on
-	 * aeogodmode.io (docs/research/jev-answer-first-rule-study-2026-09-25.md).
-	 * Together they lifted agreement with Jev from 60% to 76%.
+	 * Calibration rules, checked against a hand-reviewed sample of question
+	 * headings. Together they made the check agree with a careful human
+	 * reader far more often.
 	 *
 	 * 1. "X is Y", action-verb and fact-first sentences must share a content
 	 *    word with the heading; shape alone let intro sentences pass.

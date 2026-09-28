@@ -40,6 +40,15 @@ class Content_Health {
     const OPT = 'asgm_content_health';
 
     /**
+     * Bump when inspection semantics change.
+     *
+     * Findings are cached in an option. Without a version marker, a site can
+     * keep showing a missing-description result produced by an older scanner
+     * even after the scanner learns to resolve generated SEO descriptions.
+     */
+    const SCAN_VERSION = '2';
+
+    /**
      * Posts parsed per batch call.
      *
      * Larger than Link_Health's 12 because nothing here leaves the server: this
@@ -146,6 +155,24 @@ class Content_Health {
         if ( ! is_array( $raw ) ) {
             $raw = array();
         }
+
+        // Never present findings produced by an older inspection algorithm.
+        // The UI will request a fresh scan instead of showing stale results.
+        if ( self::SCAN_VERSION !== (string) ( $raw['scan_version'] ?? '' ) ) {
+            return array(
+                'status'          => 'never',
+                'queue'           => array(),
+                'checked'         => 0,
+                'total'           => 0,
+                'published_total' => 0,
+                'post_types'      => self::scannable_post_types(),
+                'pages'           => array(),
+                'desc_index'      => array(),
+                'has_content'     => false,
+                'scanned_at'      => '',
+                'scan_version'    => self::SCAN_VERSION,
+            );
+        }
         return array(
             'status'          => (string) ( $raw['status'] ?? 'never' ), // never|scanning|done
             'queue'           => ( isset( $raw['queue'] ) && is_array( $raw['queue'] ) ) ? $raw['queue'] : array(),
@@ -157,6 +184,7 @@ class Content_Health {
             'desc_index'      => ( isset( $raw['desc_index'] ) && is_array( $raw['desc_index'] ) ) ? $raw['desc_index'] : array(),
             'has_content'     => ! empty( $raw['has_content'] ),
             'scanned_at'      => (string) ( $raw['scanned_at'] ?? '' ),
+            'scan_version'    => self::SCAN_VERSION,
         );
     }
 
@@ -195,6 +223,7 @@ class Content_Health {
         }
         $state = array(
             'status'          => empty( $ids ) ? 'done' : 'scanning',
+            'scan_version'    => self::SCAN_VERSION,
             'queue'           => $ids,
             'checked'         => 0,
             'total'           => count( $ids ),

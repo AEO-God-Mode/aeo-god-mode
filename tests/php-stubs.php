@@ -1,4 +1,9 @@
 <?php
+// Test harness, run from the command line only. It ships inside the plugin
+// folder, so it must do nothing when requested over the web.
+if ( 'cli' !== PHP_SAPI ) {
+    exit;
+}
 define('ABSPATH', '/tmp/');
 $GLOBALS['__opts'] = array();
 function get_option($k, $d = false) { return $GLOBALS['__opts'][$k] ?? $d; }

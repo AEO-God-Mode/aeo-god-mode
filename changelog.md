@@ -5,6 +5,17 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.85
+
+- Every plugin screen can now be translated into your language on translate.wordpress.org
+- New Site Profile in setup and Settings: confirm your business name and market once and your schema and Pro reports use them
+- llms.txt titles and descriptions are plain text and it leaves out cart and account pages plus noindex and password-protected content
+- Content Health asks for one fresh scan after updating so older results are never shown
+- Description batches show their credit price before they run
+- Link Builder keeps the anchor text you type
+- Fixed the setup Brand step and Brand Kit on sites that use plain permalinks
+- Fixed an error on sites where Pro is installed without an active license
+
 ## 1.6.84
 
 - Citability Score has a new, clearer score: 8 checks, each showing its points and exactly what to do, so every page can reach 100

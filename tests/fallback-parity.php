@@ -1,5 +1,10 @@
 <?php
 // Emits the PHP fallback for every fixture, one JSON line each.
+// Test harness, run from the command line only. It ships inside the plugin
+// folder, so it must do nothing when requested over the web.
+if ( 'cli' !== PHP_SAPI ) {
+    exit;
+}
 require __DIR__ . '/php-stubs.php';
 require dirname(__DIR__) . '/includes/class-brand-kit.php';
 require dirname(__DIR__) . '/includes/class-visual-icons.php';

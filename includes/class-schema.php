@@ -762,14 +762,15 @@ class Schema {
      * @return array
      */
     private function website_schema( $business ) {
-        $name = ! empty( $business['name'] ) ? $business['name'] : get_bloginfo( 'name' );
+        $profile = Site_Profile::get();
+        $name = ! empty( $profile['identity']['business_name'] ) ? $profile['identity']['business_name'] : get_bloginfo( 'name' );
 
         return array(
             '@context'        => 'https://schema.org',
             '@type'           => 'WebSite',
             'name'            => $name,
             'url'             => get_site_url(),
-            'inLanguage'      => get_bloginfo( 'language' ),
+            'inLanguage'      => (string) ( $profile['market']['language_code'] ?? get_bloginfo( 'language' ) ),
             'potentialAction'  => array(
                 '@type'       => 'SearchAction',
                 'target'      => array(
@@ -788,14 +789,15 @@ class Schema {
      * @return array
      */
     private function organization_schema( $business ) {
-        $name = ! empty( $business['name'] ) ? $business['name'] : get_bloginfo( 'name' );
+        $profile = Site_Profile::get();
+        $name = ! empty( $profile['identity']['business_name'] ) ? $profile['identity']['business_name'] : get_bloginfo( 'name' );
 
         $schema = array(
             '@context'   => 'https://schema.org',
             '@type'      => 'Organization',
             'name'       => $name,
             'url'        => get_site_url(),
-            'inLanguage' => get_bloginfo( 'language' ),
+            'inLanguage' => (string) ( $profile['market']['language_code'] ?? get_bloginfo( 'language' ) ),
         );
 
         // Logo.
@@ -1389,6 +1391,10 @@ class Schema {
     private function local_business_schema( $settings ) {
         $business = isset( $settings['business'] ) ? $settings['business'] : array();
         $local    = isset( $settings['local_business'] ) ? $settings['local_business'] : array();
+        $profile  = Site_Profile::get();
+        if ( ! empty( $profile['identity']['business_name'] ) ) {
+            $business['name'] = $profile['identity']['business_name'];
+        }
 
         if ( empty( $business['name'] ) ) {
             return null;
