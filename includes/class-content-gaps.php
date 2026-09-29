@@ -328,8 +328,11 @@ class ContentGaps {
      */
     public function analyze_post( $post, $rendered_content = null ) {
         $issues   = array();
-        $content  = $post->post_content;
+        $content  = self::page_html( $post );
         $wc       = str_word_count( wp_strip_all_tags( $content ) );
+        // Stored for the schema wordCount and the Citation Tracker, which
+        // cannot afford to render a builder page on every request.
+        update_post_meta( $post->ID, '_asgm_word_count', $wc );
         $settings = get_option( 'asgm_settings', array() );
 
         // 1. Word count check (skip for template-driven pages).
@@ -922,6 +925,35 @@ class ContentGaps {
         }
 
         return '';
+    }
+
+    /**
+     * The page body as readers see it. Builder pages keep their content
+     * outside post_content, so post_content alone reads as an empty page;
+     * use the builder's rendered output when there is one. Cached per request
+     * because builders are expensive to render.
+     *
+     * @param \WP_Post $post_obj Post.
+     * @return string HTML.
+     */
+    public static function page_html( $post_obj ) {
+        static $cache = array();
+        $id = (int) $post_obj->ID;
+        if ( ! isset( $cache[ $id ] ) ) {
+            $html = self::builder_rendered_content( $post_obj );
+            $cache[ $id ] = '' !== $html ? $html : (string) $post_obj->post_content;
+        }
+        return $cache[ $id ];
+    }
+
+    /**
+     * Word count of the page as readers see it (builder aware).
+     *
+     * @param \WP_Post $post_obj Post.
+     * @return int
+     */
+    public static function page_word_count( $post_obj ) {
+        return str_word_count( wp_strip_all_tags( self::page_html( $post_obj ) ) );
     }
 
     public static function render_post_snapshot( $post_obj ) {

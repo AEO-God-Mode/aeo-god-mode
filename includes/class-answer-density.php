@@ -1126,7 +1126,7 @@ class Answer_Density {
 				'post_id'              => (int) $post_id,
 				'score_version'         => self::SCORE_VERSION,
 				'scanned_at'           => gmdate( 'c' ),
-				'word_count'           => str_word_count( wp_strip_all_tags( (string) $post->post_content ) ),
+				'word_count'           => method_exists( __NAMESPACE__ . '\\ContentGaps', 'page_word_count' ) ? ContentGaps::page_word_count( $post ) : str_word_count( wp_strip_all_tags( (string) $post->post_content ) ),
 				'question_headings'    => 0,
 				'direct_answers'       => 0,
 				'buried_answers'       => 0,
