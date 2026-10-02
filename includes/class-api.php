@@ -83,6 +83,15 @@ class API {
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
 
+        register_rest_route(self::NAMESPACE, '/editor/humanize', array(
+            'methods'=>'POST',
+            'permission_callback'=>array($this,'edit_post_permission'),
+            'callback'=>function($request){
+                if(!class_exists('\\AISEOGodMode\\Humanize'))return new \WP_Error('humanize_unavailable','Humanize requires the active Pro add-on.',array('status'=>403));
+                return \AISEOGodMode\Humanize::generate($request);
+            },
+        ));
+
         // ---- Direct Answer Engine (Answer Density) ----
         register_rest_route( self::NAMESPACE, '/answer-density', array(
             'methods'             => 'GET',

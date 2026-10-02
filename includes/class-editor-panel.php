@@ -283,7 +283,7 @@ class EditorPanel {
         wp_enqueue_script(
             'asgm-editor-panel',
             $base_url . $entry['file'],
-            array( 'wp-plugins', 'wp-edit-post', 'wp-element', 'wp-components', 'wp-data', 'wp-blocks', 'wp-block-editor', 'wp-rich-text', 'wp-i18n', 'wp-api-fetch' ),
+            array( 'wp-hooks', 'wp-plugins', 'wp-edit-post', 'wp-element', 'wp-components', 'wp-data', 'wp-blocks', 'wp-block-editor', 'wp-rich-text', 'wp-i18n', 'wp-api-fetch' ),
             $asset_ver( $entry['file'] ),
             true
         );

@@ -5,6 +5,11 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.87
+
+- Humanize selected text with a change preview and undo
+- Preview Humanize examples in the Free editor
+
 ## 1.6.86
 
 - Elementor pages and other page builder pages now show their real word count and are scored on their actual content
