@@ -924,7 +924,55 @@ class ContentGaps {
             return '';
         }
 
-        return '';
+        return self::theme_template_content( $post_obj );
+    }
+
+    /**
+     * Pages shown through a theme template (Elementor Pro Theme Builder,
+     * Divi Theme Builder, block theme templates) have nothing in
+     * post_content or in their own builder data: the words live in the
+     * template. Read the published page itself and keep its main content.
+     * Only used when post_content is close to empty. Cached until the post
+     * changes.
+     *
+     * @param \WP_Post $post_obj Post.
+     * @return string HTML, or '' when it cannot be read.
+     */
+    private static function theme_template_content( $post_obj ) {
+        if ( 'publish' !== $post_obj->post_status || post_password_required( $post_obj )
+            || str_word_count( wp_strip_all_tags( (string) $post_obj->post_content ) ) >= 20
+            || ! class_exists( __NAMESPACE__ . '\\RenderedPageEvaluator' ) ) {
+            return '';
+        }
+
+        $key    = 'asgm_tpl_' . (int) $post_obj->ID;
+        $cached = get_transient( $key );
+        if ( is_array( $cached ) && ( $cached['modified'] ?? '' ) === $post_obj->post_modified_gmt ) {
+            return (string) $cached['html'];
+        }
+
+        $url = get_permalink( $post_obj );
+        if ( ! $url ) {
+            return '';
+        }
+
+        $html     = '';
+        $response = wp_remote_get( $url, array(
+            'timeout'   => 10,
+            // Same loopback rule WordPress core uses for its own requests.
+            'sslverify' => apply_filters( 'https_local_ssl_verify', false ), // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+        ) );
+        if ( ! is_wp_error( $response ) && 200 === (int) wp_remote_retrieve_response_code( $response ) ) {
+            $doc  = RenderedPageEvaluator::extract_document( (string) wp_remote_retrieve_body( $response ) );
+            $html = (string) ( $doc['content_html'] ?? '' );
+            if ( '' === trim( wp_strip_all_tags( $html ) ) ) {
+                $html = '';
+            }
+        }
+
+        // Cache failures briefly so a slow site is not fetched on every page of a scan.
+        set_transient( $key, array( 'modified' => $post_obj->post_modified_gmt, 'html' => $html ), '' === $html ? HOUR_IN_SECONDS : DAY_IN_SECONDS );
+        return $html;
     }
 
     /**

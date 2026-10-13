@@ -5,6 +5,10 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.88
+
+- Word counts now work on pages shown through Elementor Pro Theme Builder and other theme templates
+
 ## 1.6.87
 
 - Humanize selected text with a change preview and undo
