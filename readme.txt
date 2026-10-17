@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.88
+Stable tag: 1.6.89
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,14 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.89 =
+* Topical Map: a new "Do this next" list ranks the changes most likely to bring more visits, with an estimate and a one-click action for each
+* Topical Map: spots pages that compete for the same searches and shows how to merge them
+* Topical Map: a getting started guide, progress while the map builds, and clearer wording
+* Word counts now work on more Elementor pages in the Content Gaps scan
+* Fixed a conflict that stopped W3 Total Cache from caching pages
+* Fixed an error on the Citability screens when only the free plugin is active
 
 = 1.6.88 =
 * Word counts now work on pages shown through Elementor Pro Theme Builder and other theme templates

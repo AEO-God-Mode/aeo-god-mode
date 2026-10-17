@@ -5,6 +5,15 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.89
+
+- Topical Map: a new "Do this next" list ranks the changes most likely to bring more visits, with an estimate and a one-click action for each
+- Topical Map: spots pages that compete for the same searches and shows how to merge them
+- Topical Map: a getting started guide, progress while the map builds, and clearer wording
+- Word counts now work on more Elementor pages in the Content Gaps scan
+- Fixed a conflict that stopped W3 Total Cache from caching pages
+- Fixed an error on the Citability screens when only the free plugin is active
+
 ## 1.6.88
 
 - Word counts now work on pages shown through Elementor Pro Theme Builder and other theme templates

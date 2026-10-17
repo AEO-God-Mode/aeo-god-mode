@@ -931,7 +931,7 @@ class Schema {
         if ( ! empty( $excerpt ) ) {
             $schema['description'] = wp_strip_all_tags( $excerpt );
         } else {
-            $plain = wp_strip_all_tags( $post->post_content );
+            $plain = wp_strip_all_tags( strip_shortcodes( $post->post_content ) );
             if ( strlen( $plain ) > 20 ) {
                 $schema['description'] = wp_trim_words( $plain, 30, '...' );
             }
@@ -941,7 +941,7 @@ class Schema {
         // outside post_content; use the count the last scan stored rather
         // than render the builder again on every page view, and leave the
         // field out instead of publishing a false 0.
-        $words = str_word_count( wp_strip_all_tags( $post->post_content ) );
+        $words = str_word_count( wp_strip_all_tags( strip_shortcodes( $post->post_content ) ) );
         if ( 0 === $words ) {
             $words = (int) get_post_meta( $post->ID, '_asgm_word_count', true );
         }

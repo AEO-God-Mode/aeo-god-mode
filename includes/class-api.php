@@ -4655,6 +4655,9 @@ HARD RULES
      */
     public function get_citability_score( $request ) {
         $post_id   = absint( $request->get_param( 'post_id' ) );
+        if ( ! class_exists( __NAMESPACE__ . '\\CitabilityScore' ) ) {
+            return new \WP_Error( 'asgm_pro_required', 'Citability scoring is a Pro feature.', array( 'status' => 403 ) );
+        }
         $citability = new CitabilityScore();
         if ( 'publish' !== get_post_status( $post_id ) ) {
             return new \WP_Error( 'asgm_missing_page', 'Published page not found.', array( 'status' => 404 ) );
@@ -4678,6 +4681,9 @@ HARD RULES
      * @return \WP_REST_Response
      */
     public function get_citability_all( $request = null ) {
+        if ( ! class_exists( __NAMESPACE__ . '\\CitabilityScore' ) ) {
+            return new \WP_Error( 'asgm_pro_required', 'Citability scoring is a Pro feature.', array( 'status' => 403 ) );
+        }
         $citability = new CitabilityScore();
         if ( $request instanceof \WP_REST_Request && $request->get_param( 'batch' ) && method_exists( $citability, 'score_batch' ) ) {
             $limit = absint( $request->get_param( 'limit' ) );
@@ -4692,6 +4698,9 @@ HARD RULES
      * @return \WP_REST_Response
      */
     public function get_citability_cached() {
+        if ( ! class_exists( __NAMESPACE__ . '\\CitabilityScore' ) ) {
+            return rest_ensure_response( array( 'results' => null ) );
+        }
         $citability = new CitabilityScore();
         $cached     = $citability->get_cached();
         return rest_ensure_response( $cached ?: array( 'results' => null ) );

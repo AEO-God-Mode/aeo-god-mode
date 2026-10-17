@@ -43,7 +43,7 @@ class AIHeaders {
             'default' => 'on',
         ),
         'x_ai_content_type' => array(
-            'header'  => 'X-AI-Content-Type',
+            'header'  => 'X-AI-Authorship',
             'value'   => 'human-authored',
             'default' => 'on',
         ),

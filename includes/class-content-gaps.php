@@ -891,7 +891,15 @@ class ContentGaps {
                 && 'builder' === get_post_meta( $post_id, '_elementor_edit_mode', true ) ) {
                 $elementor = \Elementor\Plugin::$instance;
                 if ( isset( $elementor->frontend ) && method_exists( $elementor->frontend, 'get_builder_content_for_display' ) ) {
-                    $html = (string) $elementor->frontend->get_builder_content_for_display( $post_id, false );
+                    // Elementor returns '' when the page is the current global post (its recursion
+                    // guard), and the scan loop makes every page current. Step out while rendering.
+                    $saved_post = isset( $GLOBALS['post'] ) ? $GLOBALS['post'] : null;
+                    $GLOBALS['post'] = null; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+                    try {
+                        $html = (string) $elementor->frontend->get_builder_content_for_display( $post_id, false );
+                    } finally {
+                        $GLOBALS['post'] = $saved_post; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+                    }
                     if ( '' !== trim( wp_strip_all_tags( $html ) ) ) {
                         return $html;
                     }
@@ -989,7 +997,8 @@ class ContentGaps {
         $id = (int) $post_obj->ID;
         if ( ! isset( $cache[ $id ] ) ) {
             $html = self::builder_rendered_content( $post_obj );
-            $cache[ $id ] = '' !== $html ? $html : (string) $post_obj->post_content;
+            // Unrendered shortcodes ([vc_row css=...], [gravityform id=1]) are markup, not words.
+            $cache[ $id ] = '' !== $html ? $html : strip_shortcodes( (string) $post_obj->post_content );
         }
         return $cache[ $id ];
     }
