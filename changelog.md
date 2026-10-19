@@ -5,6 +5,12 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.90
+
+- Setup wizard: prefilled answers now count, so Continue is no longer blocked
+- Topical Map: suggestions no longer propose a second page for a search you already cover
+- AI-written articles now match what the searcher wants and mention your own products and prices accurately
+
 ## 1.6.89
 
 - Topical Map: a new "Do this next" list ranks the changes most likely to bring more visits, with an estimate and a one-click action for each

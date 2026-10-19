@@ -83,6 +83,7 @@ class Site_Profile {
 		$profile = self::get();
 		$homepage = self::homepage_suggestions();
 		$names   = array();
+		$offer_suggestions = array();
 		foreach ( array( 'product', 'download' ) as $post_type ) {
 			if ( ! post_type_exists( $post_type ) ) {
 				continue;
@@ -102,6 +103,15 @@ class Site_Profile {
 				$title = sanitize_text_field( get_the_title( $post_id ) );
 				if ( '' !== $title ) {
 					$names[] = $title;
+					$price   = self::catalog_price( $post_type, $post_id );
+					if ( '' !== $price ) {
+						$offer_suggestions[] = array(
+							'name'    => $title,
+							'price'   => $price,
+							'summary' => '',
+							'url'     => (string) get_permalink( $post_id ),
+						);
+					}
 				}
 			}
 		}
@@ -119,9 +129,25 @@ class Site_Profile {
 		return array(
 			'aliases'          => self::text_list( $aliases, 20, 120 ),
 			'products_services'=> self::text_list( array_merge( $names, (array) ( $homepage['products_services'] ?? array() ) ), 30, 160 ),
+			'offers'           => self::offers( $offer_suggestions ),
 			'detected_locale'  => sanitize_text_field( (string) get_locale() ),
 			'detected_domain'  => self::domain( home_url() ),
 		);
+	}
+
+	/** A displayable price from WooCommerce or Easy Digital Downloads, or ''. */
+	private static function catalog_price( $post_type, $post_id ) {
+		if ( 'product' === $post_type ) {
+			$amount = get_post_meta( $post_id, '_price', true );
+			$symbol = function_exists( 'get_woocommerce_currency_symbol' ) ? html_entity_decode( (string) get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' ) : '';
+		} else {
+			$amount = get_post_meta( $post_id, 'edd_price', true );
+			$symbol = function_exists( 'edd_currency_symbol' ) ? html_entity_decode( (string) edd_currency_symbol(), ENT_QUOTES, 'UTF-8' ) : '';
+		}
+		if ( ! is_numeric( $amount ) || (float) $amount <= 0 ) {
+			return '';
+		}
+		return self::text( $symbol . rtrim( rtrim( number_format( (float) $amount, 2, '.', '' ), '0' ), '.' ), 40 );
 	}
 
 	/** Detect Organization/Product/Service names already emitted on the homepage. */
@@ -274,6 +300,8 @@ class Site_Profile {
 			$scope = 'global';
 		}
 
+		$offers = self::offers( $raw['offers'] ?? array() );
+
 		$competitors = array();
 		foreach ( array_slice( (array) ( $raw['competitors'] ?? array() ), 0, 20 ) as $candidate ) {
 			if ( is_scalar( $candidate ) ) {
@@ -295,8 +323,13 @@ class Site_Profile {
 			);
 		}
 
-		$country = self::country_code( $market['primary_country'] ?? $locale['country'] );
+		// Legacy migration passes an explicit empty country, so fall back on empty
+		// as well as missing: first target country, then the WordPress locale.
 		$targets = self::country_list( $market['target_countries'] ?? array() );
+		$country = self::country_code( $market['primary_country'] ?? '' );
+		if ( '' === $country ) {
+			$country = $targets[0] ?? $locale['country'];
+		}
 		if ( empty( $targets ) && '' !== $country ) {
 			$targets[] = $country;
 		}
@@ -323,11 +356,12 @@ class Site_Profile {
 				'language'           => self::text( $market['language'] ?? $locale['language_name'], 80 ),
 				'language_code'      => $locale['language'],
 				'service_scope'      => $scope,
-				'business_type'      => self::text( $market['business_type'] ?? 'Blog', 100 ),
+				'business_type'      => self::text( $market['business_type'] ?? '', 100 ) ?: 'Blog',
 				'registered_location'=> self::text( $market['registered_location'] ?? '', 180 ),
 				'search_location_code'=> $location_code,
 			),
 			'competitors' => array_values( $competitors ),
+			'offers'      => $offers,
 			'context'     => array(
 				'description'      => self::textarea( $context['description'] ?? get_bloginfo( 'description' ), 500 ),
 				'primary_audience' => self::textarea( $context['primary_audience'] ?? '', 300 ),
@@ -424,6 +458,31 @@ class Site_Profile {
 
 	private static function textarea( $value, $limit ) {
 		return mb_substr( sanitize_textarea_field( is_scalar( $value ) ? (string) $value : '' ), 0, $limit );
+	}
+
+	/**
+	 * What the business sells and what it costs, in the owner's own words.
+	 * Price is free text on purpose: "$19/month", "from 80 GBP per visit" and
+	 * "$150 per hour" are all real prices, and the writer quotes it as given.
+	 */
+	public static function offers( $values ) {
+		$out = array();
+		foreach ( array_slice( is_array( $values ) ? $values : array(), 0, 20 ) as $offer ) {
+			if ( ! is_array( $offer ) ) {
+				continue;
+			}
+			$name = self::text( $offer['name'] ?? '', 120 );
+			if ( '' === $name ) {
+				continue;
+			}
+			$out[] = array(
+				'name'    => $name,
+				'price'   => self::text( $offer['price'] ?? '', 80 ),
+				'summary' => self::text( $offer['summary'] ?? '', 240 ),
+				'url'     => esc_url_raw( is_scalar( $offer['url'] ?? '' ) ? (string) $offer['url'] : '' ),
+			);
+		}
+		return $out;
 	}
 
 	private static function text_list( $values, $limit, $length ) {

@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.89
+Stable tag: 1.6.90
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,11 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.90 =
+* Setup wizard: prefilled answers now count, so Continue is no longer blocked
+* Topical Map: suggestions no longer propose a second page for a search you already cover
+* AI-written articles now match what the searcher wants and mention your own products and prices accurately
 
 = 1.6.89 =
 * Topical Map: a new "Do this next" list ranks the changes most likely to bring more visits, with an estimate and a one-click action for each
