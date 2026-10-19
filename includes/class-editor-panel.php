@@ -82,7 +82,9 @@ class EditorPanel {
             'methods'             => 'POST',
             'callback'            => array( $this, 'apply_fix' ),
             'permission_callback' => function ( $request ) {
-                return current_user_can( 'edit_post', absint( $request['post_id'] ) );
+                // Fix actions can spend AI credits, so contributors are kept out by default.
+                return current_user_can( 'edit_post', absint( $request['post_id'] ) )
+                    && current_user_can( apply_filters( 'asgm_ai_spend_capability', 'publish_posts' ) );
             },
             'args'                => array(
                 'post_id'        => array( 'required' => true ),

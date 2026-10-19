@@ -322,11 +322,16 @@ class Link_Health {
         $current         = $url;
         // Follow up to 5 redirects by hand so the FIRST hop's target is known.
         for ( $hop = 0; $hop <= 5; $hop++ ) {
-            $resp = wp_remote_head( $current, $args );
+            // Every hop must be a public http(s) URL, never a private/internal host.
+            if ( ! wp_http_validate_url( $current ) ) {
+                $code = 0;
+                break;
+            }
+            $resp = wp_safe_remote_head( $current, $args );
             $code = is_wp_error( $resp ) ? 0 : (int) wp_remote_retrieve_response_code( $resp );
             if ( in_array( $code, array( 403, 405, 0 ), true ) ) {
                 // Host dislikes HEAD (or errored): one GET attempt.
-                $resp = wp_remote_get( $current, $args );
+                $resp = wp_safe_remote_get( $current, $args );
                 $code = is_wp_error( $resp ) ? 0 : (int) wp_remote_retrieve_response_code( $resp );
             }
             if ( $code >= 300 && $code < 400 ) {

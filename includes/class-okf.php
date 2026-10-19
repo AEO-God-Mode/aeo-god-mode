@@ -236,13 +236,18 @@ class OKF {
         $query = new \WP_Query( array(
             'post_type'      => $types,
             'post_status'    => 'publish',
+            'has_password'   => false,
             'posts_per_page' => 5000,
             'orderby'        => 'modified',
             'order'          => 'DESC',
             'no_found_rows'  => true,
         ) );
 
-        $posts = $query->posts;
+        // Password-protected posts never enter the bundle (or the zip built
+        // from it), even if a filter re-adds them to the query.
+        $posts = array_values( array_filter( $query->posts, function ( $p ) {
+            return '' === (string) $p->post_password;
+        } ) );
 
         // Map permalink -> bundle path so we can rewrite internal links into
         // bundle-relative markdown links (this is what builds the graph).

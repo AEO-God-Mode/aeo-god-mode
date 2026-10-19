@@ -39,8 +39,10 @@ class VisualAI {
      * Register generation routes.
      */
     public function register_routes() {
+        // Both routes spend AI credits, so contributors are kept out by default.
         $can_edit = function () {
-            return current_user_can( 'edit_posts' );
+            return current_user_can( 'edit_posts' )
+                && current_user_can( apply_filters( 'asgm_ai_spend_capability', 'publish_posts' ) );
         };
 
         register_rest_route( API::NAMESPACE, '/visuals/generate', array(

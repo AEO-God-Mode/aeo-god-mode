@@ -5,6 +5,10 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.91
+
+- Security hardening.
+
 ## 1.6.90
 
 - Setup wizard: prefilled answers now count, so Continue is no longer blocked
