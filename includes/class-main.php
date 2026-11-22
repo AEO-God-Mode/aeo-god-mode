@@ -93,6 +93,7 @@ class Main {
         require_once $includes . 'class-bulk-meta.php';
         require_once $includes . 'class-okf.php';
         require_once $includes . 'class-affiliate-badge.php';
+        require_once $includes . 'class-bfcm-notice.php';
         require_once $includes . 'class-faq-blocks.php';
         require_once $includes . 'class-brand-kit.php';
         require_once $includes . 'class-visual-icons.php';
@@ -132,6 +133,7 @@ class Main {
         add_action( 'admin_init', array( $this, 'maybe_redirect_to_wizard' ) );
         add_action( 'admin_notices', array( $this, 'maybe_show_setup_notice' ) );
         add_action( 'admin_notices', array( $this, 'maybe_show_pro_migration_notice' ) );
+        BFCM_Notice::init();
 
         // Front-end hooks — schema, meta, crawler logging.
         //

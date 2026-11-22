@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.91
+Stable tag: 1.6.94
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,15 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.94 =
+* AEO God Mode Black Friday 2026
+
+= 1.6.93 =
+* AEO God Mode Black Friday 2026
+
+= 1.6.92 =
+* AEO God Mode Black Friday 2026
 
 = 1.6.91 =
 * Security hardening.

@@ -5,6 +5,18 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.94
+
+- AEO God Mode Black Friday 2026
+
+## 1.6.93
+
+- AEO God Mode Black Friday 2026
+
+## 1.6.92
+
+- AEO God Mode Black Friday 2026
+
 ## 1.6.91
 
 - Security hardening.
