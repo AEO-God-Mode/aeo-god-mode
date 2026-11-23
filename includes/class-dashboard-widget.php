@@ -230,12 +230,13 @@ class Dashboard_Widget {
         if ( 'none' === $cached ) {
             return null;
         }
-        $found = $this->compute_priority_page();
+        $found = self::compute_priority_page();
         set_transient( 'asgm_dw_priority', null === $found ? 'none' : $found, HOUR_IN_SECONDS );
         return $found;
     }
 
-    private function compute_priority_page() {
+    /** Also used by the weekly email, so it needs no instance. */
+    public static function compute_priority_page() {
         global $wpdb;
         $table = $wpdb->prefix . 'asgm_crawler_log';
         if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {

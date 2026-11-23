@@ -315,6 +315,26 @@ class API {
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
 
+        // ---- Lead-ready AI landing pages ----
+        register_rest_route( self::NAMESPACE, '/lead-ready', array(
+            'methods'             => 'GET',
+            'callback'            => array( $this, 'get_lead_ready' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
+        register_rest_route( self::NAMESPACE, '/lead-ready/preset', array(
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_lead_ready_preset' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'save_lead_ready_preset' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+            ),
+        ) );
+
         // ---- Setup checklist (Dashboard activation card) ----
         register_rest_route( self::NAMESPACE, '/setup-checklist', array(
             array(
@@ -614,6 +634,25 @@ class API {
                 'permission_callback' => array( $this, 'pro_admin_permission' ),
             ) );
 
+            // ---- Lead-ready one-click fix (implementation in Pro) ----
+            register_rest_route( self::NAMESPACE, '/lead-ready/fix', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'lead_ready_fix' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
+                'args'                => array(
+                    'post_id' => array( 'required' => true, 'type' => 'integer' ),
+                ),
+            ) );
+
+            register_rest_route( self::NAMESPACE, '/lead-ready/revert', array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'lead_ready_revert' ),
+                'permission_callback' => array( $this, 'pro_admin_permission' ),
+                'args'                => array(
+                    'post_id' => array( 'required' => true, 'type' => 'integer' ),
+                ),
+            ) );
+
             // ---- Query Gap Detector ----
             register_rest_route( self::NAMESPACE, '/query-gap/scan', array(
                 'methods'             => 'GET',
@@ -841,6 +880,20 @@ class API {
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_ai_referral_entries' ),
                 'permission_callback' => array( $this, 'admin_permission' ),
+            ) );
+
+            // Leads and sales that followed an AI search visit.
+            register_rest_route( self::NAMESPACE, '/referrals/conversions', array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'get_ai_conversions' ),
+                'permission_callback' => array( $this, 'admin_permission' ),
+                'args'                => array(
+                    'days' => array(
+                        'type'              => 'integer',
+                        'default'           => 30,
+                        'sanitize_callback' => 'absint',
+                    ),
+                ),
             ) );
 
             // Public on purpose: anonymous visitors fire this from the
@@ -3160,6 +3213,68 @@ class API {
     }
 
     /**
+     * Lead-ready results for AI-visited pages.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function get_lead_ready( $request ) {
+        $refresh = rest_sanitize_boolean( $request->get_param( 'refresh' ) );
+        return rest_ensure_response( LeadReady::get_results( (bool) $refresh ) );
+    }
+
+    /**
+     * The saved lead block preset.
+     *
+     * @return \WP_REST_Response
+     */
+    public function get_lead_ready_preset() {
+        return rest_ensure_response( array( 'preset' => LeadReady::get_preset() ) );
+    }
+
+    /**
+     * Save the lead block preset.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response|\WP_Error
+     */
+    public function save_lead_ready_preset( $request ) {
+        $body  = $request->get_json_params();
+        $saved = LeadReady::save_preset( isset( $body['preset'] ) && is_array( $body['preset'] ) ? $body['preset'] : array() );
+        if ( is_wp_error( $saved ) ) {
+            return $saved;
+        }
+        return rest_ensure_response( array( 'success' => true, 'preset' => $saved ) );
+    }
+
+    /**
+     * Add the lead block to one page. Thin delegate; the implementation
+     * lives in the Pro plugin.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function lead_ready_fix( $request ) {
+        if ( ! class_exists( '\AISEOGodMode\LeadReadyFix' ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => __( 'AEO God Mode Pro is required to add the lead block.', 'aeo-god-mode' ) ), 403 );
+        }
+        return LeadReadyFix::apply( (int) $request->get_param( 'post_id' ) );
+    }
+
+    /**
+     * Remove the lead block from one page. Thin delegate to Pro.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response
+     */
+    public function lead_ready_revert( $request ) {
+        if ( ! class_exists( '\AISEOGodMode\LeadReadyFix' ) ) {
+            return new \WP_REST_Response( array( 'success' => false, 'error' => __( 'AEO God Mode Pro is required to remove the lead block.', 'aeo-god-mode' ) ), 403 );
+        }
+        return LeadReadyFix::revert( (int) $request->get_param( 'post_id' ) );
+    }
+
+    /**
      * Get computed dashboard recommendations.
      *
      * @return \WP_REST_Response
@@ -3213,6 +3328,172 @@ class API {
         ) );
     }
 
+    /** Replace em and en dashes the way the house rules ask: ranges read "10 to 20". */
+    private static function query_gap_strip_dashes( $text ) {
+        $text = preg_replace( '/(\d)\s*[\x{2013}\x{2014}]\s*(\d)/u', '$1 to $2', (string) $text );
+        return preg_replace( '/\s*[\x{2013}\x{2014}]\s*/u', ', ', $text );
+    }
+
+    /**
+     * The page an AI engine cited instead of this one, if it is a public
+     * http(s) URL on another site. Anything else is dropped.
+     */
+    private function query_gap_clean_competitor_url( $url ) {
+        $url = esc_url_raw( trim( (string) $url ), array( 'http', 'https' ) );
+        if ( '' === $url || ! wp_http_validate_url( $url ) ) {
+            return '';
+        }
+        $host = strtolower( preg_replace( '/^www\./i', '', (string) wp_parse_url( $url, PHP_URL_HOST ) ) );
+        $own  = strtolower( preg_replace( '/^www\./i', '', (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) );
+        if ( '' === $host || $host === $own ) {
+            return '';
+        }
+        return mb_substr( $url, 0, 500 );
+    }
+
+    /**
+     * Read the winning page once so the writer knows what it has to beat:
+     * title, description, headings and its opening text. Uses the safe HTTP
+     * API (no private or local addresses, redirects re-validated), a short
+     * timeout and a size cap, and caches the summary for a day. The result is
+     * untrusted text; the proxy labels it as data, never instructions.
+     */
+    private function query_gap_competitor_summary( $url, $engine ) {
+        if ( '' === $url ) {
+            return null;
+        }
+        $engine  = sanitize_key( (string) $engine );
+        $engines = '' !== $engine ? array( $engine ) : array();
+        $key     = 'asgm_qg_comp_' . md5( $url );
+        $cached  = get_transient( $key );
+        if ( is_array( $cached ) ) {
+            $cached['engines'] = $engines;
+            return $cached;
+        }
+
+        $out      = array( 'url' => $url, 'title' => '', 'summary' => '' );
+        $response = wp_safe_remote_get( $url, array(
+            'timeout'             => 6,
+            'redirection'         => 3,
+            'limit_response_size' => 300 * KB_IN_BYTES,
+            // Generic agent: the default one carries this site's URL.
+            'user-agent'          => 'Mozilla/5.0 (compatible; AEOGodModeReader/1.0)',
+            'headers'             => array( 'Accept' => 'text/html' ),
+        ) );
+        $type = is_wp_error( $response ) ? '' : (string) wp_remote_retrieve_header( $response, 'content-type' );
+        if ( ! is_wp_error( $response ) && 200 === (int) wp_remote_retrieve_response_code( $response ) && false !== stripos( $type, 'html' ) ) {
+            $html  = (string) wp_remote_retrieve_body( $response );
+            $clean = static function ( $text, $max ) {
+                $text = html_entity_decode( wp_strip_all_tags( (string) $text ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+                return mb_substr( trim( preg_replace( '/\s+/u', ' ', $text ) ), 0, $max );
+            };
+            if ( preg_match( '#<title[^>]*>(.*?)</title>#is', $html, $m ) ) {
+                $out['title'] = $clean( $m[1], 160 );
+            }
+            $description = '';
+            if ( preg_match( '#<meta[^>]+name=["\']description["\'][^>]*content=["\']([^"\']*)["\']#i', $html, $m )
+                || preg_match( '#<meta[^>]+content=["\']([^"\']*)["\'][^>]*name=["\']description["\']#i', $html, $m ) ) {
+                $description = $clean( $m[1], 250 );
+            }
+            $html = preg_replace( '#<(script|style|noscript|svg|nav|header|footer|form|aside)\b[^>]*>.*?</\1>#is', ' ', $html );
+            if ( preg_match( '#<(main|article)\b[^>]*>(.*)</\1>#is', $html, $m ) ) {
+                $html = $m[2];
+            }
+            $headings = array();
+            if ( preg_match_all( '#<h[1-3][^>]*>(.*?)</h[1-3]>#is', $html, $hm ) ) {
+                foreach ( $hm[1] as $h ) {
+                    $h = $clean( $h, 90 );
+                    if ( '' !== $h && ! in_array( $h, $headings, true ) ) {
+                        $headings[] = $h;
+                    }
+                    if ( count( $headings ) >= 10 ) {
+                        break;
+                    }
+                }
+            }
+            $opening = $clean( $html, 400 );
+            $summary = array();
+            if ( '' !== $description ) {
+                $summary[] = $description;
+            }
+            if ( $headings ) {
+                $summary[] = 'Sections: ' . implode( '; ', $headings ) . '.';
+            }
+            if ( '' !== $opening ) {
+                $summary[] = 'Opens with: ' . $opening;
+            }
+            $out['summary'] = mb_substr( implode( ' ', $summary ), 0, 800 );
+        }
+        // A page that would not load is remembered briefly so a retry does
+        // not wait on it again.
+        set_transient( $key, $out, '' !== $out['summary'] ? DAY_IN_SECONDS : HOUR_IN_SECONDS );
+        $out['engines'] = $engines;
+        return $out;
+    }
+
+    /**
+     * Real figures from this site that answer the question: sentences on the
+     * page with a price, percentage, count or duration. Pro adds figures from
+     * the site's knowledge base through the filter.
+     */
+    private function query_gap_site_figures( $query, $plain_content, $post_id ) {
+        $figures   = array();
+        $sentences = preg_split( '/(?<=[.!?])\s+/u', (string) $plain_content );
+        $pattern   = '/([$\x{00A3}\x{20AC}]\s?\d|\d[\d,.]*\s?(%|percent|per\b|\/\s?(mo|month|year|yr)|credits?|days?|weeks?|months?|years?|hours?|minutes?|sites?|pages?|users?|seats?))/iu';
+        foreach ( (array) $sentences as $sentence ) {
+            $sentence = trim( $sentence );
+            if ( mb_strlen( $sentence ) < 12 || mb_strlen( $sentence ) > 240 || ! preg_match( $pattern, $sentence ) ) {
+                continue;
+            }
+            if ( ! in_array( $sentence, $figures, true ) ) {
+                $figures[] = $sentence;
+            }
+            if ( count( $figures ) >= 8 ) {
+                break;
+            }
+        }
+        /**
+         * Filter the site's own figures sent to the lost-question writer.
+         *
+         * @param array  $figures Strings, or arrays with label and value.
+         * @param string $query   The buyer question.
+         * @param int    $post_id The page the answer is added to.
+         */
+        $figures = apply_filters( 'asgm_query_gap_site_figures', $figures, $query, $post_id );
+        return array_slice( array_values( (array) $figures ), 0, 12 );
+    }
+
+    /**
+     * Structured data for the proxy's server-owned lost-question prompt: the
+     * buyer question, its shape, the page it lands on, what is already there,
+     * the page that won it in AI answers and the site's own figures.
+     */
+    private function query_gap_payload( $query, $post, $shape, $existing, $competitor_url, $engine ) {
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- "the_content" is a WordPress core filter.
+        $plain = wp_strip_all_tags( apply_filters( 'the_content', $post->post_content ) );
+        $plain = trim( preg_replace( '/\s+/u', ' ', html_entity_decode( $plain, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
+        $clean_existing = array();
+        foreach ( (array) $existing as $item ) {
+            $item = sanitize_text_field( wp_strip_all_tags( (string) $item ) );
+            if ( '' !== $item && ! in_array( $item, $clean_existing, true ) ) {
+                $clean_existing[] = mb_substr( $item, 0, 200 );
+            }
+        }
+        $payload = array(
+            'query'        => $query,
+            'shape'        => (string) $shape,
+            'page_title'   => get_the_title( $post ),
+            'page_context' => mb_substr( $plain, 0, 1500 ),
+            'existing'     => array_slice( $clean_existing, 0, 8 ),
+            'site_figures' => $this->query_gap_site_figures( $query, $plain, (int) $post->ID ),
+        );
+        $competitor = $this->query_gap_competitor_summary( $competitor_url, $engine );
+        if ( $competitor ) {
+            $payload['competitor'] = $competitor;
+        }
+        return $payload;
+    }
+
     /**
      * Draft an AI-written answer for a question (the GSC query) targeted at
      * a specific page. Uses the same AI proxy as the Internal Link Builder
@@ -3236,8 +3517,11 @@ class API {
             return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
         }
 
-        // ── Draft cache (in-option, not transient — survives sync, cheap reads) ──
-        $cache_key = md5( strtolower( trim( $query ) ) . '|' . $post_id );
+        // Draft cache (in-option, not transient: survives sync, cheap reads).
+        // v2 drafts are written against the page that won the question, so
+        // the competitor is part of the key and v1 drafts are not reused.
+        $competitor_url = $this->query_gap_clean_competitor_url( (string) $request->get_param( 'competitor_url' ) );
+        $cache_key = md5( 'v2|' . strtolower( trim( $query ) ) . '|' . $post_id . '|' . $competitor_url );
         $cache     = (array) get_option( 'asgm_query_gap_draft_cache', array() );
         if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['answer'] ) ) {
             $cached_q = ! empty( $cache[ $cache_key ]['question'] ) ? (string) $cache[ $cache_key ]['question'] : '';
@@ -3282,6 +3566,7 @@ class API {
         $plain_content   = wp_strip_all_tags( apply_filters( 'the_content', $post->post_content ) );
         $context_sample  = mb_substr( $plain_content, 0, 1200 );
         $existing_faqs   = array();
+        $existing_qs     = array();
         $meta_faqs_json  = get_post_meta( $post_id, 'feature_faqs', true );
         if ( ! empty( $meta_faqs_json ) ) {
             $parsed = json_decode( $meta_faqs_json, true );
@@ -3291,7 +3576,15 @@ class API {
                         $existing_faqs[] = "Q: {$f['q']}\nA: {$f['a']}";
                     }
                 }
+                foreach ( $parsed as $f ) {
+                    if ( ! empty( $f['q'] ) ) {
+                        $existing_qs[] = (string) $f['q'];
+                    }
+                }
             }
+        }
+        if ( preg_match_all( '/\[aeogm_faq\s+q="([^"]+)"/i', $post->post_content, $faq_matches ) ) {
+            $existing_qs = array_merge( $existing_qs, $faq_matches[1] );
         }
         $existing_block = empty( $existing_faqs ) ? '' : "\n\nEXISTING FAQ PAIRS ON THIS PAGE (match this tone exactly):\n" . implode( "\n\n", $existing_faqs );
 
@@ -3303,7 +3596,7 @@ class API {
 
         $shape_guidance = ( 'question' === $shape )
             ? "The query is already a well-formed question. Use it as the question (sentence-cased, ending with ?), with very light cleanup only."
-            : "The query is a noun phrase, not a question. Reformulate it into the most natural question a real user would ask about that phrase on this page. Examples: 'schema checker' → 'What is a schema checker?'; 'gpt citation tracker' → 'How does a GPT citation tracker work?'; 'aeo wordpress plugin' → 'What is the best AEO plugin for WordPress?'. The reformulated question must still feature the original phrase words verbatim where natural.";
+            : "The query is a noun phrase, not a question. Reformulate it into the most natural question a real user would ask about that phrase on this page. Examples: 'schema checker' becomes 'What is a schema checker?'; 'gpt citation tracker' becomes 'How does a GPT citation tracker work?'; 'aeo wordpress plugin' becomes 'What is the best AEO plugin for WordPress?'. The reformulated question must still feature the original phrase words verbatim where natural.";
 
         $prompt = "You write ONE short FAQ Q&A pair for a query someone is already searching on Google. The output must match the tone of the page exactly.
 
@@ -3324,14 +3617,14 @@ Return ONE JSON object only, no markdown fences:
 
 {
   \"question\": \"<the final question, sentence-cased, ending with a question mark>\",
-  \"answer\":   \"<a single answer of 1-3 sentences. Direct first sentence. No marketing fluff. Match the existing FAQ tone if present. Use plain text, no HTML except an inline <strong> for the product name if useful. Never start with 'Yes' alone — explain. Never start with 'Well' or 'So' or 'Basically'.>\"
+  \"answer\":   \"<a single answer of 1-3 sentences. Direct first sentence. No marketing fluff. Match the existing FAQ tone if present. Use plain text, no HTML except an inline <strong> for the product name if useful. Never start with 'Yes' alone, explain. Never start with 'Well' or 'So' or 'Basically'.>\"
 }
 
 HARD RULES
 - The question MUST end with a question mark.
 - The question MUST contain the meaningful words from the original query (so it still answers the searcher's actual intent).
 - The answer is 1 to 3 sentences total. Anything longer is wrong.
-- Plain English. No em dashes anywhere — use commas, periods, or parens.
+- Plain English. No em dashes anywhere. Use commas, periods, or parens.
 - Never claim a feature exists if the PAGE CONTEXT does not support it.
 - Output ONLY the JSON object.";
 
@@ -3341,7 +3634,10 @@ HARD RULES
             'task'        => 'query_gap_faq',
             'content'     => '',
             'title'       => '',
+            // The legacy prompt stays for an older proxy. A current proxy
+            // writes its own prompt from gap_payload.
             'prompt'      => base64_encode( $prompt ),
+            'gap_payload' => $this->query_gap_payload( $query, $post, $shape, $existing_qs, $competitor_url, (string) $request->get_param( 'engine' ) ),
             'site_url'    => home_url(),
             'request_id'  => wp_generate_uuid4(),
         ) );
@@ -3383,9 +3679,9 @@ HARD RULES
             ) );
         }
 
-        // Strip em dashes defensively (matches site copy rules).
-        $answer   = strtr( $answer,   array( '—' => ',', '–' => ',' ) );
-        $question = strtr( $question, array( '—' => ',', '–' => ',' ) );
+        // Strip dashes defensively (matches site copy rules).
+        $answer   = self::query_gap_strip_dashes( $answer );
+        $question = self::query_gap_strip_dashes( $question );
 
         // Cache the draft.
         $cache[ $cache_key ] = array(
@@ -3578,7 +3874,8 @@ HARD RULES
             return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
         }
 
-        $cache_key = md5( strtolower( trim( $query ) ) . '|' . $post_id );
+        $competitor_url = $this->query_gap_clean_competitor_url( (string) $request->get_param( 'competitor_url' ) );
+        $cache_key = md5( 'v2|' . strtolower( trim( $query ) ) . '|' . $post_id . '|' . $competitor_url );
         $cache     = (array) get_option( 'asgm_query_gap_draft_heading_cache', array() );
         if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['heading'] ) ) {
             return rest_ensure_response( array(
@@ -3642,7 +3939,7 @@ HARD RULES
 - The heading is a HEADLINE, not a question. Never end it with ?.
 - The heading MUST contain the meaningful words from the original query (so the section actually targets the search intent).
 - The intro is 2 to 3 sentences. Anything longer is wrong.
-- Plain English. No em dashes anywhere — use commas, periods, or parens.
+- Plain English. No em dashes anywhere. Use commas, periods, or parens.
 - Never claim a feature exists if the PAGE CONTEXT does not support it.
 - Do not reuse an existing heading on this page.
 - Output ONLY the JSON object.";
@@ -3653,6 +3950,14 @@ HARD RULES
             'content'     => '',
             'title'       => '',
             'prompt'      => base64_encode( $prompt ),
+            'gap_payload' => $this->query_gap_payload(
+                $query,
+                $post,
+                class_exists( '\AISEOGodMode\Query_Gap' ) ? \AISEOGodMode\Query_Gap::query_shape( $query ) : 'phrase',
+                $existing_h2s,
+                $competitor_url,
+                (string) $request->get_param( 'engine' )
+            ),
             'site_url'    => home_url(),
             'request_id'  => wp_generate_uuid4(),
         ) );
@@ -3686,9 +3991,9 @@ HARD RULES
             ) );
         }
 
-        // Strip em dashes defensively.
-        $heading = strtr( $heading, array( '—' => ',', '–' => ',' ) );
-        $intro   = strtr( $intro,   array( '—' => ',', '–' => ',' ) );
+        // Strip dashes defensively.
+        $heading = self::query_gap_strip_dashes( $heading );
+        $intro   = self::query_gap_strip_dashes( $intro );
 
         // Trim a trailing question mark if the AI ignored "do not end with ?".
         $heading = rtrim( $heading, "?.;:!" );
@@ -3769,8 +4074,18 @@ HARD RULES
             }
         }
 
-        // Build the section HTML. Two clean elements only — wpautop handles the rest.
-        $section = "\n\n<{$level}>" . esc_html( $heading ) . "</{$level}>\n<p>" . wp_kses_post( $intro ) . "</p>";
+        // Build the section HTML. Two clean elements only: wpautop handles the
+        // rest on classic content. Block content gets real heading and
+        // paragraph blocks, so the editor does not show a "Classic" island or
+        // an invalid-block warning on the new section.
+        $uses_blocks = function_exists( 'has_blocks' ) && has_blocks( $post->post_content );
+        if ( $uses_blocks ) {
+            $block_attrs = 'h3' === $level ? ' {"level":3}' : '';
+            $section = "\n\n<!-- wp:heading{$block_attrs} -->\n<{$level} class=\"wp-block-heading\">" . esc_html( $heading ) . "</{$level}>\n<!-- /wp:heading -->\n\n"
+                . "<!-- wp:paragraph -->\n<p>" . wp_kses_post( $intro ) . "</p>\n<!-- /wp:paragraph -->";
+        } else {
+            $section = "\n\n<{$level}>" . esc_html( $heading ) . "</{$level}>\n<p>" . wp_kses_post( $intro ) . "</p>";
+        }
 
         // An H2 is a new top-level section, so it belongs at the end. An H3 is a
         // sub-point of an existing section, and appending it to the end of the
@@ -3779,6 +4094,15 @@ HARD RULES
         $new_content = $post->post_content . $section;
         if ( 'h3' === $level ) {
             $anchor = self::find_parent_section_end( $post->post_content, $heading );
+            if ( null !== $anchor && $uses_blocks ) {
+                // The anchor is the next heading tag, which in block content
+                // sits inside that heading's block comment. Step back to the
+                // comment so the new blocks land between blocks, not inside one.
+                $comment = strrpos( substr( $post->post_content, 0, $anchor ), '<!-- wp:' );
+                // If that is not clean, the section is appended at the end.
+                $between = false === $comment ? 'x' : substr( $post->post_content, $comment, $anchor - $comment );
+                $anchor  = '' === trim( preg_replace( '/^<!-- wp:[^>]*-->/', '', $between ) ) ? $comment : null;
+            }
             if ( null !== $anchor ) {
                 $new_content = substr( $post->post_content, 0, $anchor )
                     . $section . "\n\n"
@@ -4623,7 +4947,40 @@ HARD RULES
         }
         $referrals = new AIReferrals();
         $recorded  = $referrals->log_from_beacon( $referrer, $url );
-        return rest_ensure_response( array( 'recorded' => (bool) $recorded ) );
+        $response  = array( 'recorded' => (bool) $recorded );
+
+        // Signed visit reference so a later form or order in this tab can be
+        // credited to the engine. Only AI visits ever get one.
+        if ( method_exists( $referrals, 'get_last_referral_id' ) && class_exists( __NAMESPACE__ . '\\AIConversions' ) ) {
+            $referral_id = (int) $referrals->get_last_referral_id();
+            if ( $referral_id > 0 ) {
+                $response['ref'] = AIConversions::issue_token( $referral_id );
+            }
+        }
+        return rest_ensure_response( $response );
+    }
+
+    /**
+     * Leads and sales that followed an AI search visit.
+     *
+     * @param \WP_REST_Request $request Request.
+     * @return \WP_REST_Response|\WP_Error
+     */
+    public function get_ai_conversions( $request ) {
+        $unavailable = $this->ai_referrals_unavailable();
+        if ( $unavailable ) {
+            return $unavailable;
+        }
+        if ( ! class_exists( __NAMESPACE__ . '\\AIConversions' ) ) {
+            return new \WP_Error(
+                'asgm_pro_outdated',
+                __( 'Update AEO God Mode Pro to see AI search leads and sales.', 'aeo-god-mode' ),
+                array( 'status' => 403 )
+            );
+        }
+        $days        = absint( $request->get_param( 'days' ) ) ?: 30;
+        $conversions = new AIConversions( false );
+        return rest_ensure_response( $conversions->get_stats( $days ) );
     }
 
     /**

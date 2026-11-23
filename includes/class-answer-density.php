@@ -22,8 +22,14 @@ class Answer_Density {
 	/** Which rule passed the last sentence_is_direct_answer() call. */
 	private static $last_reason = '';
 
-	/** Version of the detector contract persisted with each scan. */
-	const SCORE_VERSION   = 7;
+	/**
+	 * Version of the detector contract persisted with each scan.
+	 *
+	 * 8: "X depends on Y" and "Not all X" openers are hedges, a leading
+	 *    "Let's be clear:" is read past, and text in separate blocks is no
+	 *    longer joined into one sentence.
+	 */
+	const SCORE_VERSION   = 8;
 
 	const POSTMETA_KEY    = '_asgm_answer_density';
 	const SCAN_TS_KEY     = '_asgm_ad_scanned'; // numeric post meta: unix time of last scan. Drives rotation ordering.
@@ -585,6 +591,8 @@ class Answer_Density {
 
 		foreach ( $sentences as $i => $sentence ) {
 			$s = trim( $sentence );
+			// "Let's be clear: X is Y" answers with X is Y.
+			$s = ucfirst( (string) preg_replace( '/^(?:Let.?s\s+be|To\s+be)\s+(?:perfectly\s+|very\s+|absolutely\s+|crystal\s+)?clear\s*[:,]\s*/i', '', $s ) );
 			if ( $s === '' ) { continue; }
 
 			self::$last_reason = '';
@@ -631,7 +639,7 @@ class Answer_Density {
 		if ( $is_answer && in_array( $why, array( 'copula', 'action_verb', 'fact_first' ), true ) && '' !== $heading && ! self::shares_heading_word( $heading, $s ) ) {
 			$is_answer = false;
 		}
-		if ( preg_match( '/^(The\s+)?(\w+\s+){0,2}(answer|match|choice|option|right\s+\w+)\s+(depends|varies)\b|^(That|This|It)\s+depends\b|^Here\s+(is|are|.s)\b|^Use\s+this\b|^(The\s+)?(useful|important|interesting|key)\s+(part|thing|bit)\s+is\s+what\b|^(Understanding|Knowing)\b/i', $s ) ) {
+		if ( preg_match( '/^(The\s+)?(\w+\s+){0,2}(answer|match|choice|option|right\s+\w+)\s+(depends|varies)\b|^(That|This|It)\s+depends\b|^Not\s+all\b|^Here\s+(is|are|.s)\b|^Use\s+this\b|^(The\s+)?(useful|important|interesting|key)\s+(part|thing|bit)\s+is\s+what\b|^(Understanding|Knowing)\b/i', $s ) ) {
 			$is_answer = false;
 			$is_filler = true;
 		}
@@ -771,7 +779,7 @@ class Answer_Density {
 			'displays','shows','renders','outputs','exports','reports','presents','surfaces','suggests',
 			'recommends','highlights','flags',
 			// Schema / linking / referencing
-			'links','cites','mentions','references','points\s+to','maps\s+to','relies\s+on','depends\s+on',
+			'links','cites','mentions','references','points\s+to','maps\s+to','relies\s+on',
 			'connects','integrates','communicates',
 			// State changes
 			'updates','replaces','removes','adds','inserts','injects','prepends','appends','rewrites','edits',
@@ -874,6 +882,7 @@ class Answer_Density {
 			'/^(It\s+depends|It\s+varies|There\s+(is|are)\s+(no|several|a\s+few|many))/i',
 			'/^(This\s+depends|This\s+varies)/i',
 			'/^(The\s+answer\s+(is|depends))/i',
+			'/^Not\s+all\b/i',
 		);
 		foreach ( $hedge as $rx ) { if ( preg_match( $rx, $s ) ) { return 'hedge'; } }
 
@@ -911,6 +920,8 @@ class Answer_Density {
 	 * Strip HTML, normalize entities, collapse whitespace.
 	 */
 	private static function body_to_plain( $html ) {
+		// Keep a gap between blocks so "end.</p><p>Next" stays two sentences.
+		$html = preg_replace( '#<\s*br\b[^>]*>|</\s*(?:p|div|li|h[1-6]|td|th|blockquote|dd|dt|figcaption)\s*>#i', '$0 ', (string) $html );
 		$t = wp_strip_all_tags( $html, true );
 		$t = html_entity_decode( $t, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 		$t = preg_replace( '/\s+/u', ' ', $t );

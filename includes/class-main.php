@@ -99,10 +99,12 @@ class Main {
         require_once $includes . 'class-visual-icons.php';
         require_once $includes . 'class-visual-templates.php';
         require_once $includes . 'class-cta-renderer.php';
+        require_once $includes . 'class-lead-ready.php';
         require_once $includes . 'class-visual-blocks.php';
         require_once $includes . 'class-visual-ai.php';
         require_once $includes . 'class-draft-quality.php';
         require_once $includes . 'class-earned-source-api.php';
+        require_once $includes . 'class-weekly-digest.php';
 
         // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
         // themselves on plugins_loaded priority 5/10. Free does not require any
@@ -117,6 +119,8 @@ class Main {
     private function init_hooks() {
         add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
         Account_Connection::init();
+        // Runs in safe mode too, so an unsubscribe link always works.
+        Weekly_Digest::init();
         // Reassert the public product identity after third-party/older add-ons
         // have registered their menu filters. This protects mixed-version
         // updates without knowing anything about a paid tier.
@@ -561,6 +565,7 @@ class Main {
         // Free modules — always boot.
         DraftQuality::init();
         Answer_Density::init();
+        LeadReady::init();
         $this->modules['detector']     = new Detector();
         $this->modules['schema']       = new Schema();
         $this->modules['robots']       = new Robots();
@@ -594,6 +599,9 @@ class Main {
             }
             if ( class_exists( __NAMESPACE__ . '\\AIReferrals' ) ) {
                 $this->modules['ai_referrals'] = new AIReferrals();
+            }
+            if ( class_exists( __NAMESPACE__ . '\\AIConversions' ) ) {
+                $this->modules['ai_conversions'] = new AIConversions();
             }
             if ( class_exists( __NAMESPACE__ . '\\CitabilityScore' ) ) {
                 $this->modules['citability'] = new CitabilityScore();
@@ -701,6 +709,9 @@ class Main {
         // Pro tables — only if Pro classes are loaded.
         if ( class_exists( 'AISEOGodMode\\AIReferrals' ) ) {
             AIReferrals::create_table();
+        }
+        if ( class_exists( 'AISEOGodMode\\AIConversions' ) ) {
+            AIConversions::create_table();
         }
         if ( class_exists( 'AISEOGodMode\\Section_Index' ) ) {
             Section_Index::create_table();
@@ -826,6 +837,9 @@ class Main {
      */
     public static function deactivate() {
         flush_rewrite_rules();
+        if ( class_exists( __NAMESPACE__ . '\\Weekly_Digest' ) ) {
+            Weekly_Digest::unschedule();
+        }
     }
 
     /**

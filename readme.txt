@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.94
+Stable tag: 1.6.95
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,14 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.95 =
+* New: see the leads and sales that came from AI search
+* New: Lead-ready pages check shows which pages can turn an AI visitor into a lead
+* New: an opt-in weekly email that shows whether AI search is sending you customers and the one thing to fix next
+* Improved: Citation readiness scores are fairer and more accurate
+* Improved: the article writer keeps the buyer's question in view
+* Improved: a cleaner and roomier admin design
 
 = 1.6.94 =
 * AEO God Mode Black Friday 2026

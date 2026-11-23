@@ -5,6 +5,15 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.95
+
+- New: see the leads and sales that came from AI search
+- New: Lead-ready pages check shows which pages can turn an AI visitor into a lead
+- New: an opt-in weekly email that shows whether AI search is sending you customers and the one thing to fix next
+- Improved: Citation readiness scores are fairer and more accurate
+- Improved: the article writer keeps the buyer's question in view
+- Improved: a cleaner and roomier admin design
+
 ## 1.6.94
 
 - AEO God Mode Black Friday 2026
