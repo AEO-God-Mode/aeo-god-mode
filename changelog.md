@@ -5,6 +5,14 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.96
+
+- New: your dashboard now shows the top 3 fixes most likely to bring you leads from AI search
+- Improved: AI can now do a fix for you in one click with Fix all and Undo
+- Improved: Lead-ready pages now has AI write the lead block for you
+- Improved: pricing and checkout pages count as lead-ready
+- Improved: sections that AI adds now sit in the body of the page before your FAQ and sources
+
 ## 1.6.95
 
 - New: see the leads and sales that came from AI search

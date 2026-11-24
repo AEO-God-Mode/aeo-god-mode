@@ -322,6 +322,14 @@ class API {
             'permission_callback' => array( $this, 'admin_permission' ),
         ) );
 
+        register_rest_route( self::NAMESPACE, '/lead-ready/destinations', array(
+            'methods'             => 'GET',
+            'callback'            => function () {
+                return rest_ensure_response( LeadReady::destinations() );
+            },
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
         register_rest_route( self::NAMESPACE, '/lead-ready/preset', array(
             array(
                 'methods'             => 'GET',
@@ -4087,27 +4095,30 @@ HARD RULES
             $section = "\n\n<{$level}>" . esc_html( $heading ) . "</{$level}>\n<p>" . wp_kses_post( $intro ) . "</p>";
         }
 
-        // An H2 is a new top-level section, so it belongs at the end. An H3 is a
+        // An H2 is a new top-level section. It goes before the page's closing
+        // sections (FAQ, methodology, sources, conclusion) so the answer sits in
+        // the body where readers and AI engines look, not after the reference
+        // list. With no closing section it goes at the end. An H3 is a
         // sub-point of an existing section, and appending it to the end of the
         // post would file it under whichever H2 happens to be last. Place it at
         // the end of the section it actually belongs to instead.
         $new_content = $post->post_content . $section;
-        if ( 'h3' === $level ) {
-            $anchor = self::find_parent_section_end( $post->post_content, $heading );
-            if ( null !== $anchor && $uses_blocks ) {
-                // The anchor is the next heading tag, which in block content
-                // sits inside that heading's block comment. Step back to the
-                // comment so the new blocks land between blocks, not inside one.
-                $comment = strrpos( substr( $post->post_content, 0, $anchor ), '<!-- wp:' );
-                // If that is not clean, the section is appended at the end.
-                $between = false === $comment ? 'x' : substr( $post->post_content, $comment, $anchor - $comment );
-                $anchor  = '' === trim( preg_replace( '/^<!-- wp:[^>]*-->/', '', $between ) ) ? $comment : null;
-            }
-            if ( null !== $anchor ) {
-                $new_content = substr( $post->post_content, 0, $anchor )
-                    . $section . "\n\n"
-                    . substr( $post->post_content, $anchor );
-            }
+        $anchor      = 'h3' === $level
+            ? self::find_parent_section_end( $post->post_content, $heading )
+            : self::find_closing_section_start( $post->post_content );
+        if ( null !== $anchor && $uses_blocks ) {
+            // The anchor is the next heading tag, which in block content
+            // sits inside that heading's block comment. Step back to the
+            // comment so the new blocks land between blocks, not inside one.
+            $comment = strrpos( substr( $post->post_content, 0, $anchor ), '<!-- wp:' );
+            // If that is not clean, the section is appended at the end.
+            $between = false === $comment ? 'x' : substr( $post->post_content, $comment, $anchor - $comment );
+            $anchor  = '' === trim( preg_replace( '/^<!-- wp:[^>]*-->/', '', $between ) ) ? $comment : null;
+        }
+        if ( null !== $anchor ) {
+            $new_content = substr( $post->post_content, 0, $anchor )
+                . $section . "\n\n"
+                . substr( $post->post_content, $anchor );
         }
         $upd = wp_update_post( array(
             'ID'           => $post_id,
@@ -4135,6 +4146,36 @@ HARD RULES
             'level'    => $level,
             'edit_url' => get_edit_post_link( $post_id, 'raw' ),
         ) );
+    }
+
+    /**
+     * Where a new H2 should go: just before the page's closing sections.
+     *
+     * Looks for the first H2 in the second half of the page that reads like a
+     * closing section (FAQ, methodology, sources, references, conclusion,
+     * final thoughts, further reading, about the author, disclosure) and
+     * returns the offset of that heading tag. Only the second half counts, so
+     * an FAQ or sources block that opens the page never pulls the new section
+     * above the body. Returns null when there is no closing section, in which
+     * case the caller appends at the end as before.
+     *
+     * @param string $content Post content.
+     * @return int|null Byte offset of the closing heading, or null.
+     */
+    private static function find_closing_section_start( $content ) {
+        if ( ! preg_match_all( '#<h2[^>]*>(.*?)</h2>#is', $content, $m, PREG_OFFSET_CAPTURE ) ) {
+            return null;
+        }
+        $closing = '/\b(faqs?|frequently asked|common questions|methodology|how we (tested|researched|chose)|sources|references|citations|conclusion|final (thoughts|word|verdict)|bottom line|wrapping up|further reading|related (articles|posts|reading)|about the author|disclosure)\b/i';
+        $count   = count( $m[0] );
+        $from    = (int) floor( $count / 2 );
+        for ( $i = $from; $i < $count; $i++ ) {
+            $text = trim( html_entity_decode( wp_strip_all_tags( $m[1][ $i ][0] ), ENT_QUOTES, 'UTF-8' ) );
+            if ( preg_match( $closing, $text ) ) {
+                return (int) $m[0][ $i ][1];
+            }
+        }
+        return null;
     }
 
     /**

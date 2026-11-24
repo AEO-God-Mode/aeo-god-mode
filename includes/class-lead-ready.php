@@ -9,6 +9,11 @@
  *
  * Every check reads the page content (or the page builder's output), never
  * the theme's header, footer or sidebar, so it behaves the same on any theme.
+ * When a theme template renders the whole page and the post body is empty,
+ * the rendered page is read with its header, footer, nav and sidebars removed.
+ *
+ * A page that is itself the next step (pricing, checkout, contact, booking,
+ * a product) is lead-ready by nature and never asked for another button.
  *
  * @package AISEOGodMode
  */
@@ -38,6 +43,51 @@ class LeadReady {
 
     /** Pages checked per run. */
     const MAX_PAGES = 25;
+
+    /** Below this many words the post body is treated as empty (template-rendered page). */
+    const THIN_BODY_WORDS = 40;
+
+    /** Rendered-page cache, per post and modified time. */
+    const RENDER_TRANSIENT = 'aeogm_lr_render_';
+
+    /** Slug words that mark a page as the next step itself, mapped to its kind. */
+    const CONVERSION_WORDS = array(
+        'pricing'       => 'pricing',
+        'prices'        => 'pricing',
+        'price'         => 'pricing',
+        'plans'         => 'pricing',
+        'rates'         => 'pricing',
+        'tariffs'       => 'pricing',
+        'packages'      => 'pricing',
+        'checkout'      => 'checkout',
+        'cart'          => 'checkout',
+        'basket'        => 'checkout',
+        'contact'       => 'contact',
+        'enquiry'       => 'contact',
+        'enquiries'     => 'contact',
+        'inquiry'       => 'contact',
+        'quote'         => 'contact',
+        'estimate'      => 'contact',
+        'book'          => 'booking',
+        'booking'       => 'booking',
+        'bookings'      => 'booking',
+        'appointment'   => 'booking',
+        'appointments'  => 'booking',
+        'reservations'  => 'booking',
+        'reserve'       => 'booking',
+        'schedule'      => 'booking',
+        'demo'          => 'booking',
+        'consultation'  => 'booking',
+        'order'         => 'checkout',
+        'buy'           => 'checkout',
+        'purchase'      => 'checkout',
+        'shop'          => 'shop',
+        'store'         => 'shop',
+        'signup'        => 'signup',
+        'register'      => 'signup',
+        'subscribe'     => 'signup',
+        'donate'        => 'checkout',
+    );
 
     /** Words that count as "the first screen" of content. */
     const FIRST_SCREEN_WORDS = 150;
@@ -355,10 +405,27 @@ class LeadReady {
         }
         $html = str_replace( $sc, $marker, $html );
 
-        $checks = self::run_checks( $html, $raw );
+        // A template-rendered page (empty body, the theme draws everything)
+        // would fail every check for content it does not hold. Read what a
+        // visitor actually sees instead.
+        if ( '' === $builder && str_word_count( wp_strip_all_tags( $html ) ) < self::THIN_BODY_WORDS ) {
+            $rendered = self::rendered_main( $post );
+            if ( '' !== $rendered ) {
+                $html = $rendered;
+                $raw .= $rendered;
+            }
+        }
+
+        $checks     = self::run_checks( $html, $raw );
+        $conversion = self::conversion_kind( $post );
 
         $passed = (int) $checks['cta_top'] + (int) $checks['contact'] + (int) $checks['next_step'];
         $status = 3 === $passed ? 'ready' : ( 0 === $passed ? 'none' : 'partial' );
+        if ( '' !== $conversion ) {
+            // Pricing, checkout, contact and booking pages are the next step.
+            // Asking them for a button to somewhere else gets it backwards.
+            $status = 'ready';
+        }
 
         $meta  = get_post_meta( $post->ID, self::META_KEY, true );
         $added = is_array( $meta ) && ! empty( $meta['inserted'] ) && false !== strpos( $raw, trim( (string) $meta['inserted'] ) );
@@ -374,9 +441,148 @@ class LeadReady {
             'checks'    => $checks,
             'status'    => $status,
             'builder'   => $builder,
+            'conversion' => $conversion,
             'added'     => $added,
             'added_at'  => $added && ! empty( $meta['at'] ) ? (string) $meta['at'] : '',
         );
+    }
+
+    /**
+     * Is this page itself the next step a visitor takes?
+     *
+     * Returns the kind (pricing, checkout, contact, booking, shop, signup,
+     * product) or '' for an ordinary content page. Shop pages, products and
+     * store pages from WooCommerce and Easy Digital Downloads are recognised
+     * from their own settings first; ordinary pages by their slug or template.
+     * Only pages are matched by slug, so a blog post called "how to book a
+     * plumber" is still checked like any article.
+     *
+     * @param \WP_Post $post Post.
+     * @return string
+     */
+    public static function conversion_kind( $post ) {
+        $kind = '';
+        $id   = (int) $post->ID;
+
+        if ( in_array( $post->post_type, array( 'product', 'download' ), true ) ) {
+            $kind = 'product';
+        }
+
+        if ( '' === $kind ) {
+            $store_pages = array(
+                'checkout' => array( (int) get_option( 'woocommerce_checkout_page_id' ), (int) get_option( 'woocommerce_cart_page_id' ) ),
+                'shop'     => array( (int) get_option( 'woocommerce_shop_page_id' ) ),
+            );
+            $edd = get_option( 'edd_settings' );
+            if ( is_array( $edd ) && ! empty( $edd['purchase_page'] ) ) {
+                $store_pages['checkout'][] = (int) $edd['purchase_page'];
+            }
+            foreach ( $store_pages as $k => $ids ) {
+                if ( in_array( $id, array_filter( $ids ), true ) ) {
+                    $kind = $k;
+                    break;
+                }
+            }
+        }
+
+        if ( '' === $kind && 'page' === $post->post_type ) {
+            $template = (string) get_page_template_slug( $post );
+            $sources  = array( (string) $post->post_name, $template ? basename( $template, '.php' ) : '' );
+            foreach ( $sources as $src ) {
+                $words = array_values( array_filter( preg_split( '~[^a-z]+~', strtolower( $src ) ) ) );
+                $words = array_diff( $words, array( 'page', 'template', 'tpl', 'us', 'our', 'now', 'a', 'get', 'in', 'touch', 'online', 'and', 'the' ) );
+                // Short slugs only: "pricing", "contact-us", "book-now". A long
+                // slug that happens to contain "plans" is an article, not a page
+                // whose whole job is the sale.
+                if ( empty( $words ) || count( $words ) > 3 ) {
+                    continue;
+                }
+                foreach ( $words as $w ) {
+                    if ( isset( self::CONVERSION_WORDS[ $w ] ) ) {
+                        $kind = self::CONVERSION_WORDS[ $w ];
+                        break 2;
+                    }
+                }
+            }
+            if ( '' === $kind && in_array( strtolower( (string) $post->post_name ), array( 'get-in-touch', 'hire-us', 'work-with-us' ), true ) ) {
+                $kind = 'contact';
+            }
+        }
+
+        /**
+         * Filter whether a page is itself a conversion step.
+         *
+         * @param string   $kind '' for an ordinary page, or pricing, checkout, contact, booking, shop, signup, product.
+         * @param \WP_Post $post The page.
+         */
+        return (string) apply_filters( 'aeogm_lead_ready_conversion_kind', $kind, $post );
+    }
+
+    /**
+     * The main content of the page as a visitor sees it.
+     *
+     * Used only when the post body is empty because a theme template draws
+     * the page. Fetches the public permalink, keeps <main> (or <article>),
+     * and strips header, footer, nav, aside, scripts and styles so a menu
+     * "Contact" link never passes a check on its own. Cached per post and
+     * modified time; a failed fetch is cached too so a slow host is asked once.
+     *
+     * @param \WP_Post $post Post.
+     * @return string HTML, or '' when the page cannot be read.
+     */
+    private static function rendered_main( $post ) {
+        if ( 'publish' !== $post->post_status || ! empty( $post->post_password ) ) {
+            return '';
+        }
+        $key    = self::RENDER_TRANSIENT . $post->ID;
+        $cached = get_transient( $key );
+        $stamp  = (string) $post->post_modified_gmt;
+        if ( is_array( $cached ) && isset( $cached['m'], $cached['h'] ) && $cached['m'] === $stamp ) {
+            return (string) $cached['h'];
+        }
+
+        $html = '';
+        $url  = get_permalink( $post );
+        if ( $url ) {
+            $res = wp_remote_get(
+                $url,
+                array(
+                    'timeout'     => 6,
+                    'redirection' => 2,
+                    'user-agent'  => 'AEO God Mode lead check; ' . home_url( '/' ),
+                    'headers'     => array( 'Accept' => 'text/html' ),
+                )
+            );
+            if ( ! is_wp_error( $res ) && 200 === (int) wp_remote_retrieve_response_code( $res ) ) {
+                $html = self::main_region( (string) wp_remote_retrieve_body( $res ) );
+            }
+        }
+
+        set_transient( $key, array( 'm' => $stamp, 'h' => $html ), '' === $html ? HOUR_IN_SECONDS : DAY_IN_SECONDS );
+        return $html;
+    }
+
+    /**
+     * Keep the page's main region and drop site chrome.
+     *
+     * @param string $doc Full HTML document.
+     * @return string
+     */
+    private static function main_region( $doc ) {
+        if ( '' === $doc ) {
+            return '';
+        }
+        $doc = preg_replace( '~<(script|style|noscript|template|svg)\b[^>]*>.*?</\1>~is', '', $doc );
+        if ( preg_match( '~<main\b[^>]*>(.*)</main>~is', $doc, $m ) ) {
+            $doc = $m[1];
+        } elseif ( preg_match( '~<body\b[^>]*>(.*)</body>~is', $doc, $m ) ) {
+            $doc = $m[1];
+        }
+        // Remove chrome even inside <main>; some themes put the nav there.
+        for ( $i = 0; $i < 3; $i++ ) {
+            $doc = preg_replace( '~<(header|footer|nav|aside)\b[^>]*>(?:(?!<\1\b).)*?</\1>~is', '', $doc );
+        }
+        return trim( (string) $doc );
     }
 
     /**
@@ -587,6 +793,88 @@ class LeadReady {
             return 'Oxygen';
         }
         return '';
+    }
+
+    /**
+     * Where a lead block could send people, found on the site itself.
+     *
+     * Free, no AI. The owner should not have to type a URL: their contact,
+     * booking and pricing pages are already published, and the phone and
+     * email are already in the business profile. Ordered by how directly
+     * each one turns a visitor into a lead, so the first is a sensible
+     * default.
+     *
+     * @return array{destinations: array, business: array}
+     */
+    public static function destinations() {
+        $priority = array( 'booking' => 0, 'contact' => 1, 'pricing' => 2, 'signup' => 3, 'shop' => 4 );
+        $found    = array();
+
+        $ids = get_posts( array(
+            'post_type'        => 'page',
+            'post_status'      => 'publish',
+            'posts_per_page'   => 300,
+            'fields'           => 'ids',
+            'orderby'          => 'menu_order',
+            'order'            => 'ASC',
+            'has_password'     => false,
+            'suppress_filters' => false,
+        ) );
+
+        foreach ( $ids as $id ) {
+            $post = get_post( $id );
+            if ( ! $post ) {
+                continue;
+            }
+            $kind = self::conversion_kind( $post );
+            if ( ! isset( $priority[ $kind ] ) ) {
+                continue;
+            }
+            // One page per kind is enough; the shortest slug is usually the
+            // main one ("contact" over "contact-thanks").
+            if ( isset( $found[ $kind ] ) && strlen( $found[ $kind ]['path'] ) <= strlen( (string) wp_parse_url( get_permalink( $post ), PHP_URL_PATH ) ) ) {
+                continue;
+            }
+            $url            = get_permalink( $post );
+            $found[ $kind ] = array(
+                'kind'    => $kind,
+                'post_id' => (int) $id,
+                'title'   => html_entity_decode( get_the_title( $post ), ENT_QUOTES, 'UTF-8' ),
+                'url'     => $url,
+                'path'    => (string) wp_parse_url( $url, PHP_URL_PATH ),
+            );
+        }
+
+        uksort( $found, function ( $a, $b ) use ( $priority ) {
+            return $priority[ $a ] - $priority[ $b ];
+        } );
+        $out = array_values( $found );
+
+        $settings = get_option( 'asgm_settings', array() );
+        $local    = isset( $settings['local_business'] ) && is_array( $settings['local_business'] ) ? $settings['local_business'] : array();
+        $phone    = trim( (string) ( $local['phone'] ?? '' ) );
+        $email    = sanitize_email( (string) ( $local['email'] ?? '' ) );
+
+        if ( '' !== $phone ) {
+            $digits = preg_replace( '~[^0-9+]~', '', $phone );
+            if ( strlen( $digits ) >= 6 ) {
+                $out[] = array( 'kind' => 'phone', 'post_id' => 0, 'title' => $phone, 'url' => 'tel:' . $digits, 'path' => $phone );
+            }
+        }
+        if ( '' !== $email && is_email( $email ) ) {
+            $out[] = array( 'kind' => 'email', 'post_id' => 0, 'title' => $email, 'url' => 'mailto:' . $email, 'path' => $email );
+        }
+
+        $profile = class_exists( __NAMESPACE__ . '\\Site_Profile' ) ? Site_Profile::get() : array();
+
+        return array(
+            'destinations' => $out,
+            'business'     => array(
+                'name'        => (string) ( $profile['identity']['business_name'] ?? get_bloginfo( 'name' ) ),
+                'description' => (string) ( $profile['context']['description'] ?? get_bloginfo( 'description' ) ),
+                'audience'    => (string) ( $profile['context']['primary_audience'] ?? '' ),
+            ),
+        );
     }
 
     /**

@@ -105,6 +105,7 @@ class Main {
         require_once $includes . 'class-draft-quality.php';
         require_once $includes . 'class-earned-source-api.php';
         require_once $includes . 'class-weekly-digest.php';
+        require_once $includes . 'class-top-fixes.php';
 
         // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
         // themselves on plugins_loaded priority 5/10. Free does not require any
@@ -121,6 +122,7 @@ class Main {
         Account_Connection::init();
         // Runs in safe mode too, so an unsubscribe link always works.
         Weekly_Digest::init();
+        Top_Fixes::init();
         // Reassert the public product identity after third-party/older add-ons
         // have registered their menu filters. This protects mixed-version
         // updates without knowing anything about a paid tier.
