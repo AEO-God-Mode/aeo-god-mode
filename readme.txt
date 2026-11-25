@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.96
+Stable tag: 1.6.97
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,11 @@ When a user runs a citation check, the plugin queries the selected Perplexity, O
 OAuth token exchanges and authorised Search Console requests are proxied through `https://aeogodmode.io/`. Site content is not sent through the Search Console proxy.
 
 == Changelog ==
+
+= 1.6.97 =
+* Improved: after AI does a fix you now see what it wrote and can jump straight to it on the page
+* Improved: AI no longer adds text to pages where your theme or page builder would hide it
+* and no credit is used
 
 = 1.6.96 =
 * New: your dashboard now shows the top 3 fixes most likely to bring you leads from AI search

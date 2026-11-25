@@ -3266,7 +3266,19 @@ class API {
         if ( ! class_exists( '\AISEOGodMode\LeadReadyFix' ) ) {
             return new \WP_REST_Response( array( 'success' => false, 'error' => __( 'AEO God Mode Pro is required to add the lead block.', 'aeo-god-mode' ) ), 403 );
         }
-        return LeadReadyFix::apply( (int) $request->get_param( 'post_id' ) );
+        $post_id = (int) $request->get_param( 'post_id' );
+        if ( $post_id && ! self::page_shows_editor_content( $post_id ) ) {
+            $msg = __( 'Your theme or page builder draws this page, so a lead block added in the editor would not show. No credit was used. Add it where you build the page.', 'aeo-god-mode' );
+            return new \WP_REST_Response( array(
+                'success' => false,
+                'unable'  => true,
+                'reason'  => 'content_not_shown',
+                'code'    => 'content_not_shown',
+                'message' => $msg,
+                'error'   => $msg,
+            ), 200 );
+        }
+        return LeadReadyFix::apply( $post_id );
     }
 
     /**
@@ -3476,6 +3488,214 @@ class API {
      * buyer question, its shape, the page it lands on, what is already there,
      * the page that won it in AI answers and the site's own figures.
      */
+    /**
+     * Whether visitors actually see what is in this page's editor content.
+     *
+     * AI fixes write into post_content. Some pages never print it: a page
+     * builder stores the layout elsewhere, or a custom page template draws
+     * the page in PHP and never calls the_content. Writing there spends a
+     * credit on text nobody sees, so every AI fix asks this first.
+     *
+     * When in doubt it answers true, so only clear cases are refused.
+     *
+     * @param int $post_id Post ID.
+     * @return bool
+     */
+    public static function page_shows_editor_content( $post_id ) {
+        static $memo = array();
+        $post_id = (int) $post_id;
+        if ( isset( $memo[ $post_id ] ) ) {
+            return $memo[ $post_id ];
+        }
+        $post  = get_post( $post_id );
+        $shown = $post ? self::detect_editor_content_shown( $post ) : false;
+        /**
+         * Filter whether a page shows its editor content to visitors.
+         *
+         * @param bool     $shown Our best guess.
+         * @param \WP_Post $post  The page.
+         */
+        $memo[ $post_id ] = (bool) apply_filters( 'aeogm_page_shows_editor_content', $shown, $post );
+        return $memo[ $post_id ];
+    }
+
+    /** Page-builder meta first, then the theme template that renders the page. */
+    private static function detect_editor_content_shown( $post ) {
+        $id = (int) $post->ID;
+
+        // Page builders that keep the layout outside post_content.
+        if ( did_action( 'elementor/loaded' ) && 'builder' === get_post_meta( $id, '_elementor_edit_mode', true ) ) {
+            return false;
+        }
+        if ( class_exists( 'FLBuilderModel' ) && get_post_meta( $id, '_fl_builder_enabled', true ) ) {
+            return false;
+        }
+        if ( defined( 'BRICKS_VERSION' ) && 'bricks' === get_post_meta( $id, '_bricks_editor_mode', true ) ) {
+            return false;
+        }
+        if ( defined( 'CT_VERSION' ) && ( get_post_meta( $id, 'ct_builder_shortcodes', true ) || get_post_meta( $id, '_ct_builder_json', true ) ) ) {
+            return false;
+        }
+        if ( defined( 'BRIZY_VERSION' ) && get_post_meta( $id, 'brizy_post_uid', true ) ) {
+            return false;
+        }
+        if ( defined( 'TVE_VERSION' ) && get_post_meta( $id, 'tcb_editor_enabled', true ) ) {
+            return false;
+        }
+
+        if ( function_exists( 'wp_is_block_theme' ) && wp_is_block_theme() ) {
+            return self::block_template_shows_content( $post );
+        }
+        return self::php_template_shows_content( $post );
+    }
+
+    /** Template slugs WordPress tries for this post, most specific first. */
+    private static function template_candidates( $post ) {
+        $out  = array();
+        $tpl  = get_page_template_slug( $post );
+        $type = $post->post_type;
+        if ( $tpl ) {
+            $out[] = $tpl;
+        }
+        if ( 'page' === $type ) {
+            $out[] = 'page-' . $post->post_name . '.php';
+            $out[] = 'page-' . $post->ID . '.php';
+            $out[] = 'page.php';
+        } else {
+            $out[] = 'single-' . $type . '-' . $post->post_name . '.php';
+            $out[] = 'single-' . $type . '.php';
+            $out[] = 'single.php';
+        }
+        $out[] = 'singular.php';
+        $out[] = 'index.php';
+        return $out;
+    }
+
+    /** Classic theme: does the PHP template (or a part it loads) print the content? */
+    private static function php_template_shows_content( $post ) {
+        $file = '';
+        foreach ( self::template_candidates( $post ) as $slug ) {
+            if ( '.php' !== substr( $slug, -4 ) ) {
+                continue;
+            }
+            $file = locate_template( $slug );
+            if ( $file ) {
+                break;
+            }
+        }
+        if ( ! $file ) {
+            return true; // A plugin renders it, or we cannot tell.
+        }
+        $seen = array();
+        return self::php_file_shows_content( $file, $seen, 0 );
+    }
+
+    private static function php_file_shows_content( $file, array &$seen, $depth ) {
+        if ( isset( $seen[ $file ] ) || $depth > 3 || ! is_readable( $file ) ) {
+            return false;
+        }
+        $seen[ $file ] = true;
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading a local theme file, not a URL.
+        $src = (string) file_get_contents( $file );
+        // the_content and friends, a builder's theme location, or a hook a
+        // plugin may use to print the post: any of these means it can show.
+        if ( preg_match( '/\b(the_content|get_the_content|the_post_content)\s*\(|[\'"]the_content[\'"]|do_location\s*\(|woocommerce_content\s*\(/', $src ) ) {
+            return true;
+        }
+        if ( preg_match_all( '/get_template_part\s*\(\s*[\'"]([^\'"]+)[\'"]\s*(?:,\s*[\'"]([^\'"]*)[\'"])?/', $src, $m, PREG_SET_ORDER ) ) {
+            foreach ( $m as $part ) {
+                $names = array();
+                if ( ! empty( $part[2] ) ) {
+                    $names[] = $part[1] . '-' . $part[2] . '.php';
+                }
+                $names[] = $part[1] . '.php';
+                $sub = locate_template( $names );
+                if ( $sub && self::php_file_shows_content( $sub, $seen, $depth + 1 ) ) {
+                    return true;
+                }
+            }
+        }
+        if ( preg_match( '/get_template_part\s*\(\s*\$/', $src ) ) {
+            return true; // Part name built at runtime, so we cannot rule it out.
+        }
+        return false;
+    }
+
+    /** Block theme: does the template (or a template part in it) hold a Post Content block? */
+    private static function block_template_shows_content( $post ) {
+        if ( ! function_exists( 'get_block_template' ) ) {
+            return true;
+        }
+        $theme = get_stylesheet();
+        foreach ( self::template_candidates( $post ) as $slug ) {
+            $slug     = preg_replace( '/\.(php|html)$/', '', $slug );
+            $template = get_block_template( $theme . '//' . $slug, 'wp_template' );
+            if ( ! $template || '' === (string) $template->content ) {
+                continue;
+            }
+            $content = (string) $template->content;
+            if ( false !== strpos( $content, 'wp:post-content' ) ) {
+                return true;
+            }
+            if ( preg_match_all( '/wp:template-part\s+\{[^}]*"slug"\s*:\s*"([^"]+)"/', $content, $m ) ) {
+                foreach ( $m[1] as $part_slug ) {
+                    $part = get_block_template( $theme . '//' . $part_slug, 'wp_template_part' );
+                    if ( $part && false !== strpos( (string) $part->content, 'wp:post-content' ) ) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /** Words in the page body as visitors see it. */
+    public static function page_body_words( $post ) {
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- "the_content" is a WordPress core filter.
+        $plain = wp_strip_all_tags( apply_filters( 'the_content', (string) $post->post_content ) );
+        $plain = trim( preg_replace( '/\s+/u', ' ', html_entity_decode( $plain, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
+        return '' === $plain ? 0 : count( explode( ' ', $plain ) );
+    }
+
+    /**
+     * Refuse an AI draft before any credit is spent when the page cannot
+     * take it: visitors never see the editor content, or there is too
+     * little on the page for AI to write from.
+     *
+     * @return array|null An error response body, or null to carry on.
+     */
+    private static function ai_draft_page_blocker( $post ) {
+        if ( ! self::page_shows_editor_content( (int) $post->ID ) ) {
+            return array(
+                'success' => false,
+                'code'    => 'content_not_shown',
+                'error'   => __( 'This page is built by your theme or a page builder, so text added in the editor would not show to visitors. No credit was used. Add it in your page builder or theme instead.', 'aeo-god-mode' ),
+            );
+        }
+        if ( self::page_body_words( $post ) < 150 ) {
+            return array(
+                'success' => false,
+                'code'    => 'thin_page',
+                'error'   => __( 'This page has too little text for AI to write a good answer from. No credit was used. Add a few paragraphs about the topic first.', 'aeo-god-mode' ),
+            );
+        }
+        return null;
+    }
+
+    /**
+     * True when AI wrote a note about the page instead of copy for the
+     * reader, e.g. "this page doesn't list the options". That text must
+     * never reach a live page.
+     */
+    public static function is_ai_meta_talk( $text ) {
+        $t = strtolower( wp_strip_all_tags( (string) $text ) );
+        return (bool) preg_match(
+            '/\bthis (page|article|post|source)\b(?! (builder|speed|load))|\bonly source\b|\b(can\x27t|cannot|can not) (name|pick) (a|the|which)\b|\b(page|article|post|source|context) (does not|doesn\x27t) (list|mention|include|say|state|provide|name|cover)\b|\bnot enough (information|detail|context)\b|\bpage context\b|\bas an ai\b/',
+            $t
+        );
+    }
+
     private function query_gap_payload( $query, $post, $shape, $existing, $competitor_url, $engine ) {
         // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- "the_content" is a WordPress core filter.
         $plain = wp_strip_all_tags( apply_filters( 'the_content', $post->post_content ) );
@@ -3524,6 +3744,10 @@ class API {
         if ( ! $post || $post->post_status !== 'publish' ) {
             return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
         }
+        $blocker = self::ai_draft_page_blocker( $post );
+        if ( $blocker ) {
+            return rest_ensure_response( $blocker );
+        }
 
         // Draft cache (in-option, not transient: survives sync, cheap reads).
         // v2 drafts are written against the page that won the question, so
@@ -3531,7 +3755,7 @@ class API {
         $competitor_url = $this->query_gap_clean_competitor_url( (string) $request->get_param( 'competitor_url' ) );
         $cache_key = md5( 'v2|' . strtolower( trim( $query ) ) . '|' . $post_id . '|' . $competitor_url );
         $cache     = (array) get_option( 'asgm_query_gap_draft_cache', array() );
-        if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['answer'] ) ) {
+        if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['answer'] ) && ! self::is_ai_meta_talk( $cache[ $cache_key ]['answer'] ) ) {
             $cached_q = ! empty( $cache[ $cache_key ]['question'] ) ? (string) $cache[ $cache_key ]['question'] : '';
             if ( '' === $cached_q ) {
                 $cached_q = ucfirst( trim( $query ) );
@@ -3634,6 +3858,7 @@ HARD RULES
 - The answer is 1 to 3 sentences total. Anything longer is wrong.
 - Plain English. No em dashes anywhere. Use commas, periods, or parens.
 - Never claim a feature exists if the PAGE CONTEXT does not support it.
+- Write for the reader of the page. Never talk about the page, its sources, its context or what it is missing. If you cannot write a real answer, return {\"question\": \"\", \"answer\": \"\"}.
 - Output ONLY the JSON object.";
 
         // ── Send to proxy ──
@@ -3690,6 +3915,13 @@ HARD RULES
         // Strip dashes defensively (matches site copy rules).
         $answer   = self::query_gap_strip_dashes( $answer );
         $question = self::query_gap_strip_dashes( $question );
+        if ( self::is_ai_meta_talk( $answer ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'code'    => 'meta_talk',
+                'error'   => __( 'AI could not write a good answer from what is on this page yet. Add a few paragraphs about the topic, then try again.', 'aeo-god-mode' ),
+            ) );
+        }
 
         // Cache the draft.
         $cache[ $cache_key ] = array(
@@ -3881,11 +4113,15 @@ HARD RULES
         if ( ! $post || $post->post_status !== 'publish' ) {
             return rest_ensure_response( array( 'success' => false, 'error' => 'Target page not published.' ) );
         }
+        $blocker = self::ai_draft_page_blocker( $post );
+        if ( $blocker ) {
+            return rest_ensure_response( $blocker );
+        }
 
         $competitor_url = $this->query_gap_clean_competitor_url( (string) $request->get_param( 'competitor_url' ) );
         $cache_key = md5( 'v2|' . strtolower( trim( $query ) ) . '|' . $post_id . '|' . $competitor_url );
         $cache     = (array) get_option( 'asgm_query_gap_draft_heading_cache', array() );
-        if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['heading'] ) ) {
+        if ( isset( $cache[ $cache_key ] ) && ! empty( $cache[ $cache_key ]['heading'] ) && ! self::is_ai_meta_talk( ( $cache[ $cache_key ]['heading'] ?? '' ) . ' ' . ( $cache[ $cache_key ]['intro'] ?? '' ) ) ) {
             return rest_ensure_response( array(
                 'success' => true,
                 'heading' => (string) $cache[ $cache_key ]['heading'],
@@ -3950,6 +4186,7 @@ HARD RULES
 - Plain English. No em dashes anywhere. Use commas, periods, or parens.
 - Never claim a feature exists if the PAGE CONTEXT does not support it.
 - Do not reuse an existing heading on this page.
+- Write for the reader of the page. Never talk about the page, its sources, its context or what it is missing. If you cannot write a real answer, return {\"heading\": \"\", \"intro\": \"\"}.
 - Output ONLY the JSON object.";
 
         $payload = wp_json_encode( array(
@@ -4002,6 +4239,13 @@ HARD RULES
         // Strip dashes defensively.
         $heading = self::query_gap_strip_dashes( $heading );
         $intro   = self::query_gap_strip_dashes( $intro );
+        if ( self::is_ai_meta_talk( $heading . ' ' . $intro ) ) {
+            return rest_ensure_response( array(
+                'success' => false,
+                'code'    => 'meta_talk',
+                'error'   => __( 'AI could not write a good section from what is on this page yet. Add a few paragraphs about the topic, then try again.', 'aeo-god-mode' ),
+            ) );
+        }
 
         // Trim a trailing question mark if the AI ignored "do not end with ?".
         $heading = rtrim( $heading, "?.;:!" );

@@ -333,8 +333,12 @@ class Top_Fixes {
 		if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
 			return array( 'success' => false, 'message' => __( 'You cannot edit this page.', 'aeo-god-mode' ) );
 		}
-		$snap  = self::snapshot( $post_id );
-		$words = count( preg_split( '/\s+/', trim( $question ) ) );
+		if ( ! API::page_shows_editor_content( $post_id ) ) {
+			return array( 'success' => false, 'message' => self::not_shown_message() );
+		}
+		$snap    = self::snapshot( $post_id );
+		$words   = count( preg_split( '/\s+/', trim( $question ) ) );
+		$preview = array();
 		$used  = 0;
 
 		if ( $words <= 8 ) {
@@ -343,6 +347,7 @@ class Top_Fixes {
 				return array( 'success' => false, 'message' => self::friendly( $draft ) );
 			}
 			$used    = empty( $draft['cached'] ) ? 1 : 0;
+			$preview = array( 'heading' => (string) $draft['question'], 'text' => (string) $draft['answer'] );
 			$applied = self::dispatch( '/query-gap/apply-faq', array(
 				'query'    => $question,
 				'question' => (string) $draft['question'],
@@ -360,6 +365,7 @@ class Top_Fixes {
 				return array( 'success' => false, 'message' => self::friendly( $draft ) );
 			}
 			$used    = empty( $draft['cached'] ) ? 1 : 0;
+			$preview = array( 'heading' => (string) $draft['heading'], 'text' => (string) $draft['intro'] );
 			$applied = self::dispatch( '/query-gap/apply-heading', array(
 				'query'   => $question,
 				'heading' => (string) $draft['heading'],
@@ -373,7 +379,8 @@ class Top_Fixes {
 				self::trim_words( $question, 12 )
 			);
 			if ( empty( $applied['success'] ) && false !== stripos( (string) ( $applied['error'] ?? '' ), 'already exists' ) ) {
-				$q = ucfirst( trim( $question ) );
+				$q       = ucfirst( trim( $question ) );
+				$preview = array( 'heading' => '?' === substr( $q, -1 ) ? $q : $q . '?', 'text' => (string) $draft['intro'] );
 				$applied = self::dispatch( '/query-gap/apply-faq', array(
 					'query'    => $question,
 					'question' => '?' === substr( $q, -1 ) ? $q : $q . '?',
@@ -412,6 +419,8 @@ class Top_Fixes {
 			'undo_token'   => self::save_undo( $snap + array( 'after_hash' => self::page_hash( $post_id ) ) ),
 			'view_url'     => (string) get_permalink( $post_id ),
 			'edit_url'     => (string) get_edit_post_link( $post_id, 'raw' ),
+			'page_title'   => self::plain_title( $post_id ),
+			'preview'      => self::preview( $preview ),
 		);
 	}
 
@@ -423,6 +432,9 @@ class Top_Fixes {
 		$heading = (string) ( $issue['heading'] ?? '' );
 		if ( ! $post_id || '' === $heading || ! current_user_can( 'edit_post', $post_id ) ) {
 			return array( 'success' => false, 'message' => __( 'You cannot edit this page.', 'aeo-god-mode' ) );
+		}
+		if ( ! API::page_shows_editor_content( $post_id ) ) {
+			return array( 'success' => false, 'message' => self::not_shown_message() );
 		}
 		$snap = self::snapshot( $post_id );
 
@@ -461,6 +473,8 @@ class Top_Fixes {
 			'undo_token'   => self::save_undo( $snap + array( 'after_hash' => self::page_hash( $post_id ) ) ),
 			'view_url'     => (string) get_permalink( $post_id ),
 			'edit_url'     => (string) get_edit_post_link( $post_id, 'raw' ),
+			'page_title'   => self::plain_title( $post_id ),
+			'preview'      => self::preview( array( 'heading' => $heading, 'text' => (string) $draft['rewrite'] ) ),
 		);
 	}
 
@@ -484,9 +498,30 @@ class Top_Fixes {
 		return is_array( $data ) ? $data : array( 'success' => false, 'error' => '' );
 	}
 
+	/** What AI wrote, as plain text, so the done list can show it. */
+	private static function preview( array $p ) {
+		$heading = trim( html_entity_decode( wp_strip_all_tags( (string) ( $p['heading'] ?? '' ) ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
+		$text    = trim( preg_replace( '/\s+/u', ' ', html_entity_decode( wp_strip_all_tags( (string) ( $p['text'] ?? '' ) ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
+		if ( '' === $heading && '' === $text ) {
+			return null;
+		}
+		return array( 'heading' => $heading, 'text' => $text );
+	}
+
+	private static function plain_title( $post_id ) {
+		return html_entity_decode( wp_strip_all_tags( (string) get_the_title( $post_id ) ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+	}
+
+	private static function not_shown_message() {
+		return __( 'AI cannot add this one for you: your theme or page builder draws this page, so text added in the editor would not show. No credit was used. Add the answer where you build this page.', 'aeo-god-mode' );
+	}
+
 	/** Customer wording for a failed draft or apply. Never a raw server string. */
 	private static function friendly( array $res ) {
 		$err = strtolower( (string) ( $res['error'] ?? '' ) );
+		if ( in_array( (string) ( $res['code'] ?? '' ), array( 'content_not_shown', 'thin_page', 'meta_talk' ), true ) ) {
+			return (string) $res['error'];
+		}
 		if ( false !== strpos( $err, 'credit' ) ) {
 			return __( 'You are out of AI credits. Top up to let AI do this for you.', 'aeo-god-mode' );
 		}
@@ -630,7 +665,9 @@ class Top_Fixes {
 				'evidence' => $evidence,
 				'sources'  => $fix_sources,
 				'page'     => self::page( $post_id, $lost['title'], $lost['url'] ),
-				'action'   => $post_id
+				'action'   => $post_id && ! API::page_shows_editor_content( $post_id )
+					? self::not_shown_action( $post_id, $lost['url'] )
+					: ( $post_id
 					? array(
 						'type'     => 'lost_question',
 						'label'    => __( 'Write the answer', 'aeo-god-mode' ),
@@ -639,7 +676,7 @@ class Top_Fixes {
 						'cost'     => 1,
 						'payload'  => array( 'question' => $lost['query'], 'post_id' => $post_id ),
 					)
-					: self::link_action( __( 'Open Citation Tracker', 'aeo-god-mode' ), '#/citations' ),
+					: self::link_action( __( 'Open Citation Tracker', 'aeo-god-mode' ), '#/citations' ) ),
 			);
 			if ( $post_id ) {
 				$lost_posts[ $post_id ] = true;
@@ -733,7 +770,9 @@ class Top_Fixes {
 					: __( 'This page does not answer its questions straight away. AI quotes pages that answer first, so this page is easy to pass over.', 'aeo-god-mode' );
 			}
 
-			if ( $is_pro && $ad && ! empty( $ad['first_issue']['heading'] ) ) {
+			if ( ! API::page_shows_editor_content( (int) $post_id ) ) {
+				$action = self::not_shown_action( (int) $post_id, (string) $url );
+			} elseif ( $is_pro && $ad && ! empty( $ad['first_issue']['heading'] ) ) {
 				$action = array(
 					'type'     => 'rewrite_opener',
 					'label'    => __( 'Rewrite the opening', 'aeo-god-mode' ),
@@ -1321,6 +1360,21 @@ class Top_Fixes {
 			'title'    => wp_strip_all_tags( (string) ( $title ? $title : ( $post_id ? get_the_title( $post_id ) : '' ) ) ),
 			'url'      => (string) ( $url ? $url : ( $post_id ? get_permalink( $post_id ) : '' ) ),
 			'edit_url' => $post_id ? (string) get_edit_post_link( $post_id, 'raw' ) : '',
+		);
+	}
+
+	/**
+	 * The page is drawn by the theme or a page builder, so AI cannot write
+	 * into it. Send the customer to where they build it and say why.
+	 */
+	private static function not_shown_action( $post_id, $url ) {
+		$edit = (string) get_edit_post_link( $post_id, 'raw' );
+		return array(
+			'type'     => 'edit',
+			'label'    => __( 'Open the page', 'aeo-god-mode' ),
+			'pro_only' => false,
+			'url'      => $edit ? $edit : (string) $url,
+			'note'     => __( 'AI cannot write this one in for you: your theme or page builder draws this page, so text added in the WordPress editor would not show. Add it where you build the page.', 'aeo-god-mode' ),
 		);
 	}
 

@@ -5,6 +5,12 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.97
+
+- Improved: after AI does a fix you now see what it wrote and can jump straight to it on the page
+- Improved: AI no longer adds text to pages where your theme or page builder would hide it
+- and no credit is used
+
 ## 1.6.96
 
 - New: your dashboard now shows the top 3 fixes most likely to bring you leads from AI search
