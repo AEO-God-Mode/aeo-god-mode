@@ -5,6 +5,21 @@ Mirror of the `readme.txt` changelog from the WordPress.org repository.
 For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-god-mode/#developers
 
 
+## 1.6.100
+
+- Site Profile: fill your business details with AI from your own pages for 1 credit
+- Clearer Black Friday offer notice
+
+## 1.6.99
+
+- Lead Ready: write your lead block with AI on Free and add it to any page with a shortcode
+- Fixes run one page at a time on Free with one-click fix-all in Pro
+- More reliable title and meta suggestions on Free
+
+## 1.6.98
+
+- Maintenance release
+
 ## 1.6.97
 
 - Improved: after AI does a fix you now see what it wrote and can jump straight to it on the page
@@ -23,7 +38,6 @@ For the WordPress.org formatted version see https://wordpress.org/plugins/aeo-go
 
 - New: see the leads and sales that came from AI search
 - New: Lead-ready pages check shows which pages can turn an AI visitor into a lead
-- New: an opt-in weekly email that shows whether AI search is sending you customers and the one thing to fix next
 - Improved: Citation readiness scores are fairer and more accurate
 - Improved: the article writer keeps the buyer's question in view
 - Improved: a cleaner and roomier admin design

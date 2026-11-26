@@ -4,7 +4,7 @@ Tags: answer engine optimization, ai seo, llms.txt, schema, chatgpt
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.97
+Stable tag: 1.6.100
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -141,6 +141,8 @@ This plugin connects to external services only for the features described below.
 
 When an authorised user manually starts an AI task, the relevant title, content text, and selected task settings are sent securely to the AEO God Mode service for processing. The service returns the generated text or analysis to the WordPress site.
 
+When an authorised user clicks Fill with AI in the Site Profile, the site name, tagline, domain, language setting, recent published titles, and the text of the homepage and any About, Services and Contact pages are sent to the AEO God Mode service. The suggested profile is shown for review and nothing is saved until the user saves it.
+
 When an authorised user asks the plugin to generate featured-image alt text, the selected image and the page and attachment context shown in the review are sent securely to the AEO God Mode service. The free Content Health scan stays on the WordPress site and sends no images or page content. No AI task runs because someone visits a page or opens the dashboard.
 
 Service: <https://aeogodmode.io/>
@@ -161,6 +163,18 @@ OAuth token exchanges and authorised Search Console requests are proxied through
 
 == Changelog ==
 
+= 1.6.100 =
+* Site Profile: fill your business details with AI from your own pages for 1 credit
+* Clearer Black Friday offer notice
+
+= 1.6.99 =
+* Lead Ready: write your lead block with AI on Free and add it to any page with a shortcode
+* Fixes run one page at a time on Free with one-click fix-all in Pro
+* More reliable title and meta suggestions on Free
+
+= 1.6.98 =
+* Maintenance release
+
 = 1.6.97 =
 * Improved: after AI does a fix you now see what it wrote and can jump straight to it on the page
 * Improved: AI no longer adds text to pages where your theme or page builder would hide it
@@ -176,7 +190,6 @@ OAuth token exchanges and authorised Search Console requests are proxied through
 = 1.6.95 =
 * New: see the leads and sales that came from AI search
 * New: Lead-ready pages check shows which pages can turn an AI visitor into a lead
-* New: an opt-in weekly email that shows whether AI search is sending you customers and the one thing to fix next
 * Improved: Citation readiness scores are fairer and more accurate
 * Improved: the article writer keeps the buyer's question in view
 * Improved: a cleaner and roomier admin design

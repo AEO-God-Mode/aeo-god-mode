@@ -281,10 +281,11 @@ class VisualAI {
     private function call_proxy( $task, $payload ) {
         $key = License::is_pro_build() ? License::get_key() : '';
 
-        // Free has no credit metering, so these tasks are not on the
-        // unlicensed allowlist. Say that plainly instead of letting the call
-        // fail with a 401 the customer cannot act on.
-        if ( '' === $key ) {
+        // Free can write lead block copy from its monthly free credits (the
+        // proxy meters it and builds the prompt itself). Visual blocks stay
+        // Pro: say that plainly instead of letting the call fail with a 401.
+        $free_ok = '' === $key && 'cta_copy' === $task;
+        if ( '' === $key && ! $free_ok ) {
             return array(
                 'success' => false,
                 'error'   => 'Generating visuals needs a Pro licence. You can still build these blocks by hand, with your own brand colours, on the free plan.',
@@ -295,6 +296,8 @@ class VisualAI {
         $response = wp_remote_post( self::API_URL, array(
             'body'    => wp_json_encode( array(
                 'license_key' => $key,
+                'installation_token' => $free_ok ? Account_Connection::get_token() : '',
+                'install_id'  => $free_ok ? Account_Connection::get_install_id() : '',
                 'task'        => $task,
                 // Base64 so the structured payload survives transport intact,
                 // matching the topical map tasks.

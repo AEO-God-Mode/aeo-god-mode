@@ -235,7 +235,7 @@ class Dashboard_Widget {
         return $found;
     }
 
-    /** Also used by the weekly email, so it needs no instance. */
+    /** Static, so it needs no instance. */
     public static function compute_priority_page() {
         global $wpdb;
         $table = $wpdb->prefix . 'asgm_crawler_log';

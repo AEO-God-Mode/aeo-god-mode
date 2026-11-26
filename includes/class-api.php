@@ -69,6 +69,13 @@ class API {
             ),
         ) );
 
+        // Site Profile "Fill with AI": 1 credit, returns suggestions only.
+        register_rest_route( self::NAMESPACE, '/site-profile/ai-fill', array(
+            'methods'             => 'POST',
+            'callback'            => array( $this, 'ai_fill_site_profile' ),
+            'permission_callback' => array( $this, 'admin_permission' ),
+        ) );
+
         // ---- Detect SEO plugins ----
         register_rest_route( self::NAMESPACE, '/detect', array(
             'methods'             => 'GET',
@@ -1831,6 +1838,17 @@ class API {
             'suggestions'  => Site_Profile::suggestions(),
             'completeness' => Site_Profile::completeness( $profile ),
         ) );
+    }
+
+    /** Best-guess Site Profile from the site's own pages. Saves nothing. */
+    public function ai_fill_site_profile() {
+        $result = Site_Profile_AI::fill();
+        $status = (int) $result['status'];
+        unset( $result['status'] );
+        if ( ! empty( $result['success'] ) ) {
+            $this->log_activity( 'site_profile_ai_fill', __( 'Site profile filled with AI.', 'aeo-god-mode' ) );
+        }
+        return new \WP_REST_Response( $result, $status );
     }
 
     /** Save a confirmed site profile. */
@@ -5148,9 +5166,14 @@ HARD RULES
 
     /** POST /content-health/fix, applies only changes explicitly reviewed in Content Health. */
     public function fix_content_health( \WP_REST_Request $request ) {
+        $items = (array) $request->get_param( 'items' );
+        // Free saves one page per request; saving many pages at once is Pro.
+        if ( count( $items ) > 1 && ! \AISEOGodMode\License::is_pro() ) {
+            return new \WP_Error( 'pro_required', __( 'Saving several pages at once needs Pro. Save one page at a time on Free.', 'aeo-god-mode' ), array( 'status' => 403 ) );
+        }
         $result = Content_Health::apply_fixes(
             sanitize_key( (string) $request->get_param( 'group' ) ),
-            (array) $request->get_param( 'items' )
+            $items
         );
         if ( is_wp_error( $result ) ) {
             return $result;

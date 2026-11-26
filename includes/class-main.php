@@ -64,6 +64,7 @@ class Main {
         require_once $includes . 'class-license-stub.php';
         require_once $includes . 'class-account-connection.php';
         require_once $includes . 'class-site-profile.php';
+        require_once $includes . 'class-site-profile-ai.php';
 
         // Free classes — always loaded.
         require_once $includes . 'class-api.php';
@@ -104,7 +105,6 @@ class Main {
         require_once $includes . 'class-visual-ai.php';
         require_once $includes . 'class-draft-quality.php';
         require_once $includes . 'class-earned-source-api.php';
-        require_once $includes . 'class-weekly-digest.php';
         require_once $includes . 'class-top-fixes.php';
 
         // Pro classes live in the separate `aeo-god-mode-pro` plugin and load
@@ -120,8 +120,9 @@ class Main {
     private function init_hooks() {
         add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
         Account_Connection::init();
-        // Runs in safe mode too, so an unsubscribe link always works.
-        Weekly_Digest::init();
+        // The weekly email was taken out of the plugin. Clear its schedule and
+        // settings on sites that had it, once.
+        add_action( 'init', array( __CLASS__, 'remove_weekly_email' ) );
         Top_Fixes::init();
         // Reassert the public product identity after third-party/older add-ons
         // have registered their menu filters. This protects mixed-version
@@ -839,9 +840,25 @@ class Main {
      */
     public static function deactivate() {
         flush_rewrite_rules();
-        if ( class_exists( __NAMESPACE__ . '\\Weekly_Digest' ) ) {
-            Weekly_Digest::unschedule();
+        if ( ! has_action( 'asgm_weekly_digest_send' ) ) {
+            wp_clear_scheduled_hook( 'asgm_weekly_digest_send' );
         }
+    }
+
+    /**
+     * Remove what the old weekly email left behind: its cron event and options.
+     */
+    public static function remove_weekly_email() {
+        // Something else on this site still sends it (a site-specific
+        // mu-plugin), so leave its schedule and settings alone.
+        if ( get_option( 'asgm_weekly_email_removed' ) || has_action( 'asgm_weekly_digest_send' ) ) {
+            return;
+        }
+        wp_clear_scheduled_hook( 'asgm_weekly_digest_send' );
+        delete_option( 'asgm_weekly_digest' );
+        delete_option( 'asgm_weekly_digest_secret' );
+        delete_option( 'asgm_weekly_digest_lock' );
+        update_option( 'asgm_weekly_email_removed', 1, true );
     }
 
     /**
